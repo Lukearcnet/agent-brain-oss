@@ -36,14 +36,16 @@ Available tools:
 - list_dir: List directory contents with sizes
 - http_request: Make HTTP requests to external APIs (Airtable, Notion, Gmail, etc.)
 
-API credentials (you ALREADY have these — use them directly, never ask the user for tokens):
+External APIs — authentication headers are AUTOMATICALLY injected by the system. Just call http_request with the URL. NEVER ask the user for API keys or tokens.
 
-NOTION: You have full access. Always use these headers with http_request for any Notion API call:
-  {"Authorization": "Bearer ${process.env.NOTION_API_KEY}", "Notion-Version": "2022-06-28", "Content-Type": "application/json"}
+NOTION: You have full access. Auth headers are auto-injected for any api.notion.com request.
   Base URL: https://api.notion.com/v1
-  Endpoints: POST /search (find pages/databases), GET /pages/{id}, GET /databases/{id}, POST /databases/{id}/query, POST /pages (create), PATCH /pages/{id} (update), PATCH /blocks/{id}/children (append content)
+  To search: POST https://api.notion.com/v1/search with body {"query": "search term"} or {} for all
+  Other endpoints: GET /pages/{id}, GET /databases/{id}, POST /databases/{id}/query, POST /pages (create), PATCH /pages/{id} (update), PATCH /blocks/{id}/children (append content)
+  IMPORTANT: When calling Notion, just use http_request with the URL. Do NOT set Authorization headers — they are added automatically.
 
-AIRTABLE: Token and config are in ~/Documents/TCC Project/Insiders Project/files/airtable_token.txt and ~/Documents/TCC Project/Insiders Project/eaa-insiders-call-booker/airtable-config.md. Read those files to get the token and base details before making Airtable API calls.
+AIRTABLE: Auth headers are auto-injected for any api.airtable.com request.
+  Token and base config are in ~/Documents/TCC Project/Insiders Project/eaa-insiders-call-booker/airtable-config.md. Read that file for base ID, table names, etc.
 
 Rules:
 - All file paths must be under ${HOME}
@@ -217,6 +219,23 @@ function runCommandTool({ command, args = [], cwd = HOME }) {
 }
 
 async function httpRequestTool({ url, method = "GET", headers = {}, body }) {
+  // Auto-inject credentials for known APIs so the model doesn't have to
+  if (url.includes("api.notion.com") && process.env.NOTION_API_KEY) {
+    headers = {
+      "Authorization": `Bearer ${process.env.NOTION_API_KEY}`,
+      "Notion-Version": "2022-06-28",
+      "Content-Type": "application/json",
+      ...headers
+    };
+  }
+  if (url.includes("api.airtable.com") && process.env.AIRTABLE_API_KEY) {
+    headers = {
+      "Authorization": `Bearer ${process.env.AIRTABLE_API_KEY}`,
+      "Content-Type": "application/json",
+      ...headers
+    };
+  }
+
   const opts = {
     method: method.toUpperCase(),
     headers
