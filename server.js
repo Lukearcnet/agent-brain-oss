@@ -34,6 +34,7 @@ Available tools:
 - read_file: Read file contents
 - write_file: Create or overwrite files
 - list_dir: List directory contents with sizes
+- http_request: Make HTTP requests to external APIs (Airtable, Notion, Gmail, etc.)
 
 Rules:
 - All file paths must be under ${HOME}
@@ -100,6 +101,23 @@ const TOOLS = [
           dir_path: { type: "string", description: "Path to directory. Can use ~ for HOME. Defaults to HOME." }
         },
         required: []
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "http_request",
+      description: "Make an HTTP request to an external API. Use this for Airtable, Notion, Gmail, or any REST API. Returns the response body as text.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The full URL to request." },
+          method: { type: "string", description: "HTTP method: GET, POST, PUT, PATCH, DELETE. Defaults to GET." },
+          headers: { type: "object", description: "HTTP headers as key-value pairs (e.g. {\"Authorization\": \"Bearer ...\", \"Content-Type\": \"application/json\"})." },
+          body: { type: "string", description: "Request body as a string. For JSON APIs, pass a JSON string." }
+        },
+        required: ["url"]
       }
     }
   }
@@ -189,12 +207,27 @@ function runCommandTool({ command, args = [], cwd = HOME }) {
   });
 }
 
+async function httpRequestTool({ url, method = "GET", headers = {}, body }) {
+  const opts = {
+    method: method.toUpperCase(),
+    headers
+  };
+  if (body && opts.method !== "GET") opts.body = body;
+  const resp = await fetch(url, opts);
+  const text = await resp.text();
+  const prefix = `${resp.status} ${resp.statusText}\n`;
+  // Truncate large responses to avoid blowing up context
+  if (text.length > 20000) return prefix + text.slice(0, 20000) + "\n...(truncated)";
+  return prefix + text;
+}
+
 async function dispatchTool(name, args) {
   switch (name) {
-    case "run_command": return runCommandTool(args);
-    case "read_file":  return readFileTool(args);
-    case "write_file": return writeFileTool(args);
-    case "list_dir":   return listDirTool(args);
+    case "run_command":   return runCommandTool(args);
+    case "read_file":     return readFileTool(args);
+    case "write_file":    return writeFileTool(args);
+    case "list_dir":      return listDirTool(args);
+    case "http_request":  return httpRequestTool(args);
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }
@@ -516,6 +549,12 @@ app.get("/chat/:session_id", (req, res) => {
     }
     .header a { color: #007aff; text-decoration: none; font-size: 16px; }
     .header .title { font-size: 17px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .copy-btn {
+      background: none; border: 1px solid #ccc; border-radius: 8px;
+      padding: 6px 10px; font-size: 13px; color: #333; cursor: pointer;
+      flex-shrink: 0; white-space: nowrap;
+    }
+    .copy-btn.copied { background: #e8f5e9; border-color: #4caf50; color: #2e7d32; }
     .messages {
       flex: 1;
       overflow-y: auto;
@@ -619,6 +658,7 @@ app.get("/chat/:session_id", (req, res) => {
   <div class="header">
     <a href="/chat">&larr;</a>
     <div class="title" id="chat-title">Chat</div>
+    <button class="copy-btn" onclick="copyChat(this)">Copy</button>
   </div>
   <div class="messages" id="messages"></div>
   <div class="input-area">
@@ -778,6 +818,40 @@ app.get("/chat/:session_id", (req, res) => {
         sendMessage();
       }
     });
+
+    async function copyChat(btn) {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        let text = "";
+        for (const m of (data.messages || [])) {
+          if (m.role === "system") continue;
+          if (m.role === "user") text += "You: " + m.content + "\\n\\n";
+          else if (m.role === "assistant" && m.content) text += "Agent: " + m.content + "\\n\\n";
+        }
+        const str = text.trim();
+        // Clipboard API needs HTTPS on iOS; fall back to textarea trick
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(str);
+        } else {
+          const ta = document.createElement("textarea");
+          ta.value = str;
+          ta.style.position = "fixed";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        btn.textContent = "Copied!";
+        btn.classList.add("copied");
+        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
+      } catch (e) {
+        btn.textContent = "Failed";
+        setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+      }
+    }
 
     loadSession();
   </script>
