@@ -20,6 +20,9 @@ if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR);
 const SESSIONS_DIR = path.join(__dirname, "sessions");
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
 
+const ARCHIVE_DIR = path.join(__dirname, "sessions", "archive");
+if (!fs.existsSync(ARCHIVE_DIR)) fs.mkdirSync(ARCHIVE_DIR);
+
 const HOME = os.homedir();
 
 const ALLOWED_COMMANDS = new Set([
@@ -441,6 +444,29 @@ app.post("/chat/new", (_req, res) => {
   res.json({ session_id: session.session_id });
 });
 
+app.patch("/api/sessions/:id", (req, res) => {
+  const session = loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  if (req.body.title !== undefined) session.title = req.body.title;
+  saveSession(session);
+  res.json({ ok: true });
+});
+
+app.post("/api/sessions/:id/archive", (req, res) => {
+  const src = path.join(SESSIONS_DIR, `${req.params.id}.json`);
+  const dst = path.join(ARCHIVE_DIR, `${req.params.id}.json`);
+  if (!fs.existsSync(src)) return res.status(404).json({ error: "Session not found" });
+  fs.renameSync(src, dst);
+  res.json({ ok: true });
+});
+
+app.delete("/api/sessions/:id", (req, res) => {
+  const p = path.join(SESSIONS_DIR, `${req.params.id}.json`);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: "Session not found" });
+  fs.unlinkSync(p);
+  res.json({ ok: true });
+});
+
 app.post("/api/sessions/:id/message", async (req, res) => {
   const session = loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
@@ -465,15 +491,6 @@ app.post("/api/sessions/:id/message", async (req, res) => {
 app.get("/", (_req, res) => res.redirect("/chat"));
 
 app.get("/chat", (_req, res) => {
-  const sessions = listSessions();
-  const items = sessions.map(s => {
-    const ago = timeAgo(s.updated_at);
-    return `<a href="/chat/${s.session_id}" class="session-item">
-      <div class="session-title">${escHtml(s.title)}</div>
-      <div class="session-time">${ago}</div>
-    </a>`;
-  }).join("");
-
   res.type("html").send(`<!DOCTYPE html>
 <html>
 <head>
@@ -496,53 +513,274 @@ app.get("/chat", (_req, res) => {
       align-items: center;
     }
     .header h1 { font-size: 20px; }
+    .top-bar { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
     .new-chat-btn {
-      display: block;
-      margin: 16px;
       padding: 14px;
       background: #007aff;
       color: #fff;
       text-align: center;
       border-radius: 12px;
-      text-decoration: none;
       font-size: 16px;
       font-weight: 600;
       cursor: pointer;
       border: none;
-      width: calc(100% - 32px);
+      width: 100%;
+    }
+    .search-input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 15px;
+      background: #fff;
+      -webkit-appearance: none;
     }
     .session-list { padding: 0 16px; }
     .session-item {
-      display: block;
+      display: flex;
+      align-items: center;
       background: #fff;
-      padding: 14px 16px;
       margin-bottom: 8px;
       border-radius: 10px;
       text-decoration: none;
       color: inherit;
+      overflow: hidden;
     }
-    .session-title { font-size: 15px; color: #000; }
+    .session-link {
+      flex: 1;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      min-width: 0;
+    }
+    .session-title { font-size: 15px; color: #000; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .session-time { font-size: 13px; color: #888; margin-top: 4px; }
+    .session-action-btn {
+      background: none;
+      border: none;
+      padding: 14px 14px;
+      font-size: 20px;
+      color: #999;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
     .empty { text-align: center; padding: 40px 16px; color: #888; }
     .footer-links { text-align: center; padding: 20px; }
     .footer-links a { color: #007aff; font-size: 14px; }
+
+    /* Modal overlay */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 100;
+      justify-content: center;
+      align-items: flex-end;
+      padding: 0 16px 40px;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 14px;
+      width: 100%;
+      max-width: 400px;
+      overflow: hidden;
+    }
+    .modal-title {
+      padding: 16px;
+      font-size: 15px;
+      font-weight: 600;
+      text-align: center;
+      border-bottom: 1px solid #eee;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .modal-btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border: none;
+      background: none;
+      font-size: 16px;
+      cursor: pointer;
+      text-align: center;
+      border-bottom: 1px solid #eee;
+    }
+    .modal-btn:hover { background: #f5f5f5; }
+    .modal-btn.danger { color: #ff3b30; }
+    .modal-cancel {
+      display: block;
+      width: calc(100% - 32px);
+      margin: 8px 16px 0;
+      padding: 14px;
+      border: none;
+      background: #fff;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #007aff;
+    }
+
+    /* Rename input inside modal */
+    .rename-row {
+      display: none;
+      padding: 12px 16px;
+      gap: 8px;
+      border-bottom: 1px solid #eee;
+    }
+    .rename-row.active { display: flex; }
+    .rename-row input {
+      flex: 1;
+      font-size: 15px;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+    .rename-row button {
+      padding: 8px 14px;
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>Agent Brain</h1>
   </div>
-  <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
-  <div class="session-list">
-    ${items || '<div class="empty">No sessions yet. Start a new chat!</div>'}
+  <div class="top-bar">
+    <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+    <input type="text" class="search-input" id="search" placeholder="Search sessions..." oninput="filterSessions()">
   </div>
+  <div class="session-list" id="session-list"></div>
   <div class="footer-links"><a href="/runs">View legacy runs</a></div>
+
+  <!-- Action modal -->
+  <div class="modal-overlay" id="modal" onclick="closeModal(event)">
+    <div>
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title" id="modal-title"></div>
+        <div class="rename-row" id="rename-row">
+          <input type="text" id="rename-input" placeholder="New name...">
+          <button onclick="doRename()">Save</button>
+        </div>
+        <button class="modal-btn" onclick="showRename()">Rename</button>
+        <button class="modal-btn" onclick="doArchive()">Archive</button>
+        <button class="modal-btn danger" onclick="doDelete()">Delete</button>
+      </div>
+      <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+
   <script>
+    let allSessions = [];
+    let activeSessionId = null;
+
+    async function loadSessions() {
+      const resp = await fetch("/api/sessions");
+      allSessions = await resp.json();
+      filterSessions();
+    }
+
+    function filterSessions() {
+      const q = (document.getElementById("search").value || "").toLowerCase();
+      const list = document.getElementById("session-list");
+      const filtered = q ? allSessions.filter(s => s.title.toLowerCase().includes(q)) : allSessions;
+
+      if (filtered.length === 0) {
+        list.innerHTML = '<div class="empty">' + (q ? 'No matching sessions' : 'No sessions yet. Start a new chat!') + '</div>';
+        return;
+      }
+
+      list.innerHTML = filtered.map(s => {
+        const ago = timeAgo(s.updated_at);
+        return '<div class="session-item">' +
+          '<a href="/chat/' + s.session_id + '" class="session-link">' +
+            '<div class="session-title">' + esc(s.title) + '</div>' +
+            '<div class="session-time">' + ago + '</div>' +
+          '</a>' +
+          '<button class="session-action-btn" onclick="openModal(\\'' + s.session_id + '\\', \\'' + esc(s.title).replace(/'/g, "\\\\'") + '\\')">&middot;&middot;&middot;</button>' +
+        '</div>';
+      }).join("");
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function timeAgo(iso) {
+      const diff = Date.now() - new Date(iso).getTime();
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return "just now";
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+
+    function openModal(id, title) {
+      activeSessionId = id;
+      document.getElementById("modal-title").textContent = title;
+      document.getElementById("rename-input").value = title;
+      document.getElementById("rename-row").classList.remove("active");
+      document.getElementById("modal").classList.add("active");
+    }
+
+    function closeModal(e) {
+      if (e && e.target !== document.getElementById("modal") && e.target !== document.querySelector(".modal-overlay")) {
+        if (!e.target.classList.contains("modal-overlay")) return;
+      }
+      document.getElementById("modal").classList.remove("active");
+      activeSessionId = null;
+    }
+
+    function showRename() {
+      document.getElementById("rename-row").classList.add("active");
+      document.getElementById("rename-input").focus();
+    }
+
+    async function doRename() {
+      const title = document.getElementById("rename-input").value.trim();
+      if (!title || !activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
+      });
+      closeModal();
+      loadSessions();
+    }
+
+    async function doArchive() {
+      if (!activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId + "/archive", { method: "POST" });
+      closeModal();
+      loadSessions();
+    }
+
+    async function doDelete() {
+      if (!activeSessionId) return;
+      if (!confirm("Delete this session permanently?")) return;
+      await fetch("/api/sessions/" + activeSessionId, { method: "DELETE" });
+      closeModal();
+      loadSessions();
+    }
+
     async function newChat() {
       const resp = await fetch("/chat/new", { method: "POST" });
       const data = await resp.json();
       window.location.href = "/chat/" + data.session_id;
     }
+
+    loadSessions();
   </script>
 </body>
 </html>`);
@@ -597,7 +835,6 @@ app.get("/chat/:session_id", (req, res) => {
       padding: 10px 14px;
       border-radius: 16px;
       word-wrap: break-word;
-      white-space: pre-wrap;
       font-size: 15px;
       line-height: 1.4;
     }
@@ -606,13 +843,42 @@ app.get("/chat/:session_id", (req, res) => {
       color: #fff;
       align-self: flex-end;
       border-bottom-right-radius: 4px;
+      white-space: pre-wrap;
     }
     .msg.assistant {
       background: #e9e9eb;
       color: #000;
       align-self: flex-start;
       border-bottom-left-radius: 4px;
+      white-space: normal;
     }
+    .msg.assistant p { margin: 0 0 8px 0; }
+    .msg.assistant p:last-child { margin-bottom: 0; }
+    .msg.assistant ul, .msg.assistant ol { margin: 0 0 8px 20px; }
+    .msg.assistant li { margin-bottom: 2px; }
+    .msg.assistant code {
+      background: rgba(0,0,0,0.06);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 13px;
+    }
+    .msg.assistant pre {
+      background: rgba(0,0,0,0.06);
+      padding: 10px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 0 0 8px 0;
+      font-size: 13px;
+    }
+    .msg.assistant pre code { background: none; padding: 0; }
+    .msg.assistant h1, .msg.assistant h2, .msg.assistant h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0 0 6px 0;
+    }
+    .msg.assistant strong { font-weight: 600; }
+    .msg.assistant a { color: #007aff; }
     .msg.thinking {
       background: #e9e9eb;
       color: #888;
@@ -724,10 +990,42 @@ app.get("/chat/:session_id", (req, res) => {
       scrollToBottom();
     }
 
+    function simpleMd(text) {
+      // Escape HTML first
+      let s = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      // Code blocks: \`\`\`...\`\`\`
+      s = s.replace(/\`\`\`([\\s\\S]*?)\`\`\`/g, function(_, code) {
+        return "<pre><code>" + code.trim() + "</code></pre>";
+      });
+      // Inline code
+      s = s.replace(/\`([^\`]+)\`/g, "<code>$1</code>");
+      // Bold
+      s = s.replace(/\\*\\*(.+?)\\*\\*/g, "<strong>$1</strong>");
+      // Italic
+      s = s.replace(/(?<![*])\\*(?![*])(.+?)(?<![*])\\*(?![*])/g, "<em>$1</em>");
+      // Headers
+      s = s.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+      s = s.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+      s = s.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+      // Unordered lists
+      s = s.replace(/^[\\-\\*] (.+)$/gm, "<li>$1</li>");
+      s = s.replace(/((?:<li>.*<\\/li>\\n?)+)/g, "<ul>$1</ul>");
+      // Ordered lists
+      s = s.replace(/^\\d+\\.\\s(.+)$/gm, "<li>$1</li>");
+      // Paragraphs: split by double newline
+      s = s.split(/\\n\\n+/).map(function(block) {
+        block = block.trim();
+        if (!block) return "";
+        if (block.startsWith("<h") || block.startsWith("<pre") || block.startsWith("<ul") || block.startsWith("<ol") || block.startsWith("<li")) return block;
+        return "<p>" + block.replace(/\\n/g, "<br>") + "</p>";
+      }).join("");
+      return s;
+    }
+
     function addAssistantMsg(text) {
       const div = document.createElement("div");
       div.className = "msg assistant";
-      div.textContent = text;
+      div.innerHTML = simpleMd(text);
       messagesEl.appendChild(div);
       scrollToBottom();
       return div;
