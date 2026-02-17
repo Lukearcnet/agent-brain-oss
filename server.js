@@ -36,11 +36,14 @@ Available tools:
 - list_dir: List directory contents with sizes
 - http_request: Make HTTP requests to external APIs (Airtable, Notion, Gmail, etc.)
 
-API credentials (use with http_request):
-- Notion: Use header {"Authorization": "Bearer ${process.env.NOTION_API_KEY}", "Notion-Version": "2022-06-28", "Content-Type": "application/json"}
+API credentials (you ALREADY have these — use them directly, never ask the user for tokens):
+
+NOTION: You have full access. Always use these headers with http_request for any Notion API call:
+  {"Authorization": "Bearer ${process.env.NOTION_API_KEY}", "Notion-Version": "2022-06-28", "Content-Type": "application/json"}
   Base URL: https://api.notion.com/v1
-  Key endpoints: POST /search (search pages/databases), GET /pages/{id}, GET /databases/{id}, POST /databases/{id}/query, POST /pages (create page), PATCH /pages/{id} (update page), PATCH /blocks/{id}/children (append content)
-- Airtable: Token and config are in ~/Documents/TCC Project/Insiders Project/files/airtable_token.txt and ~/Documents/TCC Project/Insiders Project/eaa-insiders-call-booker/airtable-config.md. Read those files first to get the token and base details.
+  Endpoints: POST /search (find pages/databases), GET /pages/{id}, GET /databases/{id}, POST /databases/{id}/query, POST /pages (create), PATCH /pages/{id} (update), PATCH /blocks/{id}/children (append content)
+
+AIRTABLE: Token and config are in ~/Documents/TCC Project/Insiders Project/files/airtable_token.txt and ~/Documents/TCC Project/Insiders Project/eaa-insiders-call-booker/airtable-config.md. Read those files to get the token and base details before making Airtable API calls.
 
 Rules:
 - All file paths must be under ${HOME}
