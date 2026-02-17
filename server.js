@@ -198,7 +198,7 @@ app.post("/run", async (req, res) => {
   ];
 
   let messages = [
-    { role: "system", content: "You are running on Luke's Mac. Use tools when needed." },
+    { role: "system", content: `You are running on Luke's Mac. HOME is ${HOME}. When using run_command, always use "${HOME}" as the base for cwd paths (e.g. "${HOME}/agent-brain", not "/Users/luke/agent-brain"). Use tools when needed.` },
     { role: "user", content: task }
   ];
 
