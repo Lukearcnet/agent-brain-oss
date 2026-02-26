@@ -320,6 +320,18 @@
     let wsReconnectTimer = null;
     let pollFallbackTimer = null;
 
+    async function fetchAndRenderMessages() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        if (data.messages && data.messages.length !== lastMessageCount) {
+          messagesEl.innerHTML = "";
+          renderMessages(data.messages);
+          lastMessageCount = data.messages.length;
+        }
+      } catch (_) {}
+    }
+
     async function loadSession() {
       try {
         const resp = await fetch("/api/sessions/" + SESSION_ID);
@@ -348,14 +360,14 @@
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === "session_update") {
-            // Update messages if count changed
-            if (data.messages && data.messages.length !== lastMessageCount) {
-              messagesEl.innerHTML = "";
-              renderMessages(data.messages);
-              lastMessageCount = data.messages.length;
+          if (data.type === "session_changed") {
+            // Lightweight notification: re-fetch messages only if count changed
+            if (data.message_count !== undefined && data.message_count !== lastMessageCount) {
+              fetchAndRenderMessages();
             }
-            // Update permission bar
+            // Always update permission bar
+            updatePermissionBar(data.permission);
+          } else if (data.type === "permission_update") {
             updatePermissionBar(data.permission);
           }
         } catch (_) {}

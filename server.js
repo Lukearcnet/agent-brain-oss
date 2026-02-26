@@ -669,12 +669,13 @@ function watchSession(ws, session) {
     // Debounce rapid writes (Claude often writes multiple lines quickly)
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      // Read fresh data and push to all connected clients for this file
+      // Send a lightweight notification — just message count + permission status
+      // Client will re-fetch full messages via HTTP if count changed
       const messages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
       const permission = checkPendingPermission(session.cc_project_dir, session.claude_session_id);
       const payload = JSON.stringify({
-        type: "session_update",
-        messages: messages || [],
+        type: "session_changed",
+        message_count: messages ? messages.length : 0,
         permission: permission || { pending: false }
       });
       for (const client of clients) {
@@ -699,7 +700,6 @@ function unwatchSession(ws) {
 }
 
 wss.on("connection", (ws, req) => {
-  // Extract session_id from query string: ws://host:3030/?session_id=xxx
   const url = new URL(req.url, "http://localhost");
   const sessionId = url.searchParams.get("session_id");
 
@@ -708,13 +708,13 @@ wss.on("connection", (ws, req) => {
     if (session) {
       watchSession(ws, session);
 
-      // Send initial data immediately
+      // Send initial permission status (messages already loaded via HTTP)
       if (session.cc_project_dir && session.claude_session_id) {
         const messages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
         const permission = checkPendingPermission(session.cc_project_dir, session.claude_session_id);
         ws.send(JSON.stringify({
-          type: "session_update",
-          messages: messages || [],
+          type: "session_changed",
+          message_count: messages ? messages.length : 0,
           permission: permission || { pending: false }
         }));
       }
