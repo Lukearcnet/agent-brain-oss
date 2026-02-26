@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .header a {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 22px;
+      padding: 4px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .header .title {
+      font-size: 17px;
+      font-weight: 600;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #fff;
+    }
+    .copy-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.85);
+      cursor: pointer;
+      flex-shrink: 0;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .copy-btn:active { background: rgba(255,255,255,0.25); }
+    .copy-btn.copied { background: rgba(52,199,89,0.3); color: #fff; }
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      -webkit-overflow-scrolling: touch;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .msg {
+      max-width: 82%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      word-wrap: break-word;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    .msg.user {
+      background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
+      color: #fff;
+      align-self: flex-end;
+      border-bottom-right-radius: 6px;
+      white-space: pre-wrap;
+    }
+    .msg.assistant {
+      background: #fff;
+      color: #1c1c1e;
+      align-self: flex-start;
+      border-bottom-left-radius: 6px;
+      white-space: normal;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .msg.assistant p { margin: 0 0 8px 0; }
+    .msg.assistant p:last-child { margin-bottom: 0; }
+    .msg.assistant ul, .msg.assistant ol { margin: 0 0 8px 20px; }
+    .msg.assistant li { margin-bottom: 2px; }
+    .msg.assistant code {
+      background: #f2f2f7;
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
+      font-size: 14px;
+      color: #c41a68;
+    }
+    .msg.assistant pre {
+      background: #1c1c1e;
+      color: #f2f2f7;
+      padding: 12px 14px;
+      border-radius: 10px;
+      overflow-x: auto;
+      margin: 0 0 8px 0;
+      font-size: 13px;
+    }
+    .msg.assistant pre code { background: none; padding: 0; color: inherit; }
+    .msg.assistant h1, .msg.assistant h2, .msg.assistant h3 {
+      font-size: 15px;
+      font-weight: 700;
+      margin: 0 0 6px 0;
+      color: #1c1c1e;
+    }
+    .msg.assistant strong { font-weight: 600; }
+    .msg.assistant a { color: #007aff; text-decoration: none; }
+    .msg.thinking {
+      background: #fff;
+      color: #8e8e93;
+      align-self: flex-start;
+      border-bottom-left-radius: 6px;
+      font-style: italic;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .msg.thinking { animation: pulse 1.5s ease-in-out infinite; }
+    .tool-block {
+      align-self: flex-start;
+      max-width: 88%;
+      font-size: 13px;
+      color: #8e8e93;
+      background: #fff;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      border: 1px solid #e8e8ed;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tool-block .tool-header { display: flex; gap: 6px; align-items: center; }
+    .tool-block .tool-icon { font-size: 11px; }
+    .tool-block .tool-output {
+      display: none;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #e8e8ed;
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow-y: auto;
+      color: #636366;
+    }
+    .tool-block.expanded .tool-output { display: block; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/chat">&larr;</a>
+    <div class="title" id="chat-title">Chat</div>
+    <button class="copy-btn" onclick="copyChat(this)">Copy</button>
+  </div>
+  <div class="messages" id="messages"></div>
+  <div id="permission-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#f0f4ff; padding:10px 14px;">
+    <div style="font-size:13px; font-weight:600; color:#1c1c1e; margin-bottom:6px;" id="permission-label">Permission requested</div>
+    <div style="font-size:11px; color:#666; margin-bottom:8px; word-break:break-all;" id="permission-detail"></div>
+    <div style="display:flex; gap:10px;">
+      <button onclick="handlePermission('approve')" style="flex:1; padding:10px; border-radius:10px; border:none; background:#34c759; color:#fff; font-size:15px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent;">Allow</button>
+      <button onclick="handlePermission('deny')" style="flex:1; padding:10px; border-radius:10px; border:none; background:#ff3b30; color:#fff; font-size:15px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent;">Deny</button>
+    </div>
+  </div>
+  <div id="inject-area" style="flex-shrink:0;">
+    <div style="padding:6px 12px; padding-bottom:max(10px, env(safe-area-inset-bottom)); background:#fff; border-top:1px solid #e8e8ed; display:flex; gap:8px; align-items:flex-end;">
+      <textarea id="inject-input" rows="1" placeholder="Message..." oninput="autoResize(this)" style="flex:1; font-size:16px; padding:10px 16px; border:1px solid #e0e0e0; border-radius:22px; resize:none; max-height:120px; min-height:42px; font-family:-apple-system,system-ui,sans-serif; line-height:1.35; background:#f9f9f9; color:#1c1c1e;"></textarea>
+      <button id="inject-btn" onclick="injectMessage()" style="background:linear-gradient(135deg,#007aff 0%,#5856d6 100%); color:#fff; border:none; border-radius:50%; width:42px; height:42px; font-size:20px; font-weight:700; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent;">&#8593;</button>
+    </div>
+  </div>
+
+  <script>
+    const SESSION_ID = "{{SESSION_ID}}";
+    const messagesEl = document.getElementById("messages");
+
+    function autoResize(el) {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 120) + "px";
+    }
+
+    function scrollToBottom() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function escHtml(s) {
+      const div = document.createElement("div");
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    function addUserMsg(text) {
+      const div = document.createElement("div");
+      div.className = "msg user";
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    function simpleMd(text) {
+      // Escape HTML first
+      let s = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      // Code blocks: ```...```
+      s = s.replace(/```([\s\S]*?)```/g, function(_, code) {
+        return "<pre><code>" + code.trim() + "</code></pre>";
+      });
+      // Inline code
+      s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+      // Bold
+      s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      // Italic
+      s = s.replace(/(?<![*])\*(?![*])(.+?)(?<![*])\*(?![*])/g, "<em>$1</em>");
+      // Headers
+      s = s.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+      s = s.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+      s = s.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+      // Unordered lists
+      s = s.replace(/^[\-\*] (.+)$/gm, "<li>$1</li>");
+      s = s.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
+      // Ordered lists
+      s = s.replace(/^\d+\.\s(.+)$/gm, "<li>$1</li>");
+      // Paragraphs: split by double newline
+      s = s.split(/\n\n+/).map(function(block) {
+        block = block.trim();
+        if (!block) return "";
+        if (block.startsWith("<h") || block.startsWith("<pre") || block.startsWith("<ul") || block.startsWith("<ol") || block.startsWith("<li")) return block;
+        return "<p>" + block.replace(/\n/g, "<br>") + "</p>";
+      }).join("");
+      return s;
+    }
+
+    function addAssistantMsg(text) {
+      const div = document.createElement("div");
+      div.className = "msg assistant";
+      div.innerHTML = simpleMd(text);
+      messagesEl.appendChild(div);
+      scrollToBottom();
+      return div;
+    }
+
+    function addThinking() {
+      const div = document.createElement("div");
+      div.className = "msg thinking";
+      div.textContent = "Thinking...";
+      messagesEl.appendChild(div);
+      scrollToBottom();
+      return div;
+    }
+
+    function addToolBlock(name, args, output) {
+      const div = document.createElement("div");
+      div.className = "tool-block";
+      const truncOutput = output && output.length > 500 ? output.slice(0, 500) + "..." : output;
+      div.innerHTML =
+        '<div class="tool-header"><span class="tool-icon">&#9881;</span> <strong>' + escHtml(name) + '</strong></div>' +
+        (output ? '<div class="tool-output">' + escHtml(truncOutput) + '</div>' : '');
+      div.onclick = function() { div.classList.toggle("expanded"); };
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    function renderMessages(messages) {
+      // Track tool results by tool_call_id for pairing
+      const toolOutputs = {};
+      for (const m of messages) {
+        if (m.role === "tool") toolOutputs[m.tool_call_id] = m.content;
+      }
+
+      for (const m of messages) {
+        if (m.role === "system") continue;
+        if (m.role === "user") {
+          addUserMsg(m.content);
+        } else if (m.role === "tool_use") {
+          // Claude Code tool use blocks
+          for (const t of (m.tools || [])) {
+            addToolBlock(t.name, t.input, "");
+          }
+        } else if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+          for (const tc of m.tool_calls) {
+            const output = toolOutputs[tc.id] || "";
+            addToolBlock(tc.function.name, tc.function.arguments, output);
+          }
+        } else if (m.role === "assistant" && m.content) {
+          addAssistantMsg(m.content);
+        }
+        // skip standalone tool messages (already handled above)
+      }
+    }
+
+    function renderNewMessages(newMsgs) {
+      const toolOutputs = {};
+      for (const m of newMsgs) {
+        if (m.role === "tool") toolOutputs[m.tool_call_id] = m.content;
+      }
+      for (const m of newMsgs) {
+        if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+          for (const tc of m.tool_calls) {
+            const output = toolOutputs[tc.id] || "";
+            addToolBlock(tc.function.name, tc.function.arguments, output);
+          }
+        } else if (m.role === "assistant" && m.content) {
+          addAssistantMsg(m.content);
+        }
+      }
+    }
+
+    let isLinkedCC = false;
+    let lastMessageCount = 0;
+    let ws = null;
+    let wsReconnectTimer = null;
+    let pollFallbackTimer = null;
+
+    async function loadSession() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        if (data.title) document.getElementById("chat-title").textContent = data.title;
+        isLinkedCC = !!(data.cc_project_dir && data.claude_session_id);
+        if (data.messages) {
+          renderMessages(data.messages);
+          lastMessageCount = data.messages.length;
+        }
+        // Connect WebSocket for real-time updates
+        if (isLinkedCC) connectWebSocket();
+      } catch (e) {}
+    }
+
+    function connectWebSocket() {
+      if (ws && ws.readyState <= 1) return; // already open or connecting
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(proto + "//" + location.host + "/?session_id=" + SESSION_ID);
+
+      ws.onopen = () => {
+        // Connected — stop any polling fallback
+        if (pollFallbackTimer) { clearInterval(pollFallbackTimer); pollFallbackTimer = null; }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "session_update") {
+            // Update messages if count changed
+            if (data.messages && data.messages.length !== lastMessageCount) {
+              messagesEl.innerHTML = "";
+              renderMessages(data.messages);
+              lastMessageCount = data.messages.length;
+            }
+            // Update permission bar
+            updatePermissionBar(data.permission);
+          }
+        } catch (_) {}
+      };
+
+      ws.onclose = () => {
+        ws = null;
+        // Reconnect after 3 seconds, fall back to polling in the meantime
+        if (!pollFallbackTimer && isLinkedCC) {
+          pollFallbackTimer = setInterval(pollRefresh, 5000);
+        }
+        wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+    }
+
+    // Polling fallback when WebSocket is disconnected
+    async function pollRefresh() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        if (data.messages && data.messages.length !== lastMessageCount) {
+          messagesEl.innerHTML = "";
+          renderMessages(data.messages);
+          lastMessageCount = data.messages.length;
+        }
+        if (isLinkedCC) {
+          const pResp = await fetch("/api/sessions/" + SESSION_ID + "/pending-permission");
+          const pData = await pResp.json();
+          updatePermissionBar(pData);
+        }
+      } catch (_) {}
+    }
+
+    // Cooldown: suppress permission bar for 10s after Allow/Deny to prevent ghost reappearance
+    let permissionCooldownUntil = 0;
+
+    function updatePermissionBar(data) {
+      const bar = document.getElementById("permission-bar");
+      if (Date.now() < permissionCooldownUntil) {
+        bar.style.display = "none";
+        return;
+      }
+      if (data && data.pending && data.tools) {
+        const toolNames = data.tools.map(t => t.name).join(", ");
+        const detail = data.tools.map(t => t.name + ": " + t.input).join("\n");
+        document.getElementById("permission-label").textContent = "Approve " + toolNames + "?";
+        document.getElementById("permission-detail").textContent = detail;
+        bar.style.display = "";
+        scrollToBottom();
+      } else {
+        bar.style.display = "none";
+      }
+    }
+
+    async function handlePermission(action) {
+      const bar = document.getElementById("permission-bar");
+      const buttons = bar.querySelectorAll("button");
+      buttons.forEach(b => { b.disabled = true; b.style.opacity = "0.5"; });
+      try {
+        await fetch("/api/sessions/" + SESSION_ID + "/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action })
+        });
+        bar.style.display = "none";
+        // Suppress permission bar for 10 seconds to prevent ghost reappearance
+        permissionCooldownUntil = Date.now() + 10000;
+      } catch (_) {}
+      buttons.forEach(b => { b.disabled = false; b.style.opacity = "1"; });
+    }
+
+    // ── Inject message into Claude Desktop ──
+    let injecting = false;
+
+    async function injectMessage() {
+      if (injecting) return;
+      const injectInput = document.getElementById("inject-input");
+      const injectBtn = document.getElementById("inject-btn");
+      const content = injectInput.value.trim();
+      if (!content) return;
+
+      injecting = true;
+      injectBtn.disabled = true;
+      injectBtn.style.opacity = "0.5";
+      injectInput.value = "";
+      injectInput.style.height = "auto";
+
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID + "/message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content })
+        });
+        const data = await resp.json();
+        if (data.error) {
+          alert("Send failed: " + data.error);
+        }
+        // The live refresh will pick up the new messages automatically
+      } catch (err) {
+        alert("Inject failed: " + err.message);
+      }
+
+      injecting = false;
+      injectBtn.disabled = false;
+      injectBtn.style.opacity = "1";
+      injectInput.focus();
+    }
+
+    // Wire up Enter key for inject input
+    document.addEventListener("DOMContentLoaded", () => {
+      const injectInput = document.getElementById("inject-input");
+      if (injectInput) {
+        injectInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            injectMessage();
+          }
+        });
+      }
+    });
+
+    async function copyChat(btn) {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        let text = "";
+        for (const m of (data.messages || [])) {
+          if (m.role === "system") continue;
+          if (m.role === "user") text += "You: " + m.content + "\n\n";
+          else if (m.role === "assistant" && m.content) text += "Agent: " + m.content + "\n\n";
+        }
+        const str = text.trim();
+        // Clipboard API needs HTTPS on iOS; fall back to textarea trick
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(str);
+        } else {
+          const ta = document.createElement("textarea");
+          ta.value = str;
+          ta.style.position = "fixed";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        btn.textContent = "Copied!";
+        btn.classList.add("copied");
+        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
+      } catch (e) {
+        btn.textContent = "Failed";
+        setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+      }
+    }
+
+    loadSession();
+  </script>
+</body>
+</html>

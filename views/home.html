@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 20px 16px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      color: #fff;
+    }
+    .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .header p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+    .top-bar {
+      padding: 16px 16px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .new-chat-btn {
+      padding: 15px;
+      background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
+      color: #fff;
+      text-align: center;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      width: 100%;
+      box-shadow: 0 4px 12px rgba(0,122,255,0.3);
+      transition: transform 0.1s, box-shadow 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .new-chat-btn:active { transform: scale(0.98); box-shadow: 0 2px 8px rgba(0,122,255,0.2); }
+    .search-input {
+      width: 100%;
+      padding: 11px 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      background: #e8e8ed;
+      -webkit-appearance: none;
+      color: #1c1c1e;
+      transition: background 0.2s;
+    }
+    .search-input:focus { outline: none; background: #fff; box-shadow: 0 0 0 3px rgba(0,122,255,0.2); }
+    .search-input::placeholder { color: #8e8e93; }
+    .session-list { padding: 0 16px; }
+    .session-item {
+      display: flex;
+      align-items: center;
+      background: #fff;
+      margin-bottom: 1px;
+      text-decoration: none;
+      color: inherit;
+      overflow: hidden;
+      transition: background 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .session-item:first-child { border-radius: 12px 12px 0 0; }
+    .session-item:last-child { border-radius: 0 0 12px 12px; margin-bottom: 12px; }
+    .session-item:only-child { border-radius: 12px; }
+    .session-item:active { background: #f2f2f7; }
+    .session-link {
+      flex: 1;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      min-width: 0;
+    }
+    .session-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: #1c1c1e;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .session-time { font-size: 13px; color: #8e8e93; margin-top: 3px; }
+    .session-action-btn {
+      background: none;
+      border: none;
+      padding: 14px;
+      font-size: 20px;
+      color: #8e8e93;
+      cursor: pointer;
+      flex-shrink: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .empty { text-align: center; padding: 60px 16px; color: #8e8e93; font-size: 15px; }
+    .footer-links { text-align: center; padding: 20px; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+    .footer-links a { color: #8e8e93; font-size: 13px; text-decoration: none; }
+
+    .start-chat-btn {
+      margin: 0 16px 16px;
+      padding: 14px;
+      background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
+      color: #fff;
+      text-align: center;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      width: calc(100% - 32px);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .start-chat-btn:active { transform: scale(0.98); }
+    .start-chat-btn:disabled { background: #d1d1d6; }
+
+    /* Folders */
+    .folder-header {
+      display: flex;
+      align-items: center;
+      background: #fff;
+      margin-bottom: 1px;
+      border-radius: 12px 12px 0 0;
+      padding: 13px 16px;
+      cursor: pointer;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .folder-header.collapsed { border-radius: 12px; margin-bottom: 12px; }
+    .folder-arrow {
+      font-size: 10px;
+      margin-right: 10px;
+      transition: transform 0.2s ease;
+      color: #8e8e93;
+    }
+    .folder-header.collapsed .folder-arrow { transform: rotate(-90deg); }
+    .folder-name { font-size: 15px; font-weight: 600; color: #1c1c1e; flex: 1; }
+    .folder-count {
+      font-size: 12px;
+      color: #8e8e93;
+      background: #e8e8ed;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-right: 10px;
+      font-weight: 500;
+    }
+    .folder-action-btn {
+      background: none; border: none; font-size: 18px; color: #8e8e93;
+      cursor: pointer; padding: 2px 4px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .folder-body { margin-bottom: 12px; }
+    .folder-body .session-item { border-radius: 0; margin-bottom: 0; }
+    .folder-body .session-item:first-child { border-radius: 0; }
+    .folder-body .session-item:last-child { border-radius: 0 0 12px 12px; margin-bottom: 0; }
+    .folder-body .session-link { padding-left: 36px; }
+    .folder-body.hidden { display: none; }
+
+    /* Modal overlay */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.45);
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      justify-content: center;
+      align-items: flex-end;
+      padding: 0 10px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: rgba(255,255,255,0.95);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      border-radius: 14px;
+      width: 100%;
+      max-width: 400px;
+      overflow: hidden;
+    }
+    .modal-title {
+      padding: 14px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+      color: #8e8e93;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .modal-btn {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      border: none;
+      background: none;
+      font-size: 18px;
+      cursor: pointer;
+      text-align: center;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      color: #007aff;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .modal-btn:last-child { border-bottom: none; }
+    .modal-btn:active { background: rgba(0,0,0,0.04); }
+    .modal-btn.danger { color: #ff3b30; }
+    .modal-cancel {
+      display: block;
+      width: 100%;
+      margin-top: 8px;
+      padding: 16px;
+      border: none;
+      background: rgba(255,255,255,0.95);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      border-radius: 14px;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #007aff;
+      max-width: 400px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .modal-cancel:active { background: rgba(255,255,255,0.8); }
+
+    /* Rename input inside modal */
+    .rename-row {
+      display: none;
+      padding: 12px 16px;
+      gap: 8px;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+    }
+    .rename-row.active { display: flex; }
+    .rename-row input {
+      flex: 1;
+      font-size: 16px;
+      padding: 10px 14px;
+      border: 1px solid #d1d1d6;
+      border-radius: 10px;
+      background: #fff;
+      -webkit-appearance: none;
+    }
+    .rename-row input:focus { outline: none; border-color: #007aff; box-shadow: 0 0 0 3px rgba(0,122,255,0.15); }
+    .rename-row button {
+      padding: 10px 18px;
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Section labels */
+    .section-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 16px 4px 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Agent Brain</h1>
+    <p>Your personal assistant</p>
+  </div>
+  <div class="top-bar">
+    <button class="new-chat-btn" onclick="openNewChatModal()">+ New Chat</button>
+    <input type="text" class="search-input" id="search" placeholder="Search sessions...">
+  </div>
+  <div class="session-list" id="session-list"></div>
+  <div style="height:40px;"></div>
+
+  <!-- Action modal -->
+  <div class="modal-overlay" id="modal" onclick="closeModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title" id="modal-title"></div>
+        <div class="rename-row" id="rename-row">
+          <input type="text" id="rename-input" placeholder="New name...">
+          <button onclick="doRename()">Save</button>
+        </div>
+        <div id="main-actions">
+          <button class="modal-btn" onclick="showRename()">Rename</button>
+          <button class="modal-btn" onclick="showFolderPicker()">Move to Folder</button>
+          <button class="modal-btn" onclick="doArchive()">Archive</button>
+          <button class="modal-btn danger" onclick="doDelete()">Delete</button>
+        </div>
+        <div id="folder-picker" style="display:none;">
+          <div style="padding:14px 16px; font-size:13px; font-weight:600; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); text-transform:uppercase; letter-spacing:0.5px;">Move to folder</div>
+          <button class="modal-btn" onclick="doMoveToFolder(null)" style="color:#8e8e93;">Remove from folder</button>
+          <div id="folder-list-picker"></div>
+          <div class="rename-row active" style="display:flex;">
+            <input type="text" id="new-folder-input" placeholder="New folder name...">
+            <button onclick="doCreateFolderAndMove()">Create</button>
+          </div>
+        </div>
+      </div>
+      <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- New chat modal -->
+  <div class="modal-overlay" id="new-chat-modal" onclick="closeNewChatModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title">New Claude Code Session</div>
+        <div style="padding:0 16px 16px;">
+          <textarea id="new-chat-message" rows="3" placeholder="What would you like to work on?" style="width:100%; font-size:16px; padding:12px; border:1px solid #e0e0e0; border-radius:12px; resize:none; font-family:-apple-system,system-ui,sans-serif; line-height:1.4; background:#f9f9f9; color:#1c1c1e; -webkit-appearance:none;"></textarea>
+        </div>
+        <div id="new-chat-status" style="display:none; padding:0 16px 12px; text-align:center; font-size:13px; color:#8e8e93;">Opening Claude Desktop...</div>
+        <button class="start-chat-btn" onclick="startNewChat()">Start Session</button>
+      </div>
+      <button class="modal-cancel" onclick="closeNewChatModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Folder action modal -->
+  <div class="modal-overlay" id="folder-modal" onclick="closeFolderModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title" id="folder-modal-title"></div>
+        <div class="rename-row" id="folder-rename-row">
+          <input type="text" id="folder-rename-input" placeholder="New name...">
+          <button onclick="doRenameFolder()">Save</button>
+        </div>
+        <button class="modal-btn" onclick="showFolderRename()">Rename Folder</button>
+        <button class="modal-btn danger" onclick="doDeleteFolder()">Delete Folder</button>
+      </div>
+      <button class="modal-cancel" onclick="closeFolderModal()">Cancel</button>
+    </div>
+  </div>
+
+  <script>
+    let allSessions = [];
+    let allFolders = [];
+    let activeSessionId = null;
+    let activeFolderId = null;
+    let collapsedFolders = JSON.parse(localStorage.getItem("collapsedFolders") || "{}");
+
+    async function loadData() {
+      const [sResp, fResp, ccResp] = await Promise.all([
+        fetch("/api/sessions"),
+        fetch("/api/folders"),
+        fetch("/api/claude-sessions")
+      ]);
+      const abSessions = await sResp.json();
+      allFolders = await fResp.json();
+      const ccSessions = await ccResp.json();
+
+      // Build a set of CC session IDs already adopted by Agent Brain sessions
+      const adoptedCC = new Set();
+      for (const ab of abSessions) {
+        if (ab.claude_session_id) adoptedCC.add(ab.claude_session_id);
+      }
+
+      // Merge: AB sessions first (they already link to CC), then unadopted CC sessions
+      allSessions = [];
+      for (const ab of abSessions) {
+        allSessions.push({ ...ab, source: "agent-brain" });
+      }
+      for (const cc of ccSessions) {
+        if (!adoptedCC.has(cc.session_id)) {
+          allSessions.push({
+            session_id: cc.session_id,
+            title: cc.title,
+            updated_at: cc.updated_at,
+            source: "claude-code",
+            project_dir: cc.project_dir,
+            project_path: cc.project_path
+          });
+        }
+      }
+      // Sort all by updated_at descending
+      allSessions.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      renderList();
+    }
+
+    function renderList() {
+      const q = (document.getElementById("search").value || "").toLowerCase();
+      const list = document.getElementById("session-list");
+      const filtered = q ? allSessions.filter(s => s.title.toLowerCase().includes(q)) : allSessions;
+
+      // Build set of session IDs that are in folders
+      const inFolder = new Set();
+      for (const f of allFolders) {
+        for (const sid of f.session_ids) inFolder.add(sid);
+      }
+
+      let html = "";
+
+      // Render folders first
+      for (const f of allFolders) {
+        const folderSessions = filtered.filter(s => f.session_ids.includes(s.session_id));
+        if (q && folderSessions.length === 0) continue;
+        const isCollapsed = collapsedFolders[f.id];
+        html += '<div class="folder-header' + (isCollapsed ? ' collapsed' : '') + '" onclick="toggleFolder(\'' + f.id + '\')">' +
+          '<span class="folder-arrow">&#9660;</span>' +
+          '<span class="folder-name">' + esc(f.name) + '</span>' +
+          '<span class="folder-count">' + folderSessions.length + '</span>' +
+          '<button class="folder-action-btn" onclick="event.stopPropagation(); openFolderModal(\'' + f.id + '\', \'' + esc(f.name).replace(/'/g, "\\'") + '\')">&middot;&middot;&middot;</button>' +
+        '</div>';
+        html += '<div class="folder-body' + (isCollapsed ? ' hidden' : '') + '" id="folder-body-' + f.id + '">';
+        for (const s of folderSessions) {
+          html += sessionItemHtml(s);
+        }
+        html += '</div>';
+      }
+
+      // Unfiled sessions
+      const unfiled = filtered.filter(s => !inFolder.has(s.session_id));
+      for (const s of unfiled) {
+        html += sessionItemHtml(s);
+      }
+
+      if (!html) {
+        html = '<div class="empty">' + (q ? 'No matching sessions' : 'No sessions yet. Start a new chat!') + '</div>';
+      }
+
+      list.innerHTML = html;
+    }
+
+    function sessionItemHtml(s) {
+      const ago = timeAgo(s.updated_at);
+      if (s.source === "claude-code") {
+        // CC session not yet adopted — clicking adopts it
+        const shortPath = (s.project_path || "").split("/").filter(Boolean).slice(-1)[0] || "";
+        const meta = ago + (shortPath ? ' &bull; ' + esc(shortPath) : '');
+        return '<div class="session-item" onclick="adoptCCSession(\'' + esc(s.project_dir) + '\', \'' + s.session_id + '\')" style="cursor:pointer;">' +
+          '<div class="session-link">' +
+            '<div class="session-title">' + esc(s.title) + '</div>' +
+            '<div class="session-time">' + meta + '</div>' +
+          '</div>' +
+        '</div>';
+      }
+      return '<div class="session-item">' +
+        '<a href="/chat/' + s.session_id + '" class="session-link">' +
+          '<div class="session-title">' + esc(s.title) + '</div>' +
+          '<div class="session-time">' + ago + '</div>' +
+        '</a>' +
+        '<button class="session-action-btn" onclick="openModal(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">&middot;&middot;&middot;</button>' +
+      '</div>';
+    }
+
+    async function adoptCCSession(projectDir, sessionId) {
+      const resp = await fetch("/api/claude-sessions/" + projectDir + "/" + sessionId + "/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const data = await resp.json();
+      if (data.session_id) window.location.href = "/chat/" + data.session_id;
+    }
+
+    function toggleFolder(folderId) {
+      collapsedFolders[folderId] = !collapsedFolders[folderId];
+      localStorage.setItem("collapsedFolders", JSON.stringify(collapsedFolders));
+      renderList();
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function timeAgo(iso) {
+      const diff = Date.now() - new Date(iso).getTime();
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return "just now";
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+
+    // ── Session action modal ──
+    function openModal(id, title) {
+      activeSessionId = id;
+      document.getElementById("modal-title").textContent = title;
+      document.getElementById("rename-input").value = title;
+      document.getElementById("rename-row").classList.remove("active");
+      document.getElementById("main-actions").style.display = "";
+      document.getElementById("folder-picker").style.display = "none";
+      document.getElementById("modal").classList.add("active");
+    }
+
+    function closeModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("modal").classList.remove("active");
+      activeSessionId = null;
+    }
+
+    function showRename() {
+      document.getElementById("rename-row").classList.add("active");
+      document.getElementById("rename-input").focus();
+    }
+
+    async function doRename() {
+      const title = document.getElementById("rename-input").value.trim();
+      if (!title || !activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
+      });
+      closeModal();
+      loadData();
+    }
+
+    async function doArchive() {
+      if (!activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId + "/archive", { method: "POST" });
+      closeModal();
+      loadData();
+    }
+
+    async function doDelete() {
+      if (!activeSessionId) return;
+      if (!confirm("Delete this session permanently?")) return;
+      await fetch("/api/sessions/" + activeSessionId, { method: "DELETE" });
+      closeModal();
+      loadData();
+    }
+
+    // ── Folder picker in session modal ──
+    function showFolderPicker() {
+      document.getElementById("main-actions").style.display = "none";
+      const picker = document.getElementById("folder-picker");
+      picker.style.display = "";
+      // Populate folder buttons
+      const listEl = document.getElementById("folder-list-picker");
+      listEl.innerHTML = allFolders.map(f =>
+        '<button class="modal-btn" onclick="doMoveToFolder(\'' + f.id + '\')">' + esc(f.name) + '</button>'
+      ).join("");
+      document.getElementById("new-folder-input").value = "";
+    }
+
+    async function doMoveToFolder(folderId) {
+      if (!activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId + "/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_id: folderId })
+      });
+      closeModal();
+      loadData();
+    }
+
+    async function doCreateFolderAndMove() {
+      const name = document.getElementById("new-folder-input").value.trim();
+      if (!name || !activeSessionId) return;
+      const resp = await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const folders = await resp.json();
+      // Move to the new folder (last one created)
+      const newFolder = folders[folders.length - 1];
+      await doMoveToFolder(newFolder.id);
+    }
+
+    // ── Folder action modal ──
+    function openFolderModal(id, name) {
+      activeFolderId = id;
+      document.getElementById("folder-modal-title").textContent = name;
+      document.getElementById("folder-rename-input").value = name;
+      document.getElementById("folder-rename-row").classList.remove("active");
+      document.getElementById("folder-modal").classList.add("active");
+    }
+
+    function closeFolderModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("folder-modal").classList.remove("active");
+      activeFolderId = null;
+    }
+
+    function showFolderRename() {
+      document.getElementById("folder-rename-row").classList.add("active");
+      document.getElementById("folder-rename-input").focus();
+    }
+
+    async function doRenameFolder() {
+      const name = document.getElementById("folder-rename-input").value.trim();
+      if (!name || !activeFolderId) return;
+      await fetch("/api/folders/" + activeFolderId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      closeFolderModal();
+      loadData();
+    }
+
+    async function doDeleteFolder() {
+      if (!activeFolderId) return;
+      if (!confirm("Delete this folder? Sessions inside will become unfiled.")) return;
+      await fetch("/api/folders/" + activeFolderId, { method: "DELETE" });
+      closeFolderModal();
+      loadData();
+    }
+
+    // ── New Chat Modal ──
+    function openNewChatModal() {
+      document.getElementById("new-chat-message").value = "";
+      document.getElementById("new-chat-status").style.display = "none";
+      document.getElementById("new-chat-modal").classList.add("active");
+      setTimeout(() => document.getElementById("new-chat-message").focus(), 300);
+    }
+
+    function closeNewChatModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("new-chat-modal").classList.remove("active");
+    }
+
+    async function startNewChat() {
+      const msg = document.getElementById("new-chat-message").value.trim();
+      if (!msg) return;
+      const statusEl = document.getElementById("new-chat-status");
+      statusEl.style.display = "";
+      statusEl.textContent = "Opening Claude Desktop...";
+      try {
+        const resp = await fetch("/chat/new", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg })
+        });
+        const data = await resp.json();
+        if (data.error) {
+          statusEl.textContent = "Error: " + data.error;
+          return;
+        }
+        statusEl.textContent = data.linked ? "Linked! Redirecting..." : "Session created. Redirecting...";
+        window.location.href = "/chat/" + data.session_id;
+      } catch (e) {
+        statusEl.textContent = "Failed: " + e.message;
+      }
+    }
+
+    // Wire up search
+    document.getElementById("search").addEventListener("input", renderList);
+
+    loadData();
+  </script>
+</body>
+</html>
