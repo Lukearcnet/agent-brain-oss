@@ -5,17 +5,15 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFile } = require("child_process");
-const OpenAI = require("openai");
-
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// OpenAI removed — Agent Brain is now Claude-only
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const RUNS_DIR = path.join(__dirname, "runs");
-if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR);
+const HOME = os.homedir();
+
 
 const SESSIONS_DIR = path.join(__dirname, "sessions");
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
@@ -23,119 +21,235 @@ if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
 const ARCHIVE_DIR = path.join(__dirname, "sessions", "archive");
 if (!fs.existsSync(ARCHIVE_DIR)) fs.mkdirSync(ARCHIVE_DIR);
 
-const HOME = os.homedir();
+// ── Claude Desktop ──────────────────────────────────────────────────────────
+const CLAUDE_SESSIONS_DIR = path.join(HOME, ".claude", "projects");
+const HELPER_APP = path.join(__dirname, "AgentBrainHelper.app", "Contents", "MacOS", "helper");
 
-const ALLOWED_COMMANDS = new Set([
-  "ls", "pwd", "whoami", "git", "node", "npm", "python3", "claude"
-]);
 
-const SYSTEM_PROMPT = `You are a helpful assistant running on Luke's Mac.
-HOME is ${HOME}. The current date is ${new Date().toLocaleDateString()}.
-
-Available tools:
-- run_command: Execute whitelisted shell commands (ls, pwd, whoami, git, node, npm, python3, claude)
-- read_file: Read file contents
-- write_file: Create or overwrite files
-- list_dir: List directory contents with sizes
-- http_request: Make HTTP requests to external APIs (Airtable, Notion, Gmail, etc.)
-
-External APIs — authentication headers are AUTOMATICALLY injected by the system. Just call http_request with the URL. NEVER ask the user for API keys or tokens.
-
-NOTION: You have full access. Auth headers are auto-injected for any api.notion.com request.
-  Base URL: https://api.notion.com/v1
-  To search: POST https://api.notion.com/v1/search with body {"query": "search term"} or {} for all
-  Other endpoints: GET /pages/{id}, GET /databases/{id}, POST /databases/{id}/query, POST /pages (create), PATCH /pages/{id} (update), PATCH /blocks/{id}/children (append content)
-  IMPORTANT: When calling Notion, just use http_request with the URL. Do NOT set Authorization headers — they are added automatically.
-
-AIRTABLE: Auth headers are auto-injected for any api.airtable.com request.
-  Token and base config are in ~/Documents/TCC Project/Insiders Project/eaa-insiders-call-booker/airtable-config.md. Read that file for base ID, table names, etc.
-
-Rules:
-- All file paths must be under ${HOME}
-- Use "${HOME}" as the base for paths (not /Users/luke/...)
-- You can chain multiple tool calls to complete complex tasks
-- Think step by step for multi-step tasks
-- If a command fails, explain the error and try an alternative approach`;
-
-const TOOLS = [
-  {
-    type: "function",
-    function: {
-      name: "run_command",
-      description: "Run a shell command. Only whitelisted commands are allowed: ls, pwd, whoami, git, node, npm, python3, claude.",
-      parameters: {
-        type: "object",
-        properties: {
-          command: { type: "string", description: "The command to run (e.g. 'git', 'ls')" },
-          args: { type: "array", items: { type: "string" }, description: "Command arguments" },
-          cwd: { type: "string", description: `Working directory. Defaults to ${HOME}. Must be under HOME.` }
-        },
-        required: ["command"]
+function decodeClaudeProjectDir(encoded) {
+  // Claude Code encodes paths like: -Users-lukeblanton-agent-brain
+  // where - is the path separator (/) but also appears in real names
+  // Strategy: try progressively joining segments to find real paths
+  const parts = encoded.replace(/^-/, "").split("-");
+  let resolved = "/";
+  for (let i = 0; i < parts.length; i++) {
+    // Try adding just this segment
+    const tryPath = path.join(resolved, parts[i]);
+    if (fs.existsSync(tryPath)) {
+      resolved = tryPath;
+    } else {
+      // Try joining with the next segment(s) using dashes (it might be a hyphenated name)
+      let found = false;
+      let combined = parts[i];
+      for (let j = i + 1; j < parts.length; j++) {
+        combined += "-" + parts[j];
+        const tryCombo = path.join(resolved, combined);
+        if (fs.existsSync(tryCombo)) {
+          resolved = tryCombo;
+          i = j; // skip ahead
+          found = true;
+          break;
+        }
       }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "read_file",
-      description: "Read the contents of a file. Path must be under HOME.",
-      parameters: {
-        type: "object",
-        properties: {
-          file_path: { type: "string", description: "Path to the file. Can use ~ for HOME." },
-          max_chars: { type: "number", description: "Maximum characters to return. Defaults to 12000." }
-        },
-        required: ["file_path"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "write_file",
-      description: "Write content to a file (creates or overwrites). Path must be under HOME.",
-      parameters: {
-        type: "object",
-        properties: {
-          file_path: { type: "string", description: "Path to the file. Can use ~ for HOME." },
-          content: { type: "string", description: "The content to write." }
-        },
-        required: ["file_path", "content"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_dir",
-      description: "List the contents of a directory with file types and sizes. Path must be under HOME.",
-      parameters: {
-        type: "object",
-        properties: {
-          dir_path: { type: "string", description: "Path to directory. Can use ~ for HOME. Defaults to HOME." }
-        },
-        required: []
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "http_request",
-      description: "Make an HTTP request to an external API. Use this for Airtable, Notion, Gmail, or any REST API. Returns the response body as text.",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "The full URL to request." },
-          method: { type: "string", description: "HTTP method: GET, POST, PUT, PATCH, DELETE. Defaults to GET." },
-          headers: { type: "object", description: "HTTP headers as key-value pairs (e.g. {\"Authorization\": \"Bearer ...\", \"Content-Type\": \"application/json\"})." },
-          body: { type: "string", description: "Request body as a string. For JSON APIs, pass a JSON string." }
-        },
-        required: ["url"]
+      if (!found) {
+        // Can't resolve — just join remaining with dashes
+        resolved = path.join(resolved, parts.slice(i).join("-"));
+        break;
       }
     }
   }
-];
+  return resolved;
+}
+
+function listClaudeCodeSessions() {
+  // Scan ~/.claude/projects/ for session JSONL files
+  const results = [];
+  try {
+    const projectDirs = fs.readdirSync(CLAUDE_SESSIONS_DIR);
+    for (const dir of projectDirs) {
+      const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
+      const stat = fs.statSync(dirPath);
+      if (!stat.isDirectory()) continue;
+      const files = fs.readdirSync(dirPath).filter(f => f.endsWith(".jsonl"));
+      for (const f of files) {
+        const sessionId = f.replace(".jsonl", "");
+        const filePath = path.join(dirPath, f);
+        const fileStat = fs.statSync(filePath);
+        // Read only first ~50 lines to extract metadata efficiently
+        let firstUserMsg = "";
+        let slug = "";
+        try {
+          const fd = fs.openSync(filePath, "r");
+          const buf = Buffer.alloc(32768); // 32KB should cover first messages
+          const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+          fs.closeSync(fd);
+          const chunk = buf.slice(0, bytesRead).toString("utf8");
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const obj = JSON.parse(line);
+              if (obj.slug && !slug) slug = obj.slug;
+              if (obj.type === "user" && obj.message && obj.message.content && !firstUserMsg) {
+                const txt = typeof obj.message.content === "string" ? obj.message.content : "";
+                if (txt && !obj.toolUseResult) firstUserMsg = txt.slice(0, 80);
+              }
+              if (firstUserMsg && slug) break;
+            } catch (_) {}
+          }
+        } catch (_) {}
+        // Decode project path
+        let projectPath = decodeClaudeProjectDir(dir);
+        let title = firstUserMsg || path.basename(projectPath);
+        results.push({
+          session_id: sessionId,
+          project_dir: dir,
+          project_path: projectPath,
+          slug: slug,
+          title: title.length > 55 ? title.slice(0, 52) + "..." : title,
+          updated_at: fileStat.mtime.toISOString(),
+          source: "claude-code"
+        });
+      }
+    }
+  } catch (_) {}
+  // Sort by most recent
+  results.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  return results.slice(0, 50); // Cap at 50
+}
+
+function readClaudeCodeSession(projectDir, sessionId) {
+  const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, sessionId + ".jsonl");
+  if (!fs.existsSync(filePath)) return null;
+  const content = fs.readFileSync(filePath, "utf8");
+  const lines = content.trim().split("\n");
+  const messages = [];
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      if (obj.type === "user" && obj.message) {
+        const txt = typeof obj.message.content === "string" ? obj.message.content : "";
+        if (txt && !obj.toolUseResult) {
+          messages.push({ role: "user", content: txt });
+        }
+      } else if (obj.type === "assistant" && obj.message) {
+        const contentBlocks = obj.message.content || [];
+        let text = "";
+        const toolCalls = [];
+        for (const block of contentBlocks) {
+          if (block.type === "text") text += block.text;
+          else if (block.type === "tool_use") {
+            toolCalls.push({ name: block.name, input: JSON.stringify(block.input || {}).slice(0, 500) });
+          }
+        }
+        if (toolCalls.length > 0) {
+          messages.push({ role: "tool_use", tools: toolCalls });
+        }
+        if (text.trim()) {
+          messages.push({ role: "assistant", content: text });
+        }
+      } else if (obj.type === "user" && obj.toolUseResult) {
+        // Tool result — skip for display (too noisy)
+      }
+    } catch (_) {}
+  }
+  return messages;
+}
+
+// ── Claude Desktop keystroke injection ──────────────────────────────────────
+
+function injectIntoClaudeDesktop(message) {
+  return new Promise((resolve, reject) => {
+    // Native Swift binary handles: activate Claude, clipboard paste, Enter key
+    // The binary IS the .app bundle executable, so macOS Accessibility permission
+    // applies to AgentBrainHelper.app (not osascript).
+    execFile(HELPER_APP, [message], { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr || err.message));
+      resolve("Message injected into Claude Desktop");
+    });
+  });
+}
+
+// Check if a linked CC session has a pending permission prompt
+function checkPendingPermission(projectDir, sessionId) {
+  const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, sessionId + ".jsonl");
+  if (!fs.existsSync(filePath)) return null;
+
+  // Read last ~8KB to find the most recent entries
+  const stat = fs.statSync(filePath);
+  const readSize = Math.min(stat.size, 8192);
+  const buf = Buffer.alloc(readSize);
+  const fd = fs.openSync(filePath, "r");
+  fs.readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
+  fs.closeSync(fd);
+  const tail = buf.toString("utf8");
+  const lines = tail.split("\n").filter(l => l.trim());
+
+  // Walk backwards to find state
+  let lastAssistantToolUse = null;
+  let hasToolResultAfter = false;
+  let lastType = null;
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i]);
+      if (!lastType) lastType = obj.type;
+
+      // If we find a user entry with tool_result content, mark it
+      if (obj.type === "user" && obj.message && Array.isArray(obj.message.content)) {
+        for (const c of obj.message.content) {
+          if (c.type === "tool_result") { hasToolResultAfter = true; break; }
+        }
+      }
+
+      // Find last assistant tool_use
+      if (obj.type === "assistant" && obj.message && Array.isArray(obj.message.content)) {
+        const tools = obj.message.content.filter(c => c.type === "tool_use");
+        if (tools.length > 0) {
+          lastAssistantToolUse = tools.map(t => ({
+            name: t.name,
+            input: JSON.stringify(t.input || {}).slice(0, 300)
+          }));
+          break; // Found the last tool_use, stop
+        }
+      }
+    } catch (_) {}
+  }
+
+  // If last assistant had tool_use and no tool_result followed, Claude is waiting
+  if (lastAssistantToolUse && !hasToolResultAfter) {
+    // Also check if file hasn't been modified in the last 2 seconds (settled)
+    const mtime = stat.mtimeMs;
+    const age = Date.now() - mtime;
+    if (age > 2000) {
+      return { pending: true, tools: lastAssistantToolUse };
+    }
+  }
+
+  return { pending: false };
+}
+
+// Send a keystroke to Claude Desktop (Enter to approve, Escape to deny)
+function sendKeystrokeToClaude(keyCode) {
+  return new Promise((resolve, reject) => {
+    // key code 36 = Enter/Return, key code 53 = Escape
+    const script = `
+tell application "Claude" to activate
+delay 0.5
+tell application "System Events"
+  tell process "Claude"
+    set frontmost to true
+    delay 0.3
+    key code ${keyCode}
+  end tell
+end tell
+`;
+    execFile("/usr/bin/osascript", ["-e", script], { timeout: 10000 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr || err.message));
+      resolve("OK");
+    });
+  });
+}
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -153,116 +267,6 @@ function nowId() {
   );
 }
 
-function ensurePathInHome(userPath) {
-  let p = String(userPath || "").trim();
-
-  if (p === "~") p = HOME;
-  else if (p.startsWith("~/")) p = path.join(HOME, p.slice(2));
-
-  if (!path.isAbsolute(p)) p = path.join(HOME, p);
-
-  const resolved = path.resolve(p);
-
-  if (resolved !== HOME && !resolved.startsWith(HOME + path.sep)) {
-    throw new Error(`Path not allowed: ${resolved}`);
-  }
-  return resolved;
-}
-
-// ── Tool implementations ─────────────────────────────────────────────────────
-
-function readFileTool({ file_path, max_chars = 12000 }) {
-  const p = ensurePathInHome(file_path);
-  const data = fs.readFileSync(p, "utf8");
-  return data.slice(0, max_chars);
-}
-
-function writeFileTool({ file_path, content }) {
-  const p = ensurePathInHome(file_path);
-  const dir = path.dirname(p);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(p, content, "utf8");
-  return `Wrote ${content.length} chars to ${p}`;
-}
-
-function listDirTool({ dir_path = "~" }) {
-  const p = ensurePathInHome(dir_path);
-  const entries = fs.readdirSync(p, { withFileTypes: true });
-  const lines = entries.map(e => {
-    const fullPath = path.join(p, e.name);
-    let info = e.isDirectory() ? "[dir]" : "[file]";
-    if (e.isFile()) {
-      try {
-        const stat = fs.statSync(fullPath);
-        info += ` ${stat.size}b`;
-      } catch (_) {}
-    }
-    if (e.isSymbolicLink()) info = "[symlink]";
-    return `${info}  ${e.name}`;
-  });
-  return lines.join("\n");
-}
-
-function runCommandTool({ command, args = [], cwd = HOME }) {
-  if (!ALLOWED_COMMANDS.has(command)) {
-    throw new Error(`Command not allowed: ${command}`);
-  }
-  const safeCwd = ensurePathInHome(cwd);
-  return new Promise((resolve, reject) => {
-    execFile(
-      command,
-      Array.isArray(args) ? args : [],
-      { cwd: safeCwd, timeout: 120000, maxBuffer: 2 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) return reject(new Error(stderr || err.message));
-        resolve(stdout + (stderr ? "\n" + stderr : ""));
-      }
-    );
-  });
-}
-
-async function httpRequestTool({ url, method = "GET", headers = {}, body }) {
-  // Auto-inject credentials for known APIs so the model doesn't have to
-  if (url.includes("api.notion.com") && process.env.NOTION_API_KEY) {
-    headers = {
-      "Authorization": `Bearer ${process.env.NOTION_API_KEY}`,
-      "Notion-Version": "2022-06-28",
-      "Content-Type": "application/json",
-      ...headers
-    };
-  }
-  if (url.includes("api.airtable.com") && process.env.AIRTABLE_API_KEY) {
-    headers = {
-      "Authorization": `Bearer ${process.env.AIRTABLE_API_KEY}`,
-      "Content-Type": "application/json",
-      ...headers
-    };
-  }
-
-  const opts = {
-    method: method.toUpperCase(),
-    headers
-  };
-  if (body && opts.method !== "GET") opts.body = body;
-  const resp = await fetch(url, opts);
-  const text = await resp.text();
-  const prefix = `${resp.status} ${resp.statusText}\n`;
-  // Truncate large responses to avoid blowing up context
-  if (text.length > 20000) return prefix + text.slice(0, 20000) + "\n...(truncated)";
-  return prefix + text;
-}
-
-async function dispatchTool(name, args) {
-  switch (name) {
-    case "run_command":   return runCommandTool(args);
-    case "read_file":     return readFileTool(args);
-    case "write_file":    return writeFileTool(args);
-    case "list_dir":      return listDirTool(args);
-    case "http_request":  return httpRequestTool(args);
-    default: throw new Error(`Unknown tool: ${name}`);
-  }
-}
-
 // ── Session management ───────────────────────────────────────────────────────
 
 function createSession() {
@@ -272,7 +276,10 @@ function createSession() {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     title: "",
-    messages: [{ role: "system", content: SYSTEM_PROMPT }]
+    provider: "claude-code",
+    claude_session_id: null,
+    cc_project_dir: null,
+    messages: []
   };
   saveSession(session);
   return session;
@@ -292,14 +299,15 @@ function loadSession(session_id) {
 
 function listSessions() {
   if (!fs.existsSync(SESSIONS_DIR)) return [];
-  const files = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith(".json")).sort().reverse();
+  const files = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith(".json") && f !== "folders.json").sort().reverse();
   return files.map(f => {
     const data = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), "utf8"));
     return {
       session_id: data.session_id,
       title: data.title || "(untitled)",
       created_at: data.created_at,
-      updated_at: data.updated_at
+      updated_at: data.updated_at,
+      claude_session_id: data.claude_session_id || null
     };
   });
 }
@@ -314,118 +322,40 @@ function autoTitle(session) {
   }
 }
 
-// ── Agent loop ───────────────────────────────────────────────────────────────
+// ── Folder management ─────────────────────────────────────────────────────
 
-const MAX_ITERATIONS = 10;
+const FOLDERS_FILE = path.join(SESSIONS_DIR, "folders.json");
 
-async function runAgentLoop(session) {
-  const newMessages = [];
-
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const resp = await client.chat.completions.create({
-      model: "gpt-4.1",
-      messages: session.messages,
-      tools: TOOLS,
-      tool_choice: "auto"
-    });
-
-    const msg = resp.choices[0].message;
-    session.messages.push(msg);
-    newMessages.push(msg);
-
-    if (!msg.tool_calls || msg.tool_calls.length === 0) break;
-
-    const toolResults = await Promise.all(
-      msg.tool_calls.map(async (call) => {
-        let output;
-        try {
-          const args = JSON.parse(call.function.arguments);
-          output = await dispatchTool(call.function.name, args);
-        } catch (err) {
-          output = "Error: " + err.message;
-        }
-        return { role: "tool", tool_call_id: call.id, content: String(output) };
-      })
-    );
-
-    for (const tr of toolResults) {
-      session.messages.push(tr);
-      newMessages.push(tr);
-    }
-  }
-
-  autoTitle(session);
-  saveSession(session);
-  return newMessages;
+function loadFolders() {
+  if (!fs.existsSync(FOLDERS_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(FOLDERS_FILE, "utf8")); } catch (_) { return []; }
 }
 
-// ── Legacy routes (unchanged) ────────────────────────────────────────────────
+function saveFolders(folders) {
+  fs.writeFileSync(FOLDERS_FILE, JSON.stringify(folders, null, 2));
+}
 
-app.get("/runs", (_req, res) => {
-  const files = fs.readdirSync(RUNS_DIR).filter(f => f.endsWith(".json")).sort().reverse();
-  const items = files.map(f => {
-    const id = f.replace(".json", "");
-    return `<li><a href="/runs/${id}">${id}</a></li>`;
-  }).join("");
-  res.send(`
-    <html>
-      <body style="font-family:-apple-system; margin:24px;">
-        <h2>Runs</h2>
-        <p><a href="/chat">&larr; Back to Chat</a></p>
-        <ol>${items}</ol>
-      </body>
-    </html>
-  `);
-});
+function createFolder(name) {
+  const folders = loadFolders();
+  const id = "f_" + Date.now();
+  folders.push({ id, name, session_ids: [] });
+  saveFolders(folders);
+  return folders;
+}
 
-app.get("/runs/:id", (req, res) => {
-  const p = path.join(RUNS_DIR, `${req.params.id}.json`);
-  if (!fs.existsSync(p)) return res.send("Not found");
-  const data = JSON.parse(fs.readFileSync(p, "utf8"));
-  res.send(`
-    <html>
-      <body style="font-family:-apple-system; margin:24px;">
-        <p><a href="/runs">&larr; Back</a></p>
-        <h2>${req.params.id}</h2>
-        <h3>Task</h3>
-        <pre>${data.task}</pre>
-        <h3>Answer</h3>
-        <pre>${data.answer || data.error}</pre>
-      </body>
-    </html>
-  `);
-});
-
-app.post("/run", async (req, res) => {
-  const task = req.body.task;
-  const run_id = nowId();
-  const runPath = path.join(RUNS_DIR, `${run_id}.json`);
-  const tools = [{ type: "function", function: { name: "run_command", parameters: { type: "object", properties: { command: { type: "string" }, args: { type: "array", items: { type: "string" } }, cwd: { type: "string" } }, required: ["command"] } } }];
-  let messages = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: task }
-  ];
-  try {
-    const resp = await client.chat.completions.create({ model: "gpt-4.1", messages, tools, tool_choice: "auto" });
-    const msg = resp.choices[0].message;
-    if (msg.tool_calls) {
-      const call = msg.tool_calls[0];
-      const args = JSON.parse(call.function.arguments);
-      const output = await runCommandTool(args);
-      const followup = await client.chat.completions.create({ model: "gpt-4.1", messages: [...messages, msg, { role: "tool", tool_call_id: call.id, content: output }] });
-      const answer = followup.choices[0].message.content;
-      const result = { run_id, task, answer };
-      fs.writeFileSync(runPath, JSON.stringify(result, null, 2));
-      return res.json(result);
-    }
-    const answer = msg.content;
-    const result = { run_id, task, answer };
-    fs.writeFileSync(runPath, JSON.stringify(result, null, 2));
-    res.json(result);
-  } catch (e) {
-    res.json({ error: e.message });
+function moveToFolder(sessionId, folderId) {
+  const folders = loadFolders();
+  // Remove from any existing folder first
+  for (const f of folders) {
+    f.session_ids = f.session_ids.filter(s => s !== sessionId);
   }
-});
+  if (folderId) {
+    const folder = folders.find(f => f.id === folderId);
+    if (folder) folder.session_ids.push(sessionId);
+  }
+  saveFolders(folders);
+  return folders;
+}
 
 // ── API routes ───────────────────────────────────────────────────────────────
 
@@ -436,12 +366,88 @@ app.get("/api/sessions", (_req, res) => {
 app.get("/api/sessions/:id", (req, res) => {
   const session = loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // If this is a linked CC session, read messages live from JSONL
+  if (session.cc_project_dir && session.claude_session_id) {
+    const liveMessages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
+    if (liveMessages) session.messages = liveMessages;
+  }
+
   res.json(session);
 });
 
-app.post("/chat/new", (_req, res) => {
+// Create a new Claude Desktop conversation and link it
+app.post("/chat/new", async (req, res) => {
+  const firstMessage = (req.body.message || "").trim();
+  if (!firstMessage) return res.status(400).json({ error: "First message required" });
+
+  // Create Agent Brain session
   const session = createSession();
-  res.json({ session_id: session.session_id });
+
+  try {
+    // Snapshot existing JSONL files so we can detect the new one
+    const existingFiles = new Set();
+    try {
+      for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+        const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
+        if (!fs.statSync(dirPath).isDirectory()) continue;
+        for (const f of fs.readdirSync(dirPath)) {
+          if (f.endsWith(".jsonl")) existingFiles.add(dir + "/" + f);
+        }
+      }
+    } catch (_) {}
+
+    // Open Claude Desktop in Code mode — don't use Cmd+N (that opens Chat)
+    // Just navigate to Code view and inject directly into its input
+    await new Promise((resolve, reject) => {
+      execFile("/usr/bin/open", ["claude://claude.ai/claude-code-desktop"], { timeout: 5000 }, (err) => {
+        if (err) return reject(err);
+        // Wait for Code mode to fully load
+        setTimeout(resolve, 2500);
+      });
+    });
+
+    // Inject the first message directly into the Code input
+    await injectIntoClaudeDesktop(firstMessage);
+
+    // Auto-title from first message
+    session.title = firstMessage.length > 50 ? firstMessage.slice(0, 47) + "..." : firstMessage;
+    saveSession(session);
+
+    // Watch for the new JSONL to appear (poll for up to 30 seconds)
+    let linked = false;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+          const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
+          if (!fs.statSync(dirPath).isDirectory()) continue;
+          for (const f of fs.readdirSync(dirPath)) {
+            if (!f.endsWith(".jsonl")) continue;
+            const key = dir + "/" + f;
+            if (existingFiles.has(key)) continue;
+            // New JSONL found — check if it's recent (within last 20 seconds)
+            const stat = fs.statSync(path.join(dirPath, f));
+            if (Date.now() - stat.mtimeMs < 20000) {
+              session.cc_project_dir = dir;
+              session.claude_session_id = f.replace(".jsonl", "");
+              saveSession(session);
+              linked = true;
+              break;
+            }
+          }
+          if (linked) break;
+        }
+      } catch (_) {}
+      if (linked) break;
+    }
+
+    res.json({ session_id: session.session_id, linked });
+  } catch (e) {
+    // Still return the session even if linking fails
+    saveSession(session);
+    res.json({ session_id: session.session_id, linked: false, error: e.message });
+  }
 });
 
 app.patch("/api/sessions/:id", (req, res) => {
@@ -467,21 +473,132 @@ app.delete("/api/sessions/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Folder API routes ──────────────────────────────────────────────────────
+
+app.get("/api/folders", (_req, res) => {
+  res.json(loadFolders());
+});
+
+app.post("/api/folders", (req, res) => {
+  const name = (req.body.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Name required" });
+  const folders = createFolder(name);
+  res.json(folders);
+});
+
+app.patch("/api/folders/:id", (req, res) => {
+  const folders = loadFolders();
+  const folder = folders.find(f => f.id === req.params.id);
+  if (!folder) return res.status(404).json({ error: "Folder not found" });
+  if (req.body.name !== undefined) folder.name = req.body.name;
+  saveFolders(folders);
+  res.json(folders);
+});
+
+app.delete("/api/folders/:id", (req, res) => {
+  let folders = loadFolders();
+  folders = folders.filter(f => f.id !== req.params.id);
+  saveFolders(folders);
+  res.json(folders);
+});
+
+app.post("/api/sessions/:id/move", (req, res) => {
+  const folderId = req.body.folder_id || null; // null = remove from folder
+  const folders = moveToFolder(req.params.id, folderId);
+  res.json(folders);
+});
+
+// All sessions are Claude Desktop — sending a message means injecting via keystroke
 app.post("/api/sessions/:id/message", async (req, res) => {
   const session = loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
 
-  const content = req.body.content;
+  const content = (req.body.content || "").trim();
   if (!content) return res.status(400).json({ error: "No message content" });
 
-  session.messages.push({ role: "user", content });
-  saveSession(session);
-
   try {
-    const newMessages = await runAgentLoop(session);
-    res.json({ new_messages: newMessages });
+    // Inject into whichever session is currently focused in Claude Desktop
+    await injectIntoClaudeDesktop(content);
+    res.json({ ok: true });
   } catch (e) {
-    saveSession(session);
+    const hint = e.message.includes("not allowed") || e.message.includes("accessibility") || e.message.includes("1002") || e.message.includes("not permitted") || e.message.includes("not trusted")
+      ? " — Grant Accessibility to AgentBrainHelper: System Settings → Privacy & Security → Accessibility"
+      : (e.message.includes("not running") ? " — Make sure Claude Desktop is open on your Mac" : "");
+    res.json({ error: e.message + hint });
+  }
+});
+
+// ── Claude Code session browsing ──────────────────────────────────────────
+
+app.get("/api/claude-sessions", (_req, res) => {
+  res.json(listClaudeCodeSessions());
+});
+
+app.get("/api/claude-sessions/:projectDir/:sessionId", (req, res) => {
+  const messages = readClaudeCodeSession(req.params.projectDir, req.params.sessionId);
+  if (!messages) return res.status(404).json({ error: "Session not found" });
+  res.json({
+    session_id: req.params.sessionId,
+    project_dir: req.params.projectDir,
+    messages,
+    source: "claude-code"
+  });
+});
+
+// Resume a Claude Code session into Agent Brain
+app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", (req, res) => {
+  const { projectDir, sessionId } = req.params;
+
+  // Check if an Agent Brain session already exists for this CC session
+  const existing = listSessions().find(s => {
+    const full = loadSession(s.session_id);
+    return full && full.claude_session_id === sessionId && full.cc_project_dir === projectDir;
+  });
+  if (existing) {
+    return res.json({ session_id: existing.session_id });
+  }
+
+  // Verify the CC session exists
+  const messages = readClaudeCodeSession(projectDir, sessionId);
+  if (!messages) return res.status(404).json({ error: "Session not found" });
+
+  // Create a new Agent Brain session linked to this CC session (read-through, no message copy)
+  const session = createSession();
+  session.claude_session_id = sessionId;
+  session.cc_project_dir = projectDir;
+  session.messages = []; // messages are read live from JSONL
+  // Use first user message as title
+  const firstUser = messages.find(m => m.role === "user");
+  if (firstUser) {
+    let t = firstUser.content.trim();
+    if (t.length > 50) t = t.slice(0, 47) + "...";
+    session.title = t;
+  }
+  saveSession(session);
+  res.json({ session_id: session.session_id });
+});
+
+// ── Permission prompt detection & approval ────────────────────────────────────
+
+app.get("/api/sessions/:id/pending-permission", (req, res) => {
+  const session = loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  if (!session.cc_project_dir || !session.claude_session_id) {
+    return res.json({ pending: false });
+  }
+  const result = checkPendingPermission(session.cc_project_dir, session.claude_session_id);
+  res.json(result || { pending: false });
+});
+
+app.post("/api/sessions/:id/approve", async (req, res) => {
+  const session = loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  const action = req.body.action || "approve"; // "approve" or "deny"
+  try {
+    const keyCode = action === "deny" ? 53 : 36; // Escape or Enter
+    await sendKeystrokeToClaude(keyCode);
+    res.json({ ok: true });
+  } catch (e) {
     res.json({ error: e.message });
   }
 });
@@ -496,56 +613,76 @@ app.get("/chat", (_req, res) => {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Agent Brain</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, system-ui, sans-serif;
-      background: #f5f5f5;
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
       min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
     }
     .header {
-      background: #fff;
-      padding: 16px;
-      border-bottom: 1px solid #ddd;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 20px 16px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      color: #fff;
     }
-    .header h1 { font-size: 20px; }
-    .top-bar { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .header p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+    .top-bar {
+      padding: 16px 16px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
     .new-chat-btn {
-      padding: 14px;
-      background: #007aff;
+      padding: 15px;
+      background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
       color: #fff;
       text-align: center;
-      border-radius: 12px;
+      border-radius: 14px;
       font-size: 16px;
       font-weight: 600;
       cursor: pointer;
       border: none;
       width: 100%;
+      box-shadow: 0 4px 12px rgba(0,122,255,0.3);
+      transition: transform 0.1s, box-shadow 0.1s;
+      -webkit-tap-highlight-color: transparent;
     }
+    .new-chat-btn:active { transform: scale(0.98); box-shadow: 0 2px 8px rgba(0,122,255,0.2); }
     .search-input {
       width: 100%;
-      padding: 10px 14px;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      font-size: 15px;
-      background: #fff;
+      padding: 11px 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      background: #e8e8ed;
       -webkit-appearance: none;
+      color: #1c1c1e;
+      transition: background 0.2s;
     }
+    .search-input:focus { outline: none; background: #fff; box-shadow: 0 0 0 3px rgba(0,122,255,0.2); }
+    .search-input::placeholder { color: #8e8e93; }
     .session-list { padding: 0 16px; }
     .session-item {
       display: flex;
       align-items: center;
       background: #fff;
-      margin-bottom: 8px;
-      border-radius: 10px;
+      margin-bottom: 1px;
       text-decoration: none;
       color: inherit;
       overflow: hidden;
+      transition: background 0.15s;
+      -webkit-tap-highlight-color: transparent;
     }
+    .session-item:first-child { border-radius: 12px 12px 0 0; }
+    .session-item:last-child { border-radius: 0 0 12px 12px; margin-bottom: 12px; }
+    .session-item:only-child { border-radius: 12px; }
+    .session-item:active { background: #f2f2f7; }
     .session-link {
       flex: 1;
       padding: 14px 16px;
@@ -553,161 +690,398 @@ app.get("/chat", (_req, res) => {
       color: inherit;
       min-width: 0;
     }
-    .session-title { font-size: 15px; color: #000; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .session-time { font-size: 13px; color: #888; margin-top: 4px; }
+    .session-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: #1c1c1e;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .session-time { font-size: 13px; color: #8e8e93; margin-top: 3px; }
     .session-action-btn {
       background: none;
       border: none;
-      padding: 14px 14px;
+      padding: 14px;
       font-size: 20px;
-      color: #999;
+      color: #8e8e93;
       cursor: pointer;
       flex-shrink: 0;
+      -webkit-tap-highlight-color: transparent;
     }
-    .empty { text-align: center; padding: 40px 16px; color: #888; }
-    .footer-links { text-align: center; padding: 20px; }
-    .footer-links a { color: #007aff; font-size: 14px; }
+    .empty { text-align: center; padding: 60px 16px; color: #8e8e93; font-size: 15px; }
+    .footer-links { text-align: center; padding: 20px; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+    .footer-links a { color: #8e8e93; font-size: 13px; text-decoration: none; }
+
+    .start-chat-btn {
+      margin: 0 16px 16px;
+      padding: 14px;
+      background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
+      color: #fff;
+      text-align: center;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      width: calc(100% - 32px);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .start-chat-btn:active { transform: scale(0.98); }
+    .start-chat-btn:disabled { background: #d1d1d6; }
+
+    /* Folders */
+    .folder-header {
+      display: flex;
+      align-items: center;
+      background: #fff;
+      margin-bottom: 1px;
+      border-radius: 12px 12px 0 0;
+      padding: 13px 16px;
+      cursor: pointer;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .folder-header.collapsed { border-radius: 12px; margin-bottom: 12px; }
+    .folder-arrow {
+      font-size: 10px;
+      margin-right: 10px;
+      transition: transform 0.2s ease;
+      color: #8e8e93;
+    }
+    .folder-header.collapsed .folder-arrow { transform: rotate(-90deg); }
+    .folder-name { font-size: 15px; font-weight: 600; color: #1c1c1e; flex: 1; }
+    .folder-count {
+      font-size: 12px;
+      color: #8e8e93;
+      background: #e8e8ed;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-right: 10px;
+      font-weight: 500;
+    }
+    .folder-action-btn {
+      background: none; border: none; font-size: 18px; color: #8e8e93;
+      cursor: pointer; padding: 2px 4px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .folder-body { margin-bottom: 12px; }
+    .folder-body .session-item { border-radius: 0; margin-bottom: 0; }
+    .folder-body .session-item:first-child { border-radius: 0; }
+    .folder-body .session-item:last-child { border-radius: 0 0 12px 12px; margin-bottom: 0; }
+    .folder-body .session-link { padding-left: 36px; }
+    .folder-body.hidden { display: none; }
 
     /* Modal overlay */
     .modal-overlay {
       display: none;
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.4);
+      background: rgba(0,0,0,0.45);
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
       z-index: 100;
       justify-content: center;
       align-items: flex-end;
-      padding: 0 16px 40px;
+      padding: 0 10px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
     }
     .modal-overlay.active { display: flex; }
     .modal {
-      background: #fff;
+      background: rgba(255,255,255,0.95);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
       border-radius: 14px;
       width: 100%;
       max-width: 400px;
       overflow: hidden;
     }
     .modal-title {
-      padding: 16px;
-      font-size: 15px;
+      padding: 14px 16px;
+      font-size: 13px;
       font-weight: 600;
       text-align: center;
-      border-bottom: 1px solid #eee;
+      color: #8e8e93;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
     .modal-btn {
       display: block;
       width: 100%;
-      padding: 14px;
+      padding: 16px;
       border: none;
       background: none;
-      font-size: 16px;
+      font-size: 18px;
       cursor: pointer;
       text-align: center;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      color: #007aff;
+      -webkit-tap-highlight-color: transparent;
     }
-    .modal-btn:hover { background: #f5f5f5; }
+    .modal-btn:last-child { border-bottom: none; }
+    .modal-btn:active { background: rgba(0,0,0,0.04); }
     .modal-btn.danger { color: #ff3b30; }
     .modal-cancel {
       display: block;
-      width: calc(100% - 32px);
-      margin: 8px 16px 0;
-      padding: 14px;
+      width: 100%;
+      margin-top: 8px;
+      padding: 16px;
       border: none;
-      background: #fff;
+      background: rgba(255,255,255,0.95);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
       border-radius: 14px;
-      font-size: 16px;
+      font-size: 18px;
       font-weight: 600;
       cursor: pointer;
       color: #007aff;
+      max-width: 400px;
+      -webkit-tap-highlight-color: transparent;
     }
+    .modal-cancel:active { background: rgba(255,255,255,0.8); }
 
     /* Rename input inside modal */
     .rename-row {
       display: none;
       padding: 12px 16px;
       gap: 8px;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
     }
     .rename-row.active { display: flex; }
     .rename-row input {
       flex: 1;
-      font-size: 15px;
-      padding: 8px 12px;
-      border: 1px solid #ddd;
-      border-radius: 8px;
+      font-size: 16px;
+      padding: 10px 14px;
+      border: 1px solid #d1d1d6;
+      border-radius: 10px;
+      background: #fff;
+      -webkit-appearance: none;
     }
+    .rename-row input:focus { outline: none; border-color: #007aff; box-shadow: 0 0 0 3px rgba(0,122,255,0.15); }
     .rename-row button {
-      padding: 8px 14px;
+      padding: 10px 18px;
       background: #007aff;
       color: #fff;
       border: none;
-      border-radius: 8px;
-      font-size: 14px;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
       cursor: pointer;
+    }
+
+    /* Section labels */
+    .section-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 16px 4px 8px;
     }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>Agent Brain</h1>
+    <p>Your personal assistant</p>
   </div>
   <div class="top-bar">
-    <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
-    <input type="text" class="search-input" id="search" placeholder="Search sessions..." oninput="filterSessions()">
+    <button class="new-chat-btn" onclick="openNewChatModal()">+ New Chat</button>
+    <input type="text" class="search-input" id="search" placeholder="Search sessions...">
   </div>
   <div class="session-list" id="session-list"></div>
-  <div class="footer-links"><a href="/runs">View legacy runs</a></div>
+  <div style="height:40px;"></div>
 
   <!-- Action modal -->
   <div class="modal-overlay" id="modal" onclick="closeModal(event)">
-    <div>
+    <div style="width:100%; max-width:400px;">
       <div class="modal" onclick="event.stopPropagation()">
         <div class="modal-title" id="modal-title"></div>
         <div class="rename-row" id="rename-row">
           <input type="text" id="rename-input" placeholder="New name...">
           <button onclick="doRename()">Save</button>
         </div>
-        <button class="modal-btn" onclick="showRename()">Rename</button>
-        <button class="modal-btn" onclick="doArchive()">Archive</button>
-        <button class="modal-btn danger" onclick="doDelete()">Delete</button>
+        <div id="main-actions">
+          <button class="modal-btn" onclick="showRename()">Rename</button>
+          <button class="modal-btn" onclick="showFolderPicker()">Move to Folder</button>
+          <button class="modal-btn" onclick="doArchive()">Archive</button>
+          <button class="modal-btn danger" onclick="doDelete()">Delete</button>
+        </div>
+        <div id="folder-picker" style="display:none;">
+          <div style="padding:14px 16px; font-size:13px; font-weight:600; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); text-transform:uppercase; letter-spacing:0.5px;">Move to folder</div>
+          <button class="modal-btn" onclick="doMoveToFolder(null)" style="color:#8e8e93;">Remove from folder</button>
+          <div id="folder-list-picker"></div>
+          <div class="rename-row active" style="display:flex;">
+            <input type="text" id="new-folder-input" placeholder="New folder name...">
+            <button onclick="doCreateFolderAndMove()">Create</button>
+          </div>
+        </div>
       </div>
       <button class="modal-cancel" onclick="closeModal()">Cancel</button>
     </div>
   </div>
 
+  <!-- New chat modal -->
+  <div class="modal-overlay" id="new-chat-modal" onclick="closeNewChatModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title">New Claude Code Session</div>
+        <div style="padding:0 16px 16px;">
+          <textarea id="new-chat-message" rows="3" placeholder="What would you like to work on?" style="width:100%; font-size:16px; padding:12px; border:1px solid #e0e0e0; border-radius:12px; resize:none; font-family:-apple-system,system-ui,sans-serif; line-height:1.4; background:#f9f9f9; color:#1c1c1e; -webkit-appearance:none;"></textarea>
+        </div>
+        <div id="new-chat-status" style="display:none; padding:0 16px 12px; text-align:center; font-size:13px; color:#8e8e93;">Opening Claude Desktop...</div>
+        <button class="start-chat-btn" onclick="startNewChat()">Start Session</button>
+      </div>
+      <button class="modal-cancel" onclick="closeNewChatModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Folder action modal -->
+  <div class="modal-overlay" id="folder-modal" onclick="closeFolderModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title" id="folder-modal-title"></div>
+        <div class="rename-row" id="folder-rename-row">
+          <input type="text" id="folder-rename-input" placeholder="New name...">
+          <button onclick="doRenameFolder()">Save</button>
+        </div>
+        <button class="modal-btn" onclick="showFolderRename()">Rename Folder</button>
+        <button class="modal-btn danger" onclick="doDeleteFolder()">Delete Folder</button>
+      </div>
+      <button class="modal-cancel" onclick="closeFolderModal()">Cancel</button>
+    </div>
+  </div>
+
   <script>
     let allSessions = [];
+    let allFolders = [];
     let activeSessionId = null;
+    let activeFolderId = null;
+    let collapsedFolders = JSON.parse(localStorage.getItem("collapsedFolders") || "{}");
 
-    async function loadSessions() {
-      const resp = await fetch("/api/sessions");
-      allSessions = await resp.json();
-      filterSessions();
+    async function loadData() {
+      const [sResp, fResp, ccResp] = await Promise.all([
+        fetch("/api/sessions"),
+        fetch("/api/folders"),
+        fetch("/api/claude-sessions")
+      ]);
+      const abSessions = await sResp.json();
+      allFolders = await fResp.json();
+      const ccSessions = await ccResp.json();
+
+      // Build a set of CC session IDs already adopted by Agent Brain sessions
+      const adoptedCC = new Set();
+      for (const ab of abSessions) {
+        if (ab.claude_session_id) adoptedCC.add(ab.claude_session_id);
+      }
+
+      // Merge: AB sessions first (they already link to CC), then unadopted CC sessions
+      allSessions = [];
+      for (const ab of abSessions) {
+        allSessions.push({ ...ab, source: "agent-brain" });
+      }
+      for (const cc of ccSessions) {
+        if (!adoptedCC.has(cc.session_id)) {
+          allSessions.push({
+            session_id: cc.session_id,
+            title: cc.title,
+            updated_at: cc.updated_at,
+            source: "claude-code",
+            project_dir: cc.project_dir,
+            project_path: cc.project_path
+          });
+        }
+      }
+      // Sort all by updated_at descending
+      allSessions.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      renderList();
     }
 
-    function filterSessions() {
+    function renderList() {
       const q = (document.getElementById("search").value || "").toLowerCase();
       const list = document.getElementById("session-list");
       const filtered = q ? allSessions.filter(s => s.title.toLowerCase().includes(q)) : allSessions;
 
-      if (filtered.length === 0) {
-        list.innerHTML = '<div class="empty">' + (q ? 'No matching sessions' : 'No sessions yet. Start a new chat!') + '</div>';
-        return;
+      // Build set of session IDs that are in folders
+      const inFolder = new Set();
+      for (const f of allFolders) {
+        for (const sid of f.session_ids) inFolder.add(sid);
       }
 
-      list.innerHTML = filtered.map(s => {
-        const ago = timeAgo(s.updated_at);
-        return '<div class="session-item">' +
-          '<a href="/chat/' + s.session_id + '" class="session-link">' +
-            '<div class="session-title">' + esc(s.title) + '</div>' +
-            '<div class="session-time">' + ago + '</div>' +
-          '</a>' +
-          '<button class="session-action-btn" onclick="openModal(\\'' + s.session_id + '\\', \\'' + esc(s.title).replace(/'/g, "\\\\'") + '\\')">&middot;&middot;&middot;</button>' +
+      let html = "";
+
+      // Render folders first
+      for (const f of allFolders) {
+        const folderSessions = filtered.filter(s => f.session_ids.includes(s.session_id));
+        if (q && folderSessions.length === 0) continue;
+        const isCollapsed = collapsedFolders[f.id];
+        html += '<div class="folder-header' + (isCollapsed ? ' collapsed' : '') + '" onclick="toggleFolder(\\'' + f.id + '\\')">' +
+          '<span class="folder-arrow">&#9660;</span>' +
+          '<span class="folder-name">' + esc(f.name) + '</span>' +
+          '<span class="folder-count">' + folderSessions.length + '</span>' +
+          '<button class="folder-action-btn" onclick="event.stopPropagation(); openFolderModal(\\'' + f.id + '\\', \\'' + esc(f.name).replace(/'/g, "\\\\'") + '\\')">&middot;&middot;&middot;</button>' +
         '</div>';
-      }).join("");
+        html += '<div class="folder-body' + (isCollapsed ? ' hidden' : '') + '" id="folder-body-' + f.id + '">';
+        for (const s of folderSessions) {
+          html += sessionItemHtml(s);
+        }
+        html += '</div>';
+      }
+
+      // Unfiled sessions
+      const unfiled = filtered.filter(s => !inFolder.has(s.session_id));
+      for (const s of unfiled) {
+        html += sessionItemHtml(s);
+      }
+
+      if (!html) {
+        html = '<div class="empty">' + (q ? 'No matching sessions' : 'No sessions yet. Start a new chat!') + '</div>';
+      }
+
+      list.innerHTML = html;
+    }
+
+    function sessionItemHtml(s) {
+      const ago = timeAgo(s.updated_at);
+      if (s.source === "claude-code") {
+        // CC session not yet adopted — clicking adopts it
+        const shortPath = (s.project_path || "").split("/").filter(Boolean).slice(-1)[0] || "";
+        const meta = ago + (shortPath ? ' &bull; ' + esc(shortPath) : '');
+        return '<div class="session-item" onclick="adoptCCSession(\\'' + esc(s.project_dir) + '\\', \\'' + s.session_id + '\\')" style="cursor:pointer;">' +
+          '<div class="session-link">' +
+            '<div class="session-title">' + esc(s.title) + '</div>' +
+            '<div class="session-time">' + meta + '</div>' +
+          '</div>' +
+        '</div>';
+      }
+      return '<div class="session-item">' +
+        '<a href="/chat/' + s.session_id + '" class="session-link">' +
+          '<div class="session-title">' + esc(s.title) + '</div>' +
+          '<div class="session-time">' + ago + '</div>' +
+        '</a>' +
+        '<button class="session-action-btn" onclick="openModal(\\'' + s.session_id + '\\', \\'' + esc(s.title).replace(/'/g, "\\\\'") + '\\')">&middot;&middot;&middot;</button>' +
+      '</div>';
+    }
+
+    async function adoptCCSession(projectDir, sessionId) {
+      const resp = await fetch("/api/claude-sessions/" + projectDir + "/" + sessionId + "/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const data = await resp.json();
+      if (data.session_id) window.location.href = "/chat/" + data.session_id;
+    }
+
+    function toggleFolder(folderId) {
+      collapsedFolders[folderId] = !collapsedFolders[folderId];
+      localStorage.setItem("collapsedFolders", JSON.stringify(collapsedFolders));
+      renderList();
     }
 
     function esc(s) {
@@ -726,18 +1100,19 @@ app.get("/chat", (_req, res) => {
       return Math.floor(h / 24) + "d ago";
     }
 
+    // ── Session action modal ──
     function openModal(id, title) {
       activeSessionId = id;
       document.getElementById("modal-title").textContent = title;
       document.getElementById("rename-input").value = title;
       document.getElementById("rename-row").classList.remove("active");
+      document.getElementById("main-actions").style.display = "";
+      document.getElementById("folder-picker").style.display = "none";
       document.getElementById("modal").classList.add("active");
     }
 
     function closeModal(e) {
-      if (e && e.target !== document.getElementById("modal") && e.target !== document.querySelector(".modal-overlay")) {
-        if (!e.target.classList.contains("modal-overlay")) return;
-      }
+      if (e && !e.target.classList.contains("modal-overlay")) return;
       document.getElementById("modal").classList.remove("active");
       activeSessionId = null;
     }
@@ -756,14 +1131,14 @@ app.get("/chat", (_req, res) => {
         body: JSON.stringify({ title })
       });
       closeModal();
-      loadSessions();
+      loadData();
     }
 
     async function doArchive() {
       if (!activeSessionId) return;
       await fetch("/api/sessions/" + activeSessionId + "/archive", { method: "POST" });
       closeModal();
-      loadSessions();
+      loadData();
     }
 
     async function doDelete() {
@@ -771,16 +1146,128 @@ app.get("/chat", (_req, res) => {
       if (!confirm("Delete this session permanently?")) return;
       await fetch("/api/sessions/" + activeSessionId, { method: "DELETE" });
       closeModal();
-      loadSessions();
+      loadData();
     }
 
-    async function newChat() {
-      const resp = await fetch("/chat/new", { method: "POST" });
-      const data = await resp.json();
-      window.location.href = "/chat/" + data.session_id;
+    // ── Folder picker in session modal ──
+    function showFolderPicker() {
+      document.getElementById("main-actions").style.display = "none";
+      const picker = document.getElementById("folder-picker");
+      picker.style.display = "";
+      // Populate folder buttons
+      const listEl = document.getElementById("folder-list-picker");
+      listEl.innerHTML = allFolders.map(f =>
+        '<button class="modal-btn" onclick="doMoveToFolder(\\'' + f.id + '\\')">' + esc(f.name) + '</button>'
+      ).join("");
+      document.getElementById("new-folder-input").value = "";
     }
 
-    loadSessions();
+    async function doMoveToFolder(folderId) {
+      if (!activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId + "/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_id: folderId })
+      });
+      closeModal();
+      loadData();
+    }
+
+    async function doCreateFolderAndMove() {
+      const name = document.getElementById("new-folder-input").value.trim();
+      if (!name || !activeSessionId) return;
+      const resp = await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const folders = await resp.json();
+      // Move to the new folder (last one created)
+      const newFolder = folders[folders.length - 1];
+      await doMoveToFolder(newFolder.id);
+    }
+
+    // ── Folder action modal ──
+    function openFolderModal(id, name) {
+      activeFolderId = id;
+      document.getElementById("folder-modal-title").textContent = name;
+      document.getElementById("folder-rename-input").value = name;
+      document.getElementById("folder-rename-row").classList.remove("active");
+      document.getElementById("folder-modal").classList.add("active");
+    }
+
+    function closeFolderModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("folder-modal").classList.remove("active");
+      activeFolderId = null;
+    }
+
+    function showFolderRename() {
+      document.getElementById("folder-rename-row").classList.add("active");
+      document.getElementById("folder-rename-input").focus();
+    }
+
+    async function doRenameFolder() {
+      const name = document.getElementById("folder-rename-input").value.trim();
+      if (!name || !activeFolderId) return;
+      await fetch("/api/folders/" + activeFolderId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      closeFolderModal();
+      loadData();
+    }
+
+    async function doDeleteFolder() {
+      if (!activeFolderId) return;
+      if (!confirm("Delete this folder? Sessions inside will become unfiled.")) return;
+      await fetch("/api/folders/" + activeFolderId, { method: "DELETE" });
+      closeFolderModal();
+      loadData();
+    }
+
+    // ── New Chat Modal ──
+    function openNewChatModal() {
+      document.getElementById("new-chat-message").value = "";
+      document.getElementById("new-chat-status").style.display = "none";
+      document.getElementById("new-chat-modal").classList.add("active");
+      setTimeout(() => document.getElementById("new-chat-message").focus(), 300);
+    }
+
+    function closeNewChatModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("new-chat-modal").classList.remove("active");
+    }
+
+    async function startNewChat() {
+      const msg = document.getElementById("new-chat-message").value.trim();
+      if (!msg) return;
+      const statusEl = document.getElementById("new-chat-status");
+      statusEl.style.display = "";
+      statusEl.textContent = "Opening Claude Desktop...";
+      try {
+        const resp = await fetch("/chat/new", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg })
+        });
+        const data = await resp.json();
+        if (data.error) {
+          statusEl.textContent = "Error: " + data.error;
+          return;
+        }
+        statusEl.textContent = data.linked ? "Linked! Redirecting..." : "Session created. Redirecting...";
+        window.location.href = "/chat/" + data.session_id;
+      } catch (e) {
+        statusEl.textContent = "Failed: " + e.message;
+      }
+    }
+
+    // Wire up search
+    document.getElementById("search").addEventListener("input", renderList);
+
+    loadData();
   </script>
 </body>
 </html>`);
@@ -793,34 +1280,60 @@ app.get("/chat/:session_id", (req, res) => {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Agent Brain</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, system-ui, sans-serif;
-      background: #f5f5f5;
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
       height: 100vh;
       height: 100dvh;
       display: flex;
       flex-direction: column;
+      -webkit-font-smoothing: antialiased;
     }
     .header {
-      background: #fff;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
       padding: 12px 16px;
-      border-bottom: 1px solid #ddd;
+      padding-top: max(12px, env(safe-area-inset-top));
       display: flex;
       align-items: center;
       gap: 12px;
       flex-shrink: 0;
     }
-    .header a { color: #007aff; text-decoration: none; font-size: 16px; }
-    .header .title { font-size: 17px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .copy-btn {
-      background: none; border: 1px solid #ccc; border-radius: 8px;
-      padding: 6px 10px; font-size: 13px; color: #333; cursor: pointer;
-      flex-shrink: 0; white-space: nowrap;
+    .header a {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 22px;
+      padding: 4px;
+      -webkit-tap-highlight-color: transparent;
     }
-    .copy-btn.copied { background: #e8f5e9; border-color: #4caf50; color: #2e7d32; }
+    .header .title {
+      font-size: 17px;
+      font-weight: 600;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #fff;
+    }
+    .copy-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.85);
+      cursor: pointer;
+      flex-shrink: 0;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .copy-btn:active { background: rgba(255,255,255,0.25); }
+    .copy-btn.copied { background: rgba(52,199,89,0.3); color: #fff; }
     .messages {
       flex: 1;
       overflow-y: auto;
@@ -828,124 +1341,98 @@ app.get("/chat/:session_id", (req, res) => {
       -webkit-overflow-scrolling: touch;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
     }
     .msg {
-      max-width: 85%;
+      max-width: 82%;
       padding: 10px 14px;
-      border-radius: 16px;
+      border-radius: 18px;
       word-wrap: break-word;
-      font-size: 15px;
+      font-size: 16px;
       line-height: 1.4;
     }
     .msg.user {
-      background: #007aff;
+      background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
       color: #fff;
       align-self: flex-end;
-      border-bottom-right-radius: 4px;
+      border-bottom-right-radius: 6px;
       white-space: pre-wrap;
     }
     .msg.assistant {
-      background: #e9e9eb;
-      color: #000;
+      background: #fff;
+      color: #1c1c1e;
       align-self: flex-start;
-      border-bottom-left-radius: 4px;
+      border-bottom-left-radius: 6px;
       white-space: normal;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
     .msg.assistant p { margin: 0 0 8px 0; }
     .msg.assistant p:last-child { margin-bottom: 0; }
     .msg.assistant ul, .msg.assistant ol { margin: 0 0 8px 20px; }
     .msg.assistant li { margin-bottom: 2px; }
     .msg.assistant code {
-      background: rgba(0,0,0,0.06);
-      padding: 1px 5px;
-      border-radius: 4px;
-      font-family: ui-monospace, SFMono-Regular, monospace;
-      font-size: 13px;
+      background: #f2f2f7;
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
+      font-size: 14px;
+      color: #c41a68;
     }
     .msg.assistant pre {
-      background: rgba(0,0,0,0.06);
-      padding: 10px;
-      border-radius: 8px;
+      background: #1c1c1e;
+      color: #f2f2f7;
+      padding: 12px 14px;
+      border-radius: 10px;
       overflow-x: auto;
       margin: 0 0 8px 0;
       font-size: 13px;
     }
-    .msg.assistant pre code { background: none; padding: 0; }
+    .msg.assistant pre code { background: none; padding: 0; color: inherit; }
     .msg.assistant h1, .msg.assistant h2, .msg.assistant h3 {
       font-size: 15px;
-      font-weight: 600;
+      font-weight: 700;
       margin: 0 0 6px 0;
+      color: #1c1c1e;
     }
     .msg.assistant strong { font-weight: 600; }
-    .msg.assistant a { color: #007aff; }
+    .msg.assistant a { color: #007aff; text-decoration: none; }
     .msg.thinking {
-      background: #e9e9eb;
-      color: #888;
+      background: #fff;
+      color: #8e8e93;
       align-self: flex-start;
-      border-bottom-left-radius: 4px;
+      border-bottom-left-radius: 6px;
       font-style: italic;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .msg.thinking { animation: pulse 1.5s ease-in-out infinite; }
     .tool-block {
       align-self: flex-start;
-      max-width: 90%;
+      max-width: 88%;
       font-size: 13px;
-      color: #666;
-      background: #f0f0f0;
+      color: #8e8e93;
+      background: #fff;
       padding: 8px 12px;
-      border-radius: 8px;
-      font-family: ui-monospace, SFMono-Regular, monospace;
+      border-radius: 10px;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
       cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      border: 1px solid #e8e8ed;
+      -webkit-tap-highlight-color: transparent;
     }
     .tool-block .tool-header { display: flex; gap: 6px; align-items: center; }
-    .tool-block .tool-icon { font-size: 12px; }
+    .tool-block .tool-icon { font-size: 11px; }
     .tool-block .tool-output {
       display: none;
-      margin-top: 6px;
-      padding-top: 6px;
-      border-top: 1px solid #ddd;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #e8e8ed;
       white-space: pre-wrap;
       max-height: 200px;
       overflow-y: auto;
+      color: #636366;
     }
     .tool-block.expanded .tool-output { display: block; }
-    .input-area {
-      flex-shrink: 0;
-      padding: 8px 12px;
-      background: #fff;
-      border-top: 1px solid #ddd;
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
-      padding-bottom: max(8px, env(safe-area-inset-bottom));
-    }
-    .input-area textarea {
-      flex: 1;
-      font-size: 16px;
-      padding: 10px;
-      border: 1px solid #ccc;
-      border-radius: 20px;
-      resize: none;
-      max-height: 120px;
-      min-height: 40px;
-      font-family: -apple-system, system-ui, sans-serif;
-      line-height: 1.3;
-    }
-    .input-area button {
-      background: #007aff;
-      color: #fff;
-      border: none;
-      border-radius: 50%;
-      width: 40px;
-      height: 40px;
-      font-size: 18px;
-      cursor: pointer;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .input-area button:disabled { background: #ccc; }
   </style>
 </head>
 <body>
@@ -955,17 +1442,24 @@ app.get("/chat/:session_id", (req, res) => {
     <button class="copy-btn" onclick="copyChat(this)">Copy</button>
   </div>
   <div class="messages" id="messages"></div>
-  <div class="input-area">
-    <textarea id="input" rows="1" placeholder="Message..." oninput="autoResize(this)"></textarea>
-    <button id="send-btn" onclick="sendMessage()">&uarr;</button>
+  <div id="permission-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#f0f4ff; padding:10px 14px;">
+    <div style="font-size:13px; font-weight:600; color:#1c1c1e; margin-bottom:6px;" id="permission-label">Permission requested</div>
+    <div style="font-size:11px; color:#666; margin-bottom:8px; word-break:break-all;" id="permission-detail"></div>
+    <div style="display:flex; gap:10px;">
+      <button onclick="handlePermission('approve')" style="flex:1; padding:10px; border-radius:10px; border:none; background:#34c759; color:#fff; font-size:15px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent;">Allow</button>
+      <button onclick="handlePermission('deny')" style="flex:1; padding:10px; border-radius:10px; border:none; background:#ff3b30; color:#fff; font-size:15px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent;">Deny</button>
+    </div>
+  </div>
+  <div id="inject-area" style="flex-shrink:0;">
+    <div style="padding:6px 12px; padding-bottom:max(10px, env(safe-area-inset-bottom)); background:#fff; border-top:1px solid #e8e8ed; display:flex; gap:8px; align-items:flex-end;">
+      <textarea id="inject-input" rows="1" placeholder="Message..." oninput="autoResize(this)" style="flex:1; font-size:16px; padding:10px 16px; border:1px solid #e0e0e0; border-radius:22px; resize:none; max-height:120px; min-height:42px; font-family:-apple-system,system-ui,sans-serif; line-height:1.35; background:#f9f9f9; color:#1c1c1e;"></textarea>
+      <button id="inject-btn" onclick="injectMessage()" style="background:linear-gradient(135deg,#007aff 0%,#5856d6 100%); color:#fff; border:none; border-radius:50%; width:42px; height:42px; font-size:20px; font-weight:700; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent;">&#8593;</button>
+    </div>
   </div>
 
   <script>
     const SESSION_ID = "${session_id}";
     const messagesEl = document.getElementById("messages");
-    const inputEl = document.getElementById("input");
-    const sendBtn = document.getElementById("send-btn");
-    let sending = false;
 
     function autoResize(el) {
       el.style.height = "auto";
@@ -1063,6 +1557,11 @@ app.get("/chat/:session_id", (req, res) => {
         if (m.role === "system") continue;
         if (m.role === "user") {
           addUserMsg(m.content);
+        } else if (m.role === "tool_use") {
+          // Claude Code tool use blocks
+          for (const t of (m.tools || [])) {
+            addToolBlock(t.name, t.input, "");
+          }
         } else if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
           for (const tc of m.tool_calls) {
             const output = toolOutputs[tc.id] || "";
@@ -1092,27 +1591,91 @@ app.get("/chat/:session_id", (req, res) => {
       }
     }
 
+    let isLinkedCC = false;
+    let lastMessageCount = 0;
+    let liveRefreshTimer = null;
+
     async function loadSession() {
       try {
         const resp = await fetch("/api/sessions/" + SESSION_ID);
         const data = await resp.json();
         if (data.title) document.getElementById("chat-title").textContent = data.title;
-        if (data.messages) renderMessages(data.messages);
+        isLinkedCC = !!(data.cc_project_dir && data.claude_session_id);
+        if (data.messages) {
+          renderMessages(data.messages);
+          lastMessageCount = data.messages.length;
+        }
+        // Auto-refresh every 5s for linked sessions
+        if (isLinkedCC && !liveRefreshTimer) {
+          liveRefreshTimer = setInterval(refreshLinkedSession, 5000);
+        }
       } catch (e) {}
     }
 
-    async function sendMessage() {
-      if (sending) return;
-      const content = inputEl.value.trim();
+    async function refreshLinkedSession() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        if (data.messages && data.messages.length !== lastMessageCount) {
+          messagesEl.innerHTML = "";
+          renderMessages(data.messages);
+          lastMessageCount = data.messages.length;
+        }
+        // Check for pending permission prompts
+        if (isLinkedCC) checkPermission();
+      } catch (_) {}
+    }
+
+    async function checkPermission() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID + "/pending-permission");
+        const data = await resp.json();
+        const bar = document.getElementById("permission-bar");
+        if (data.pending && data.tools) {
+          const toolNames = data.tools.map(t => t.name).join(", ");
+          const detail = data.tools.map(t => t.name + ": " + t.input).join("\\n");
+          document.getElementById("permission-label").textContent = "Approve " + toolNames + "?";
+          document.getElementById("permission-detail").textContent = detail;
+          bar.style.display = "";
+          scrollToBottom();
+        } else {
+          bar.style.display = "none";
+        }
+      } catch (_) {}
+    }
+
+    async function handlePermission(action) {
+      const bar = document.getElementById("permission-bar");
+      const buttons = bar.querySelectorAll("button");
+      buttons.forEach(b => { b.disabled = true; b.style.opacity = "0.5"; });
+      try {
+        await fetch("/api/sessions/" + SESSION_ID + "/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action })
+        });
+        bar.style.display = "none";
+        // Refresh to show updated messages
+        setTimeout(refreshLinkedSession, 2000);
+      } catch (_) {}
+      buttons.forEach(b => { b.disabled = false; b.style.opacity = "1"; });
+    }
+
+    // ── Inject message into Claude Desktop ──
+    let injecting = false;
+
+    async function injectMessage() {
+      if (injecting) return;
+      const injectInput = document.getElementById("inject-input");
+      const injectBtn = document.getElementById("inject-btn");
+      const content = injectInput.value.trim();
       if (!content) return;
 
-      sending = true;
-      sendBtn.disabled = true;
-      inputEl.value = "";
-      inputEl.style.height = "auto";
-
-      addUserMsg(content);
-      const thinking = addThinking();
+      injecting = true;
+      injectBtn.disabled = true;
+      injectBtn.style.opacity = "0.5";
+      injectInput.value = "";
+      injectInput.style.height = "auto";
 
       try {
         const resp = await fetch("/api/sessions/" + SESSION_ID + "/message", {
@@ -1121,27 +1684,30 @@ app.get("/chat/:session_id", (req, res) => {
           body: JSON.stringify({ content })
         });
         const data = await resp.json();
-        thinking.remove();
-
         if (data.error) {
-          addAssistantMsg("Error: " + data.error);
-        } else if (data.new_messages) {
-          renderNewMessages(data.new_messages);
+          alert("Send failed: " + data.error);
         }
+        // The live refresh will pick up the new messages automatically
       } catch (err) {
-        thinking.remove();
-        addAssistantMsg("Error: " + err.message);
+        alert("Inject failed: " + err.message);
       }
 
-      sending = false;
-      sendBtn.disabled = false;
-      inputEl.focus();
+      injecting = false;
+      injectBtn.disabled = false;
+      injectBtn.style.opacity = "1";
+      injectInput.focus();
     }
 
-    inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
+    // Wire up Enter key for inject input
+    document.addEventListener("DOMContentLoaded", () => {
+      const injectInput = document.getElementById("inject-input");
+      if (injectInput) {
+        injectInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            injectMessage();
+          }
+        });
       }
     });
 

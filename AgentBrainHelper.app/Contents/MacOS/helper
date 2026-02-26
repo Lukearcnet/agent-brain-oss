@@ -1,0 +1,40 @@
+#!/bin/bash
+# AgentBrainHelper — keystroke injection for Claude Desktop
+# Uses osascript with System Events to paste and send.
+# Usage: helper "message to inject"
+
+if [ -z "$1" ]; then
+  echo "Usage: helper <message>" >&2
+  exit 1
+fi
+
+MESSAGE="$1"
+
+# Set clipboard to the message
+/usr/bin/osascript -e "set the clipboard to \"$(echo "$MESSAGE" | sed 's/\\/\\\\/g; s/"/\\"/g')\"" 2>&1
+if [ $? -ne 0 ]; then
+  echo "Failed to set clipboard" >&2
+  exit 2
+fi
+
+# Activate Claude, paste, and hit Enter
+/usr/bin/osascript -e '
+tell application "Claude" to activate
+delay 0.8
+tell application "System Events"
+  tell process "Claude"
+    set frontmost to true
+    delay 0.3
+    keystroke "v" using command down
+    delay 0.5
+    key code 36
+  end tell
+end tell
+' 2>&1
+
+if [ $? -ne 0 ]; then
+  echo "Failed to inject keystrokes" >&2
+  exit 3
+fi
+
+echo "OK"
