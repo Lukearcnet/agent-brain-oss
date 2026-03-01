@@ -31,6 +31,79 @@ function saveSettings(settings) {
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
 }
 
+// ── Hook-based Permission System ─────────────────────────────────────────────
+// When Claude Code fires a PermissionRequest hook, the request comes here.
+// We check auto-approval settings; if "auto" → respond immediately.
+// If "ask" → hold the request (long-poll) until user acts via dashboard.
+// If "block" → respond immediately with deny.
+
+const pendingHookPermissions = new Map(); // id → { resolve, data, timestamp }
+let hookPermissionCounter = 0;
+
+function createHookPermission(data) {
+  const id = "hook-" + (++hookPermissionCounter) + "-" + Date.now();
+  return new Promise((resolve) => {
+    const entry = {
+      id,
+      resolve,
+      data, // raw hook input: tool_name, tool_input, session_id, transcript_path, etc.
+      timestamp: Date.now()
+    };
+    pendingHookPermissions.set(id, entry);
+
+    // Timeout after 90 seconds — deny if user doesn't respond
+    setTimeout(() => {
+      if (pendingHookPermissions.has(id)) {
+        pendingHookPermissions.delete(id);
+        resolve({ behavior: "deny", message: "Permission request timed out (90s)" });
+      }
+    }, 90000);
+  });
+}
+
+function resolveHookPermission(id, behavior) {
+  const entry = pendingHookPermissions.get(id);
+  if (!entry) return false;
+  pendingHookPermissions.delete(id);
+  if (behavior === "allow") {
+    entry.resolve({ behavior: "allow" });
+  } else {
+    entry.resolve({ behavior: "deny", message: "Denied by operator" });
+  }
+  return true;
+}
+
+// Check if a tool should be auto-approved based on settings
+function checkToolPolicy(toolName, toolInput) {
+  const settings = loadSettings();
+  const aa = settings.autoApproval;
+  if (!aa || !aa.enabled) return "ask"; // Default to ask if auto-approval disabled
+
+  const tier = aa.tools[toolName];
+  if (!tier || tier === "ask") return "ask";
+  if (tier === "block") return "block";
+
+  // "auto" tier — check blocked patterns for Bash
+  if (toolName === "Bash" && aa.blockedPatterns && aa.blockedPatterns.length > 0) {
+    const input = typeof toolInput === "object" ? JSON.stringify(toolInput) : String(toolInput || "");
+    for (const pattern of aa.blockedPatterns) {
+      if (input.includes(pattern)) return "block";
+    }
+  }
+
+  return "auto";
+}
+
+// Clean up expired hook permissions every 30 seconds
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, entry] of pendingHookPermissions) {
+    if (now - entry.timestamp > 95000) {
+      pendingHookPermissions.delete(id);
+    }
+  }
+}, 30000);
+
 // ── Claude Desktop ──────────────────────────────────────────────────────────
 const CLAUDE_SESSIONS_DIR = path.join(HOME, ".claude", "projects");
 const HELPER_APP = path.join(__dirname, "AgentBrainHelper.app", "Contents", "MacOS", "helper");
@@ -816,7 +889,123 @@ app.get("/api/dashboard", (_req, res) => {
     }
   } catch (_) {}
 
-  res.json(results);
+  // Third: include hook-based pending permissions (from PermissionRequest hooks)
+  // These are the most reliable — they come directly from Claude Code, not JSONL parsing
+  const hookPending = [];
+  for (const [id, entry] of pendingHookPermissions) {
+    hookPending.push({
+      id,
+      session_id: "hook:" + id,
+      title: entry.data.session_id ? `Session ${entry.data.session_id.slice(0, 8)}...` : "Claude Code",
+      status: "needs_attention",
+      permission: {
+        pending: true,
+        hook_id: id,
+        tools: [{ name: entry.data.tool_name, input: entry.data.input_summary }]
+      },
+      current_tool: null,
+      last_activity: new Date(entry.timestamp).toISOString(),
+      linked: false,
+      source: "hook"
+    });
+  }
+
+  // Hook permissions go first (they are actively blocking Claude Code)
+  res.json([...hookPending, ...results]);
+});
+
+// ── Hook-based Permission Endpoint ───────────────────────────────────────────
+// Called by Claude Code's PermissionRequest hook (via command hook script → curl)
+// Input: raw hook event JSON from Claude Code
+// Output: hook response JSON with allow/deny decision
+
+app.post("/api/hooks/permission-request", async (req, res) => {
+  const hookInput = req.body;
+  const toolName = hookInput.tool_name || hookInput.toolName || "Unknown";
+  const toolInput = hookInput.tool_input || hookInput.toolInput || {};
+  const sessionId = hookInput.session_id || hookInput.sessionId || "unknown";
+  const transcriptPath = hookInput.transcript_path || hookInput.transcriptPath || "";
+
+  // Extract a readable summary of what the tool wants to do
+  let inputSummary = "";
+  if (typeof toolInput === "object") {
+    inputSummary = toolInput.command || toolInput.file_path || toolInput.pattern || toolInput.url || JSON.stringify(toolInput).slice(0, 300);
+  } else {
+    inputSummary = String(toolInput).slice(0, 300);
+  }
+
+  console.log(`[hook] PermissionRequest: ${toolName} in session ${sessionId.slice(0, 12)}... — ${inputSummary.slice(0, 80)}`);
+
+  // Check auto-approval policy
+  const policy = checkToolPolicy(toolName, toolInput);
+
+  if (policy === "auto") {
+    console.log(`[hook] Auto-approved: ${toolName}`);
+    return res.json({
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: { behavior: "allow" }
+      }
+    });
+  }
+
+  if (policy === "block") {
+    console.log(`[hook] Blocked: ${toolName}`);
+    return res.json({
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: {
+          behavior: "deny",
+          message: `Tool "${toolName}" is blocked by Agent Brain policy`
+        }
+      }
+    });
+  }
+
+  // "ask" policy — hold request and wait for user decision via dashboard
+  console.log(`[hook] Awaiting manual approval: ${toolName}`);
+  const decision = await createHookPermission({
+    tool_name: toolName,
+    tool_input: toolInput,
+    input_summary: inputSummary,
+    session_id: sessionId,
+    transcript_path: transcriptPath,
+    raw: hookInput
+  });
+
+  console.log(`[hook] Decision for ${toolName}: ${decision.behavior}`);
+  res.json({
+    hookSpecificOutput: {
+      hookEventName: "PermissionRequest",
+      decision
+    }
+  });
+});
+
+// Get list of pending hook permissions (for dashboard)
+app.get("/api/hooks/pending", (_req, res) => {
+  const pending = [];
+  for (const [id, entry] of pendingHookPermissions) {
+    pending.push({
+      id,
+      tool_name: entry.data.tool_name,
+      tool_input: entry.data.tool_input,
+      input_summary: entry.data.input_summary,
+      session_id: entry.data.session_id,
+      timestamp: entry.timestamp,
+      age_seconds: Math.floor((Date.now() - entry.timestamp) / 1000)
+    });
+  }
+  res.json(pending);
+});
+
+// Resolve a pending hook permission (from dashboard Allow/Deny button)
+app.post("/api/hooks/pending/:id/resolve", (req, res) => {
+  const { id } = req.params;
+  const behavior = req.body.behavior || "deny"; // "allow" or "deny"
+  const ok = resolveHookPermission(id, behavior);
+  if (!ok) return res.status(404).json({ error: "Permission request not found or already resolved" });
+  res.json({ ok: true, behavior });
 });
 
 // ── Settings API ─────────────────────────────────────────────────────────────
@@ -862,36 +1051,34 @@ function shouldAutoApprove(tools) {
   return true; // All tools in this request are "auto" tier
 }
 
+// Legacy JSONL-based auto-approval (keystroke fallback)
+// Now largely superseded by PermissionRequest hooks, which handle permissions
+// at the Claude Code level before the JSONL is even written.
+// Keeping as a fallback for sessions where hooks aren't configured.
 function runAutoApprovalCheck() {
-  // Scan ALL CC sessions directly — not just linked Agent Brain sessions
-  // This ensures auto-approval works even for sessions that haven't been adopted
   const ccSessions = listClaudeCodeSessions();
 
   for (const cc of ccSessions) {
     const perm = checkPendingPermission(cc.project_dir, cc.session_id);
     if (!perm || !perm.pending) continue;
 
-    // Check cooldown (don't re-fire within 15 seconds)
     const key = cc.project_dir + ":" + cc.session_id;
     const last = autoApprovedRecently.get(key);
-    if (last && Date.now() - last < 15000) continue;
+    if (last && Date.now() - last < 30000) continue; // 30s cooldown (longer since hooks handle most cases)
 
     if (shouldAutoApprove(perm.tools)) {
-      console.log(`[auto-approve] Approving ${perm.tools.map(t => t.name).join(", ")} in ${cc.title || cc.session_id}`);
+      console.log(`[keystroke-fallback] Approving ${perm.tools.map(t => t.name).join(", ")} in ${cc.title || cc.session_id}`);
       autoApprovedRecently.set(key, Date.now());
       sendKeystrokeToClaude(36).catch(e => {
-        console.error("[auto-approve] Keystroke failed:", e.message);
+        console.error("[keystroke-fallback] Failed:", e.message);
       });
-      // Only auto-approve one session per cycle (keystroke goes to focused session)
       return;
-    } else {
-      console.log(`[auto-approve] Permission requires manual approval: ${perm.tools.map(t => t.name).join(", ")} in ${cc.title || cc.session_id}`);
     }
   }
 }
 
-// Run auto-approval check every 3 seconds
-setInterval(runAutoApprovalCheck, 3000);
+// Run keystroke fallback every 10 seconds (slower since hooks are primary)
+setInterval(runAutoApprovalCheck, 10000);
 
 // Clean up old cooldown entries every minute
 setInterval(() => {

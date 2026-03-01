@@ -270,13 +270,24 @@
       buttons.forEach(b => { b.disabled = true; });
 
       try {
-        // Use universal approve endpoint — sends keystroke to focused session
-        await fetch("/api/approve", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action })
-        });
-        cooldowns[sessionId] = Date.now() + 10000;
+        // Check if this is a hook-based permission (has hook_id)
+        const hookId = card.dataset.hookId;
+        if (hookId) {
+          // Resolve via hook endpoint — directly responds to Claude Code's waiting request
+          await fetch("/api/hooks/pending/" + encodeURIComponent(hookId) + "/resolve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ behavior: action === "approve" ? "allow" : "deny" })
+          });
+        } else {
+          // Fallback: keystroke-based approval for non-hook sessions
+          await fetch("/api/approve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action })
+          });
+        }
+        cooldowns[sessionId] = Date.now() + 5000;
         // Fade out the card
         card.style.transition = "opacity 0.3s, transform 0.3s";
         card.style.opacity = "0";
@@ -346,8 +357,9 @@
             } catch (_) { return t.input; }
           }).join("; ");
 
-          html += '<div class="attention-card" data-session="' + s.session_id + '">';
-          // Link to chat for linked sessions; just a div for unlinked ones
+          var hookId = (s.permission && s.permission.hook_id) ? s.permission.hook_id : '';
+          html += '<div class="attention-card" data-session="' + s.session_id + '" data-hook-id="' + hookId + '">';
+          // Link to chat for linked sessions; just a div for unlinked/hook ones
           var linkTag = s.linked ? '<a href="/chat/' + s.session_id + '" class="attention-link">' : '<div class="attention-link">';
           var closeTag = s.linked ? '</a>' : '</div>';
           html += linkTag;
