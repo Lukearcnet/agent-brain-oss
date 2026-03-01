@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Settings - Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 20px 16px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header-left h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+    .header-left p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+    .header-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      text-decoration: none;
+    }
+    .header-btn:active { background: rgba(255,255,255,0.25); }
+
+    .content { padding: 16px; max-width: 600px; }
+
+    /* Toggle row */
+    .toggle-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .toggle-label { font-size: 16px; font-weight: 600; }
+    .toggle-desc { font-size: 13px; color: #8e8e93; margin-top: 2px; }
+    .toggle {
+      position: relative;
+      width: 51px;
+      height: 31px;
+      flex-shrink: 0;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #e8e8ed;
+      border-radius: 16px;
+      transition: 0.3s;
+    }
+    .toggle .slider:before {
+      content: "";
+      position: absolute;
+      height: 27px;
+      width: 27px;
+      left: 2px;
+      bottom: 2px;
+      background: #fff;
+      border-radius: 50%;
+      transition: 0.3s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .toggle input:checked + .slider { background: #34c759; }
+    .toggle input:checked + .slider:before { transform: translateX(20px); }
+
+    /* Section headers */
+    .section-header {
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 16px 4px 8px;
+    }
+    .section-desc {
+      font-size: 13px;
+      color: #8e8e93;
+      padding: 0 4px 10px;
+    }
+
+    /* Tool list */
+    .tool-list {
+      background: #fff;
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .tool-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #f2f2f7;
+    }
+    .tool-row:last-child { border-bottom: none; }
+    .tool-name {
+      font-size: 15px;
+      font-weight: 500;
+      font-family: 'SF Mono', 'Menlo', monospace;
+    }
+    .tier-select {
+      font-size: 14px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      background-size: 10px;
+      padding-right: 24px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238e8e93'/%3E%3C/svg%3E");
+    }
+    .tier-auto { background: #e8f5e9; color: #2e7d32; }
+    .tier-ask { background: #fff3e0; color: #e65100; }
+    .tier-block { background: #fce4ec; color: #c62828; }
+
+    /* Blocked patterns */
+    .pattern-list {
+      background: #fff;
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .pattern-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid #f2f2f7;
+    }
+    .pattern-row:last-child { border-bottom: none; }
+    .pattern-text {
+      font-size: 14px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      color: #c62828;
+    }
+    .pattern-remove {
+      background: none;
+      border: none;
+      font-size: 18px;
+      color: #c62828;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    .pattern-remove:active { background: #fce4ec; }
+
+    .add-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .add-input {
+      flex: 1;
+      font-size: 14px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      padding: 10px 12px;
+      border: 1px solid #e8e8ed;
+      border-radius: 10px;
+      background: #fff;
+      outline: none;
+    }
+    .add-input:focus { border-color: #007aff; }
+    .add-btn {
+      background: #c62828;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .add-btn:active { opacity: 0.8; }
+
+    /* Add tool row */
+    .add-tool-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .add-tool-input {
+      flex: 1;
+      font-size: 14px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      padding: 10px 12px;
+      border: 1px solid #e8e8ed;
+      border-radius: 10px;
+      background: #fff;
+      outline: none;
+    }
+    .add-tool-input:focus { border-color: #007aff; }
+    .add-tool-btn {
+      background: #34c759;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .add-tool-btn:active { opacity: 0.8; }
+
+    /* Save indicator */
+    .save-toast {
+      position: fixed;
+      bottom: max(20px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: #1a1a2e;
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      transition: transform 0.3s;
+      z-index: 100;
+    }
+    .save-toast.show { transform: translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Settings</h1>
+      <p>Auto-approval policies</p>
+    </div>
+    <a href="/" class="header-btn">Dashboard</a>
+  </div>
+
+  <div class="content" id="content">
+    <!-- Loaded by JS -->
+  </div>
+
+  <div class="save-toast" id="saveToast">Saved</div>
+
+  <script>
+    let settings = null;
+
+    async function load() {
+      const res = await fetch("/api/settings");
+      settings = await res.json();
+      render();
+    }
+
+    async function save() {
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings)
+      });
+      const toast = document.getElementById("saveToast");
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 1500);
+    }
+
+    function render() {
+      const aa = settings.autoApproval;
+      const tools = aa.tools || {};
+      const patterns = aa.blockedPatterns || [];
+
+      // Sort tools: auto first, then ask, then block
+      const order = { auto: 0, ask: 1, block: 2 };
+      const sortedTools = Object.entries(tools).sort((a, b) => (order[a[1]] || 1) - (order[b[1]] || 1));
+
+      let html = `
+        <div class="toggle-card">
+          <div>
+            <div class="toggle-label">Auto-Approval</div>
+            <div class="toggle-desc">Automatically approve safe tools</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" ${aa.enabled ? "checked" : ""} onchange="toggleEnabled(this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="section-header">Tool Policies</div>
+        <div class="section-desc">Auto = approve immediately. Ask = show on dashboard. Block = always deny.</div>
+        <div class="tool-list">
+          ${sortedTools.map(([name, tier]) => `
+            <div class="tool-row">
+              <span class="tool-name">${name}</span>
+              <select class="tier-select tier-${tier}" onchange="setTier('${name}', this.value, this)">
+                <option value="auto" ${tier === "auto" ? "selected" : ""}>Auto</option>
+                <option value="ask" ${tier === "ask" ? "selected" : ""}>Ask</option>
+                <option value="block" ${tier === "block" ? "selected" : ""}>Block</option>
+              </select>
+            </div>
+          `).join("")}
+        </div>
+
+        <div class="add-tool-row">
+          <input class="add-tool-input" id="newToolInput" placeholder="Add tool name (e.g. mcp__server__tool)">
+          <button class="add-tool-btn" onclick="addTool()">+ Add</button>
+        </div>
+
+        <div class="section-header">Blocked Bash Patterns</div>
+        <div class="section-desc">Bash commands containing these strings are always blocked, even if Bash is set to Auto.</div>
+        <div class="pattern-list" id="patternList">
+          ${patterns.map((p, i) => `
+            <div class="pattern-row">
+              <span class="pattern-text">${escHtml(p)}</span>
+              <button class="pattern-remove" onclick="removePattern(${i})">x</button>
+            </div>
+          `).join("")}
+        </div>
+        <div class="add-row">
+          <input class="add-input" id="newPatternInput" placeholder="e.g. rm -rf /">
+          <button class="add-btn" onclick="addPattern()">+ Block</button>
+        </div>
+      `;
+
+      document.getElementById("content").innerHTML = html;
+    }
+
+    function toggleEnabled(val) {
+      settings.autoApproval.enabled = val;
+      save();
+    }
+
+    function setTier(tool, tier, el) {
+      settings.autoApproval.tools[tool] = tier;
+      el.className = "tier-select tier-" + tier;
+      save();
+    }
+
+    function addTool() {
+      const input = document.getElementById("newToolInput");
+      const name = input.value.trim();
+      if (!name) return;
+      settings.autoApproval.tools[name] = "ask";
+      input.value = "";
+      save();
+      render();
+    }
+
+    function removePattern(idx) {
+      settings.autoApproval.blockedPatterns.splice(idx, 1);
+      save();
+      render();
+    }
+
+    function addPattern() {
+      const input = document.getElementById("newPatternInput");
+      const val = input.value.trim();
+      if (!val) return;
+      if (!settings.autoApproval.blockedPatterns) settings.autoApproval.blockedPatterns = [];
+      settings.autoApproval.blockedPatterns.push(val);
+      input.value = "";
+      save();
+      render();
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    load();
+  </script>
+</body>
+</html>

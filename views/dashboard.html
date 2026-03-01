@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 20px 16px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header-left h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .header-left p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+    .header-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      text-decoration: none;
+    }
+    .header-btn:active { background: rgba(255,255,255,0.25); }
+
+    /* Sections */
+    .section { padding: 0 16px; }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 20px 4px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .section-count {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .section-count.attention { background: #fff3e0; color: #e65100; }
+    .section-count.active { background: #e8f5e9; color: #2e7d32; }
+    .section-count.idle { background: #e8e8ed; color: #8e8e93; }
+
+    /* Attention cards */
+    .attention-card {
+      background: #fff;
+      border-radius: 14px;
+      margin-bottom: 10px;
+      overflow: hidden;
+      border-left: 4px solid #ff9500;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .attention-card-inner { padding: 14px 14px 12px; }
+    .attention-link {
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .attention-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1c1c1e;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .attention-tools {
+      margin-top: 6px;
+    }
+    .attention-tool-chip {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 500;
+      color: #8a6d3b;
+      background: #fff8ef;
+      border: 1px solid #ffe0b2;
+      padding: 3px 10px;
+      border-radius: 8px;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
+      margin-right: 4px;
+      margin-top: 4px;
+    }
+    .attention-detail {
+      font-size: 11px;
+      color: #8e8e93;
+      margin-top: 6px;
+      word-break: break-all;
+      max-height: 36px;
+      overflow: hidden;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
+    }
+    .attention-actions {
+      display: flex;
+      gap: 8px;
+      padding: 0 14px 12px;
+    }
+    .btn-allow, .btn-deny {
+      flex: 1;
+      padding: 11px;
+      border-radius: 10px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: transform 0.1s;
+    }
+    .btn-allow { background: #34c759; color: #fff; }
+    .btn-deny { background: #ff3b30; color: #fff; }
+    .btn-allow:active, .btn-deny:active { transform: scale(0.97); }
+    .btn-allow:disabled, .btn-deny:disabled { opacity: 0.5; }
+
+    /* Session cards (active + idle) */
+    .card-group { margin-bottom: 2px; }
+    .session-card {
+      background: #fff;
+      display: flex;
+      align-items: center;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      -webkit-tap-highlight-color: transparent;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+      transition: background 0.15s;
+    }
+    .session-card:active { background: #f2f2f7; }
+    .card-group .session-card:first-child { border-radius: 12px 12px 0 0; }
+    .card-group .session-card:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
+    .card-group .session-card:only-child { border-radius: 12px; border-bottom: none; }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      margin-right: 14px;
+      flex-shrink: 0;
+    }
+    .status-dot.active { background: #34c759; box-shadow: 0 0 6px rgba(52,199,89,0.4); }
+    .status-dot.idle { background: #d1d1d6; }
+    .card-body { flex: 1; min-width: 0; }
+    .card-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: #1c1c1e;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .card-meta {
+      font-size: 13px;
+      color: #8e8e93;
+      margin-top: 2px;
+    }
+    .card-chevron {
+      color: #c7c7cc;
+      font-size: 16px;
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+
+    /* Empty state */
+    .empty {
+      text-align: center;
+      padding: 60px 16px;
+    }
+    .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.3; }
+    .empty p { color: #8e8e93; font-size: 15px; line-height: 1.5; }
+    .empty a { color: #007aff; text-decoration: none; font-weight: 500; }
+
+    /* All quiet state */
+    .all-quiet {
+      text-align: center;
+      padding: 40px 16px 20px;
+      color: #8e8e93;
+      font-size: 14px;
+    }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      padding: 24px 16px;
+      padding-bottom: max(24px, env(safe-area-inset-bottom));
+    }
+    .footer a {
+      color: #007aff;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 500;
+    }
+
+    /* Pulse animation for attention dot */
+    @keyframes pulse-attention {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255,149,0,0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(255,149,0,0); }
+    }
+    .attention-pulse {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ff9500;
+      animation: pulse-attention 2s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Agent Brain</h1>
+      <p>Supervision Console</p>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <a href="/settings" class="header-btn">Settings</a>
+      <a href="/chat" class="header-btn">Sessions</a>
+    </div>
+  </div>
+
+  <div id="dashboard"></div>
+
+  <div class="footer">
+    <a href="/chat">Browse All Sessions &rarr;</a>
+  </div>
+
+  <script>
+    const cooldowns = {};
+    let lastData = null;
+
+    function timeAgo(iso) {
+      if (!iso) return "";
+      const diff = Date.now() - new Date(iso).getTime();
+      const s = Math.floor(diff / 1000);
+      if (s < 10) return "just now";
+      if (s < 60) return s + "s ago";
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    async function handlePermission(sessionId, action, btn) {
+      const card = btn.closest(".attention-card");
+      const buttons = card.querySelectorAll("button");
+      buttons.forEach(b => { b.disabled = true; });
+
+      try {
+        // Use universal approve endpoint — sends keystroke to focused session
+        await fetch("/api/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action })
+        });
+        cooldowns[sessionId] = Date.now() + 10000;
+        // Fade out the card
+        card.style.transition = "opacity 0.3s, transform 0.3s";
+        card.style.opacity = "0";
+        card.style.transform = "translateX(-20px)";
+        setTimeout(refresh, 350);
+      } catch (_) {
+        buttons.forEach(b => { b.disabled = false; });
+      }
+    }
+
+    async function refresh() {
+      try {
+        const resp = await fetch("/api/dashboard");
+        const sessions = await resp.json();
+        lastData = sessions;
+        render(sessions);
+      } catch (_) {}
+    }
+
+    function render(sessions) {
+      const now = Date.now();
+      const attention = [];
+      const active = [];
+      const idle = [];
+
+      for (const s of sessions) {
+        const inCooldown = cooldowns[s.session_id] && now < cooldowns[s.session_id];
+        if (s.status === "needs_attention" && !inCooldown) {
+          attention.push(s);
+        } else if (s.status === "active" || (s.status === "needs_attention" && inCooldown)) {
+          active.push(s);
+        } else {
+          idle.push(s);
+        }
+      }
+
+      const el = document.getElementById("dashboard");
+
+      if (sessions.length === 0) {
+        el.innerHTML =
+          '<div class="empty">' +
+          '  <div class="empty-icon">&#x1f4e1;</div>' +
+          '  <p>No sessions being supervised</p>' +
+          '  <p style="margin-top:8px;"><a href="/chat">Browse sessions to start monitoring</a></p>' +
+          '</div>';
+        return;
+      }
+
+      let html = "";
+
+      // Needs Attention
+      if (attention.length > 0) {
+        html += '<div class="section">';
+        html += '<div class="section-header">';
+        html += '  <span class="attention-pulse"></span>';
+        html += '  Needs Attention';
+        html += '  <span class="section-count attention">' + attention.length + '</span>';
+        html += '</div>';
+        for (const s of attention) {
+          const toolNames = s.permission.tools.map(function(t) { return t.name; });
+          const toolDetail = s.permission.tools.map(function(t) {
+            try {
+              const parsed = JSON.parse(t.input);
+              if (parsed.command) return parsed.command;
+              if (parsed.file_path) return parsed.file_path;
+              return t.input;
+            } catch (_) { return t.input; }
+          }).join("; ");
+
+          html += '<div class="attention-card" data-session="' + s.session_id + '">';
+          // Link to chat for linked sessions; just a div for unlinked ones
+          var linkTag = s.linked ? '<a href="/chat/' + s.session_id + '" class="attention-link">' : '<div class="attention-link">';
+          var closeTag = s.linked ? '</a>' : '</div>';
+          html += linkTag;
+          html += '    <div class="attention-card-inner">';
+          html += '      <div class="attention-title">' + esc(s.title) + '</div>';
+          html += '      <div class="attention-tools">';
+          for (var i = 0; i < toolNames.length; i++) {
+            html += '        <span class="attention-tool-chip">' + esc(toolNames[i]) + '</span>';
+          }
+          html += '      </div>';
+          html += '      <div class="attention-detail">' + esc(toolDetail) + '</div>';
+          html += '    </div>';
+          html += closeTag;
+          html += '  <div class="attention-actions">';
+          html += '    <button class="btn-allow" onclick="event.preventDefault(); event.stopPropagation(); handlePermission(\'' + s.session_id + '\', \'approve\', this)">Allow</button>';
+          html += '    <button class="btn-deny" onclick="event.preventDefault(); event.stopPropagation(); handlePermission(\'' + s.session_id + '\', \'deny\', this)">Deny</button>';
+          html += '  </div>';
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+
+      // Active
+      if (active.length > 0) {
+        html += '<div class="section">';
+        html += '<div class="section-header">';
+        html += '  Active';
+        html += '  <span class="section-count active">' + active.length + '</span>';
+        html += '</div>';
+        html += '<div class="card-group">';
+        for (const s of active) {
+          const toolLabel = s.current_tool ? "Running " + s.current_tool : "Working";
+          const ago = timeAgo(s.last_activity);
+          var href = s.linked ? '/chat/' + s.session_id : '#';
+          html += '<a href="' + href + '" class="session-card"' + (s.linked ? '' : ' style="cursor:default"') + '>';
+          html += '  <div class="status-dot active"></div>';
+          html += '  <div class="card-body">';
+          html += '    <div class="card-title">' + esc(s.title) + '</div>';
+          html += '    <div class="card-meta">' + toolLabel + (ago ? ' &bull; ' + ago : '') + '</div>';
+          html += '  </div>';
+          if (s.linked) html += '  <div class="card-chevron">&#8250;</div>';
+          html += '</a>';
+        }
+        html += '</div>';
+        html += '</div>';
+      }
+
+      // Idle
+      if (idle.length > 0) {
+        html += '<div class="section">';
+        html += '<div class="section-header">';
+        html += '  Idle';
+        html += '  <span class="section-count idle">' + idle.length + '</span>';
+        html += '</div>';
+        html += '<div class="card-group">';
+        for (const s of idle) {
+          html += '<a href="/chat/' + s.session_id + '" class="session-card">';
+          html += '  <div class="status-dot idle"></div>';
+          html += '  <div class="card-body">';
+          html += '    <div class="card-title">' + esc(s.title) + '</div>';
+          html += '    <div class="card-meta">' + timeAgo(s.last_activity) + '</div>';
+          html += '  </div>';
+          html += '  <div class="card-chevron">&#8250;</div>';
+          html += '</a>';
+        }
+        html += '</div>';
+        html += '</div>';
+      }
+
+      // All quiet message when no attention needed
+      if (attention.length === 0 && sessions.length > 0) {
+        html = '<div class="all-quiet">All sessions running smoothly</div>' + html;
+      }
+
+      el.innerHTML = html;
+    }
+
+    // Poll every 3 seconds
+    setInterval(refresh, 3000);
+
+    // Immediate refresh on tab visibility
+    document.addEventListener("visibilitychange", function() {
+      if (document.visibilityState === "visible") refresh();
+    });
+
+    // Initial load
+    refresh();
+  </script>
+</body>
+</html>

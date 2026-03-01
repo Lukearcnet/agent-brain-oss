@@ -160,7 +160,7 @@
 </head>
 <body>
   <div class="header">
-    <a href="/chat">&larr;</a>
+    <a href="/">&larr;</a>
     <div class="title" id="chat-title">Chat</div>
     <button class="copy-btn" onclick="copyChat(this)">Copy</button>
   </div>
@@ -316,21 +316,7 @@
 
     let isLinkedCC = false;
     let lastMessageCount = 0;
-    let ws = null;
-    let wsReconnectTimer = null;
-    let pollFallbackTimer = null;
-
-    async function fetchAndRenderMessages() {
-      try {
-        const resp = await fetch("/api/sessions/" + SESSION_ID);
-        const data = await resp.json();
-        if (data.messages && data.messages.length !== lastMessageCount) {
-          messagesEl.innerHTML = "";
-          renderMessages(data.messages);
-          lastMessageCount = data.messages.length;
-        }
-      } catch (_) {}
-    }
+    let pollTimer = null;
 
     async function loadSession() {
       try {
@@ -342,52 +328,16 @@
           renderMessages(data.messages);
           lastMessageCount = data.messages.length;
         }
-        // Connect WebSocket for real-time updates
-        if (isLinkedCC) connectWebSocket();
+        // Start polling for linked Claude Code sessions
+        if (isLinkedCC) startPolling();
       } catch (e) {}
     }
 
-    function connectWebSocket() {
-      if (ws && ws.readyState <= 1) return; // already open or connecting
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(proto + "//" + location.host + "/?session_id=" + SESSION_ID);
-
-      ws.onopen = () => {
-        // Connected — stop any polling fallback
-        if (pollFallbackTimer) { clearInterval(pollFallbackTimer); pollFallbackTimer = null; }
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "session_changed") {
-            // Lightweight notification: re-fetch messages only if count changed
-            if (data.message_count !== undefined && data.message_count !== lastMessageCount) {
-              fetchAndRenderMessages();
-            }
-            // Always update permission bar
-            updatePermissionBar(data.permission);
-          } else if (data.type === "permission_update") {
-            updatePermissionBar(data.permission);
-          }
-        } catch (_) {}
-      };
-
-      ws.onclose = () => {
-        ws = null;
-        // Reconnect after 3 seconds, fall back to polling in the meantime
-        if (!pollFallbackTimer && isLinkedCC) {
-          pollFallbackTimer = setInterval(pollRefresh, 5000);
-        }
-        wsReconnectTimer = setTimeout(connectWebSocket, 3000);
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
+    function startPolling() {
+      if (pollTimer) return;
+      pollTimer = setInterval(pollRefresh, 3000);
     }
 
-    // Polling fallback when WebSocket is disconnected
     async function pollRefresh() {
       try {
         const resp = await fetch("/api/sessions/" + SESSION_ID);
@@ -404,6 +354,13 @@
         }
       } catch (_) {}
     }
+
+    // Poll immediately when tab becomes visible (Mobile Safari suspends timers in background)
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && isLinkedCC) {
+        pollRefresh();
+      }
+    });
 
     // Cooldown: suppress permission bar for 10s after Allow/Deny to prevent ghost reappearance
     let permissionCooldownUntil = 0;

@@ -1,0 +1,32 @@
+{
+  "autoApproval": {
+    "enabled": true,
+    "tools": {
+      "Read": "auto",
+      "Glob": "auto",
+      "Grep": "auto",
+      "WebFetch": "auto",
+      "WebSearch": "auto",
+      "Task": "auto",
+      "TodoRead": "auto",
+      "TodoWrite": "auto",
+      "Write": "auto",
+      "Edit": "auto",
+      "Bash": "auto",
+      "NotebookEdit": "auto",
+      "MultiEdit": "auto"
+    },
+    "blockedPatterns": [
+      "rm -rf",
+      "git push --force",
+      "git push -f",
+      "drop table",
+      "DROP TABLE",
+      "git reset --hard",
+      "git clean -f",
+      "> /dev/",
+      "mkfs",
+      "dd if="
+    ]
+  }
+}

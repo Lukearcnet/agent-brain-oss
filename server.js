@@ -1,13 +1,10 @@
 require("dotenv").config();
 
 const express = require("express");
-const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFile } = require("child_process");
-const WebSocket = require("ws");
-
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
@@ -21,6 +18,18 @@ if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
 
 const ARCHIVE_DIR = path.join(__dirname, "sessions", "archive");
 if (!fs.existsSync(ARCHIVE_DIR)) fs.mkdirSync(ARCHIVE_DIR);
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+const SETTINGS_PATH = path.join(__dirname, "settings.json");
+
+function loadSettings() {
+  try { return JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8")); }
+  catch (_) { return { autoApproval: { enabled: false, tools: {}, blockedPatterns: [] } }; }
+}
+
+function saveSettings(settings) {
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+}
 
 // ── Claude Desktop ──────────────────────────────────────────────────────────
 const CLAUDE_SESSIONS_DIR = path.join(HOME, ".claude", "projects");
@@ -171,14 +180,25 @@ function injectIntoClaudeDesktop(message) {
   });
 }
 
-// Check if a linked CC session has a pending permission prompt
+// Check if a CC session has a pending permission prompt
 function checkPendingPermission(projectDir, sessionId) {
   const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, sessionId + ".jsonl");
   if (!fs.existsSync(filePath)) return null;
 
-  // Read last ~8KB to find the most recent entries
   const stat = fs.statSync(filePath);
-  const readSize = Math.min(stat.size, 8192);
+  const ageMs = Date.now() - stat.mtimeMs;
+
+  // Staleness cap: if JSONL not modified in 10+ minutes, the session is dead
+  if (ageMs > 600000) return { pending: false };
+
+  // Settlement check: if the file is being actively written to (< 3 seconds ago),
+  // the tool might still be executing. Wait for writes to settle before detecting.
+  // This prevents false positives for tools that are currently running.
+  // The auto-approval poll runs every 3s, so we'll catch it on the next cycle.
+  if (ageMs < 3000) return { pending: false };
+
+  // Read last ~16KB to find the most recent entries (larger buffer for big tool inputs)
+  const readSize = Math.min(stat.size, 16384);
   const buf = Buffer.alloc(readSize);
   const fd = fs.openSync(filePath, "r");
   fs.readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
@@ -186,51 +206,112 @@ function checkPendingPermission(projectDir, sessionId) {
   const tail = buf.toString("utf8");
   const lines = tail.split("\n").filter(l => l.trim());
 
-  // Walk backwards to find state
-  let lastAssistantToolUse = null;
-  let hasToolResultAfter = false;
-  let lastType = null;
+  // Walk backwards through JSONL entries.
+  // A permission is pending ONLY if:
+  //   1. The most recent assistant content includes tool_use
+  //   2. No tool_result or progress entries follow it
+  // If we encounter a tool_result, progress entry, or assistant text before
+  // finding a tool_use, the session has moved on — not pending.
+
+  let foundToolUseIdx = -1;
 
   for (let i = lines.length - 1; i >= 0; i--) {
     try {
       const obj = JSON.parse(lines[i]);
-      if (!lastType) lastType = obj.type;
 
-      // If we find a user entry with tool_result content, mark it
-      if (obj.type === "user" && obj.message && Array.isArray(obj.message.content)) {
-        for (const c of obj.message.content) {
-          if (c.type === "tool_result") { hasToolResultAfter = true; break; }
-        }
+      // If we hit a tool_result (user entry with toolUseResult), tool already ran
+      if (obj.type === "user" && obj.toolUseResult) {
+        return { pending: false };
       }
 
-      // Find last assistant tool_use
+      // If we hit a user entry with tool_result content blocks, tool already ran
+      if (obj.type === "user" && obj.message && Array.isArray(obj.message.content)) {
+        const hasToolResult = obj.message.content.some(c => c.type === "tool_result");
+        if (hasToolResult) return { pending: false };
+      }
+
+      // If we hit a progress entry, a tool is currently executing (not waiting for permission)
+      if (obj.type === "progress") {
+        return { pending: false };
+      }
+
       if (obj.type === "assistant" && obj.message && Array.isArray(obj.message.content)) {
         const tools = obj.message.content.filter(c => c.type === "tool_use");
         if (tools.length > 0) {
-          lastAssistantToolUse = tools.map(t => ({
-            name: t.name,
-            input: JSON.stringify(t.input || {}).slice(0, 300)
-          }));
-          break; // Found the last tool_use, stop
+          foundToolUseIdx = i;
+          break;
+        }
+        // Assistant entry with text but no tool_use — session has moved past tool phase
+        const hasText = obj.message.content.some(c => c.type === "text" && c.text && c.text.trim());
+        if (hasText) {
+          return { pending: false };
         }
       }
     } catch (_) {}
   }
 
-  // If last assistant had tool_use and no tool_result followed, Claude is waiting
-  if (lastAssistantToolUse && !hasToolResultAfter) {
-    // Also check if file hasn't been modified in the last 2 seconds (settled)
-    const mtime = stat.mtimeMs;
-    const age = Date.now() - mtime;
-    if (age > 2000) {
-      return { pending: true, tools: lastAssistantToolUse };
-    }
+  if (foundToolUseIdx === -1) {
+    return { pending: false };
   }
+
+  // Found a tool_use — extract tool info
+  try {
+    const obj = JSON.parse(lines[foundToolUseIdx]);
+    const tools = obj.message.content
+      .filter(c => c.type === "tool_use")
+      .map(t => ({ name: t.name, input: JSON.stringify(t.input || {}).slice(0, 300) }));
+    return { pending: true, tools };
+  } catch (_) {}
 
   return { pending: false };
 }
 
+// Get full session state: needs_attention / active / idle
+function getSessionState(projectDir, sessionId) {
+  const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, sessionId + ".jsonl");
+  if (!fs.existsSync(filePath)) return { status: "idle", permission: null, current_tool: null, last_activity: null };
+
+  const stat = fs.statSync(filePath);
+  const lastActivity = stat.mtime.toISOString();
+  const ageMs = Date.now() - stat.mtimeMs;
+
+  // Check for pending permission first
+  const perm = checkPendingPermission(projectDir, sessionId);
+  if (perm && perm.pending) {
+    return { status: "needs_attention", permission: perm, current_tool: null, last_activity: lastActivity };
+  }
+
+  // Active if JSONL modified in last 2 minutes
+  if (ageMs < 120000) {
+    let currentTool = null;
+    try {
+      const readSize = Math.min(stat.size, 4096);
+      const buf = Buffer.alloc(readSize);
+      const fd = fs.openSync(filePath, "r");
+      fs.readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
+      fs.closeSync(fd);
+      const lines = buf.toString("utf8").split("\n").filter(l => l.trim());
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const obj = JSON.parse(lines[i]);
+          if (obj.type === "assistant" && obj.message && Array.isArray(obj.message.content)) {
+            const tools = obj.message.content.filter(c => c.type === "tool_use");
+            if (tools.length > 0) {
+              currentTool = tools[tools.length - 1].name;
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return { status: "active", permission: null, current_tool: currentTool, last_activity: lastActivity };
+  }
+
+  return { status: "idle", permission: null, current_tool: null, last_activity: lastActivity };
+}
+
 // Send a keystroke to Claude Desktop (Enter to approve, Escape to deny)
+// Note: keystroke goes to the CURRENTLY FOCUSED session in Desktop.
 function sendKeystrokeToClaude(keyCode) {
   return new Promise((resolve, reject) => {
     // key code 36 = Enter/Return, key code 53 = Escape
@@ -546,6 +627,12 @@ app.get("/api/claude-sessions/:projectDir/:sessionId", (req, res) => {
   });
 });
 
+// Direct CC session permission check (for unlinked sessions)
+app.get("/api/claude-sessions/:projectDir/:sessionId/pending-permission", (req, res) => {
+  const result = checkPendingPermission(req.params.projectDir, req.params.sessionId);
+  res.json(result || { pending: false });
+});
+
 // Resume a Claude Code session into Agent Brain
 app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", (req, res) => {
   const { projectDir, sessionId } = req.params;
@@ -581,9 +668,20 @@ app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", (req, res) => {
 
 // ── Permission prompt detection & approval ────────────────────────────────────
 
+// Test permission overrides — fake permissions for testing the permission bar
+const testPermissionOverrides = new Map(); // sessionId → { tools, expires }
+
 app.get("/api/sessions/:id/pending-permission", (req, res) => {
   const session = loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Check test overrides first
+  const override = testPermissionOverrides.get(req.params.id);
+  if (override && Date.now() < override.expires) {
+    return res.json({ pending: true, tools: override.tools });
+  }
+  if (override) testPermissionOverrides.delete(req.params.id);
+
   if (!session.cc_project_dir || !session.claude_session_id) {
     return res.json({ pending: false });
   }
@@ -594,9 +692,21 @@ app.get("/api/sessions/:id/pending-permission", (req, res) => {
 app.post("/api/sessions/:id/approve", async (req, res) => {
   const session = loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Clear any test permission override
+  const wasTest = testPermissionOverrides.has(req.params.id);
+  testPermissionOverrides.delete(req.params.id);
+
+  // If this was a test override, don't send real keystrokes
+  if (wasTest) {
+    return res.json({ ok: true, test: true });
+  }
+
   const action = req.body.action || "approve"; // "approve" or "deny"
   try {
-    const keyCode = action === "deny" ? 53 : 36; // Escape or Enter
+    // Send keystroke to the currently focused session in Claude Desktop
+    // (Enter to approve, Escape to deny)
+    const keyCode = action === "deny" ? 53 : 36;
     await sendKeystrokeToClaude(keyCode);
     res.json({ ok: true });
   } catch (e) {
@@ -604,14 +714,204 @@ app.post("/api/sessions/:id/approve", async (req, res) => {
   }
 });
 
+// Test permission bar — sets a fake permission picked up by polling
+app.post("/api/sessions/:id/test-permission", (req, res) => {
+  const session = loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  testPermissionOverrides.set(req.params.id, {
+    tools: [
+      { name: "Bash", input: '{"command":"echo hello world"}' },
+      { name: "Read", input: '{"file_path":"/etc/hosts"}' }
+    ],
+    expires: Date.now() + 30000
+  });
+
+  res.json({ ok: true, expires_in: "30s" });
+});
+
+// Universal approve endpoint — sends keystroke regardless of session type
+app.post("/api/approve", async (req, res) => {
+  const action = req.body.action || "approve";
+  try {
+    const keyCode = action === "deny" ? 53 : 36;
+    await sendKeystrokeToClaude(keyCode);
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
+// ── Dashboard API ──────────────────────────────────────────────────────────
+
+app.get("/api/dashboard", (_req, res) => {
+  const sessions = listSessions();
+  const results = [];
+  const seenCC = new Map(); // "dir:claudeSessionId" → index in results
+
+  // First: add all linked Agent Brain sessions
+  for (const s of sessions) {
+    const full = loadSession(s.session_id);
+    if (!full) continue;
+
+    let state = { status: "idle", permission: null, current_tool: null, last_activity: s.updated_at };
+
+    // Check test overrides first
+    const override = testPermissionOverrides.get(s.session_id);
+    if (override && Date.now() < override.expires) {
+      state = {
+        status: "needs_attention",
+        permission: { pending: true, tools: override.tools },
+        current_tool: null,
+        last_activity: new Date().toISOString()
+      };
+    } else if (full.cc_project_dir && full.claude_session_id) {
+      state = getSessionState(full.cc_project_dir, full.claude_session_id);
+    }
+
+    const item = {
+      session_id: s.session_id,
+      title: s.title || "(untitled)",
+      ...state,
+      linked: !!(full.cc_project_dir && full.claude_session_id)
+    };
+
+    // Deduplicate: if two AB sessions link to the same CC session, keep the most recently updated
+    if (full.cc_project_dir && full.claude_session_id) {
+      const ccKey = full.cc_project_dir + ":" + full.claude_session_id;
+      if (seenCC.has(ccKey)) {
+        const idx = seenCC.get(ccKey);
+        if (new Date(s.updated_at) > new Date(sessions.find(x => x.session_id === results[idx].session_id)?.updated_at || 0)) {
+          results[idx] = item;
+        }
+        continue;
+      }
+      seenCC.set(ccKey, results.length);
+    }
+
+    results.push(item);
+  }
+
+  // Second: scan ALL CC sessions for active/needs_attention ones not already linked
+  // This fulfills "No opt-in required — reads all local sessions automatically"
+  try {
+    const ccSessions = listClaudeCodeSessions();
+    for (const cc of ccSessions) {
+      const ccKey = cc.project_dir + ":" + cc.session_id;
+      if (seenCC.has(ccKey)) continue; // Already shown via a linked AB session
+
+      const state = getSessionState(cc.project_dir, cc.session_id);
+      // Only include active or needs_attention CC sessions (skip idle ones to avoid clutter)
+      if (state.status === "idle") continue;
+
+      results.push({
+        session_id: cc.project_dir + "/" + cc.session_id, // composite ID for unlinked sessions
+        title: cc.title || path.basename(cc.project_path),
+        ...state,
+        linked: false,
+        cc_project_dir: cc.project_dir,
+        cc_session_id: cc.session_id
+      });
+      seenCC.set(ccKey, results.length - 1);
+    }
+  } catch (_) {}
+
+  res.json(results);
+});
+
+// ── Settings API ─────────────────────────────────────────────────────────────
+
+app.get("/api/settings", (_req, res) => {
+  res.json(loadSettings());
+});
+
+app.put("/api/settings", (req, res) => {
+  const settings = req.body;
+  saveSettings(settings);
+  res.json({ ok: true });
+});
+
+// ── Auto-approval engine ─────────────────────────────────────────────────────
+
+// Track recently auto-approved sessions to avoid double-firing
+const autoApprovedRecently = new Map(); // "projectDir:sessionId" → timestamp
+
+function shouldAutoApprove(tools) {
+  const settings = loadSettings();
+  const aa = settings.autoApproval;
+  if (!aa || !aa.enabled) return false;
+
+  for (const tool of tools) {
+    const tier = aa.tools[tool.name];
+
+    // Unknown tool or "ask" tier → require manual approval
+    if (!tier || tier === "ask") return false;
+
+    // "block" tier → never approve
+    if (tier === "block") return false;
+
+    // "auto" tier — but check blocked patterns for Bash commands
+    if (tool.name === "Bash" && aa.blockedPatterns && aa.blockedPatterns.length > 0) {
+      const input = tool.input || "";
+      for (const pattern of aa.blockedPatterns) {
+        if (input.includes(pattern)) return false;
+      }
+    }
+  }
+
+  return true; // All tools in this request are "auto" tier
+}
+
+function runAutoApprovalCheck() {
+  // Scan ALL CC sessions directly — not just linked Agent Brain sessions
+  // This ensures auto-approval works even for sessions that haven't been adopted
+  const ccSessions = listClaudeCodeSessions();
+
+  for (const cc of ccSessions) {
+    const perm = checkPendingPermission(cc.project_dir, cc.session_id);
+    if (!perm || !perm.pending) continue;
+
+    // Check cooldown (don't re-fire within 15 seconds)
+    const key = cc.project_dir + ":" + cc.session_id;
+    const last = autoApprovedRecently.get(key);
+    if (last && Date.now() - last < 15000) continue;
+
+    if (shouldAutoApprove(perm.tools)) {
+      console.log(`[auto-approve] Approving ${perm.tools.map(t => t.name).join(", ")} in ${cc.title || cc.session_id}`);
+      autoApprovedRecently.set(key, Date.now());
+      sendKeystrokeToClaude(36).catch(e => {
+        console.error("[auto-approve] Keystroke failed:", e.message);
+      });
+      // Only auto-approve one session per cycle (keystroke goes to focused session)
+      return;
+    } else {
+      console.log(`[auto-approve] Permission requires manual approval: ${perm.tools.map(t => t.name).join(", ")} in ${cc.title || cc.session_id}`);
+    }
+  }
+}
+
+// Run auto-approval check every 3 seconds
+setInterval(runAutoApprovalCheck, 3000);
+
+// Clean up old cooldown entries every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, ts] of autoApprovedRecently) {
+    if (now - ts > 60000) autoApprovedRecently.delete(key);
+  }
+}, 60000);
+
 // ── HTML templates ───────────────────────────────────────────────────────────
 
 const HOME_HTML = fs.readFileSync(path.join(__dirname, "views", "home.html"), "utf8");
 const CHAT_HTML = fs.readFileSync(path.join(__dirname, "views", "chat.html"), "utf8");
+const DASHBOARD_HTML = fs.readFileSync(path.join(__dirname, "views", "dashboard.html"), "utf8");
+const SETTINGS_HTML = fs.readFileSync(path.join(__dirname, "views", "settings.html"), "utf8");
 
 // ── UI routes ────────────────────────────────────────────────────────────────
 
-app.get("/", (_req, res) => res.redirect("/chat"));
+app.get("/", (_req, res) => res.type("html").send(DASHBOARD_HTML));
+app.get("/settings", (_req, res) => res.type("html").send(SETTINGS_HTML));
 
 app.get("/chat", (_req, res) => {
   res.type("html").send(HOME_HTML);
@@ -639,95 +939,13 @@ function timeAgo(isoStr) {
   return days + "d ago";
 }
 
-// ── WebSocket + fs.watch for real-time updates ──────────────────────────────
-
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
-
-// Track watchers per JSONL file path so we don't duplicate
-const fileWatchers = new Map();  // filePath → { watcher, clients: Set<ws> }
-
-function getJsonlPath(session) {
-  if (!session.cc_project_dir || !session.claude_session_id) return null;
-  return path.join(CLAUDE_SESSIONS_DIR, session.cc_project_dir, session.claude_session_id + ".jsonl");
-}
-
-function watchSession(ws, session) {
-  const filePath = getJsonlPath(session);
-  if (!filePath || !fs.existsSync(filePath)) return;
-
-  if (fileWatchers.has(filePath)) {
-    // Already watching — just add this client
-    fileWatchers.get(filePath).clients.add(ws);
-    return;
-  }
-
-  const clients = new Set([ws]);
-  let debounceTimer = null;
-
-  const watcher = fs.watch(filePath, () => {
-    // Debounce rapid writes (Claude often writes multiple lines quickly)
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      // Send a lightweight notification — just message count + permission status
-      // Client will re-fetch full messages via HTTP if count changed
-      const messages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
-      const permission = checkPendingPermission(session.cc_project_dir, session.claude_session_id);
-      const payload = JSON.stringify({
-        type: "session_changed",
-        message_count: messages ? messages.length : 0,
-        permission: permission || { pending: false }
-      });
-      for (const client of clients) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(payload);
-        }
-      }
-    }, 300);
-  });
-
-  fileWatchers.set(filePath, { watcher, clients });
-}
-
-function unwatchSession(ws) {
-  for (const [filePath, entry] of fileWatchers) {
-    entry.clients.delete(ws);
-    if (entry.clients.size === 0) {
-      entry.watcher.close();
-      fileWatchers.delete(filePath);
-    }
-  }
-}
-
-wss.on("connection", (ws, req) => {
-  const url = new URL(req.url, "http://localhost");
-  const sessionId = url.searchParams.get("session_id");
-
-  if (sessionId) {
-    const session = loadSession(sessionId);
-    if (session) {
-      watchSession(ws, session);
-
-      // Send initial permission status (messages already loaded via HTTP)
-      if (session.cc_project_dir && session.claude_session_id) {
-        const messages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
-        const permission = checkPendingPermission(session.cc_project_dir, session.claude_session_id);
-        ws.send(JSON.stringify({
-          type: "session_changed",
-          message_count: messages ? messages.length : 0,
-          permission: permission || { pending: false }
-        }));
-      }
-    }
-  }
-
-  ws.on("close", () => unwatchSession(ws));
-  ws.on("error", () => unwatchSession(ws));
-});
+// ── Cross-session notification polling (disabled — revisit with push notifications) ──
+// Keeping the code for later. macOS `display notification` works on Mac but
+// doesn't forward to iPhone. Need ntfy.sh or similar for phone push.
 
 // ── Server startup ───────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3030;
-server.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Agent Brain running on http://localhost:${PORT}`);
 });

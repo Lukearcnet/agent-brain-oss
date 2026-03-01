@@ -110,10 +110,17 @@ Agent Brain is a **local agent supervision console** for Claude Code power users
 
 ## Known Bugs to Fix
 
-### Permission bar persistence
+### Permission bar persistence (FIXED in Phase 1)
 - **Symptom:** After clicking Allow or Deny on phone, the permission bar disappears briefly but reappears on the next poll cycle, even though the action was processed on desktop
-- **Impact:** Low (harmless — new real prompts replace stale ones), but feels buggy
-- **Fix:** Client-side cooldown after action, or track last-approved tool_use block ID
+- **Fix applied:** 10-second client-side cooldown after Allow/Deny action
+
+### WebSocket connections lost on server restart
+- **Symptom:** When the server restarts (launchd crash restart, code deploy, or another agent running `launchctl stop/start`), all WebSocket connections are severed. The client has a 3-second auto-reconnect timer, but there's a window where the phone has no active WS connection. Any permission prompts pushed during that gap are silently lost (`pushed: 0`).
+- **Impact:** Medium — permission prompts can be missed entirely during/after restarts. The 5-second HTTP polling fallback should eventually pick up pending permissions, but only if the client detects WS is down and falls back (which it does, but with a delay).
+- **Hardening ideas:**
+  1. **Server-side pending queue:** When a permission is detected but no WS clients are connected, queue it. On next WS connect, flush queued permissions immediately.
+  2. **Client-side permission poll on reconnect:** When WS reconnects after a disconnect, immediately fetch `/pending-permission` via HTTP instead of waiting for the next server push.
+  3. **Graceful restart:** Before shutting down, send a `server_restarting` WS message so clients can immediately start polling and reconnect faster.
 
 ---
 
