@@ -1,4 +1,10 @@
 {
+  "notifications": {
+    "enabled": true,
+    "ntfyTopic": "Agent-brain",
+    "ntfyServer": "https://ntfy.sh",
+    "agentBrainUrl": "http://100.83.51.89:3030"
+  },
   "autoApproval": {
     "enabled": true,
     "tools": {

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>Agent Brain — Memory</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #fff;
+    }
+    .header a { color: rgba(255,255,255,0.85); text-decoration: none; font-size: 22px; padding: 4px; }
+    .header .title { font-size: 17px; font-weight: 600; flex: 1; }
+    .section-label {
+      font-size: 13px; font-weight: 600; color: #8e8e93;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      padding: 16px 16px 8px;
+    }
+    .project-card {
+      display: block;
+      background: #fff;
+      margin: 0 16px 1px;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .project-card:first-of-type { border-radius: 12px 12px 0 0; }
+    .project-card:last-of-type { border-radius: 0 0 12px 12px; margin-bottom: 12px; }
+    .project-card:only-of-type { border-radius: 12px; margin-bottom: 12px; }
+    .project-card:active { background: #f2f2f7; }
+    .project-name { font-size: 16px; font-weight: 500; color: #1c1c1e; }
+    .project-meta { font-size: 13px; color: #8e8e93; margin-top: 2px; }
+    .editor-wrap {
+      display: none;
+      padding: 0 16px 20px;
+    }
+    .editor-wrap.active { display: block; }
+    .editor-label {
+      font-size: 13px; font-weight: 600; color: #8e8e93;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      padding: 12px 0 6px;
+    }
+    .editor-area {
+      width: 100%;
+      min-height: 200px;
+      font-size: 14px;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
+      padding: 12px;
+      border: 1px solid #d1d1d6;
+      border-radius: 10px;
+      background: #fff;
+      resize: vertical;
+      -webkit-appearance: none;
+      line-height: 1.5;
+      color: #1c1c1e;
+    }
+    .editor-area:focus { outline: none; border-color: #007aff; box-shadow: 0 0 0 3px rgba(0,122,255,0.15); }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .btn-save {
+      padding: 10px 20px;
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-save:active { opacity: 0.8; }
+    .btn-secondary {
+      padding: 10px 20px;
+      background: #e8e8ed;
+      color: #1c1c1e;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .daily-list {
+      margin: 0 16px 12px;
+    }
+    .daily-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #fff;
+      padding: 12px 16px;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .daily-item:first-child { border-radius: 12px 12px 0 0; }
+    .daily-item:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
+    .daily-item:only-child { border-radius: 12px; }
+    .daily-item:active { background: #f2f2f7; }
+    .daily-date { font-size: 15px; font-weight: 500; color: #1c1c1e; }
+    .daily-chevron { color: #c7c7cc; font-size: 16px; }
+    .empty { text-align: center; padding: 40px 16px; color: #8e8e93; font-size: 15px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/">&larr;</a>
+    <div class="title">Memory</div>
+  </div>
+
+  <div id="project-list"></div>
+  <div id="editor-section" class="editor-wrap"></div>
+
+  <script>
+    let projects = [];
+    let activeProject = null;
+
+    async function loadProjects() {
+      const resp = await fetch("/api/memory");
+      projects = await resp.json();
+
+      // Also list CC project dirs that may not have memory yet
+      try {
+        const ccResp = await fetch("/api/claude-sessions");
+        const ccSessions = await ccResp.json();
+        const known = new Set(projects.map(p => p.project_dir));
+        const ccDirs = new Set(ccSessions.map(s => s.project_dir));
+        for (const dir of ccDirs) {
+          if (!known.has(dir)) {
+            projects.push({ project_dir: dir, has_memory: false });
+          }
+        }
+      } catch (_) {}
+
+      renderProjects();
+    }
+
+    function renderProjects() {
+      const el = document.getElementById("project-list");
+      if (!projects.length) {
+        el.innerHTML = '<div class="empty">No projects found</div>';
+        return;
+      }
+      let html = '<div class="section-label">Projects</div>';
+      for (const p of projects) {
+        const name = p.project_dir.replace(/-/g, "/").replace(/^\//, "").split("/").slice(-2).join("/");
+        html += '<div class="project-card" onclick="selectProject(\'' + esc(p.project_dir) + '\')">';
+        html += '  <div class="project-name">' + esc(name) + '</div>';
+        html += '  <div class="project-meta">' + (p.has_memory ? "Has MEMORY.md" : "No memory yet") + '</div>';
+        html += '</div>';
+      }
+      el.innerHTML = html;
+    }
+
+    async function selectProject(projectDir) {
+      activeProject = projectDir;
+      const section = document.getElementById("editor-section");
+      section.classList.add("active");
+
+      // Load MEMORY.md
+      const memResp = await fetch("/api/memory/" + encodeURIComponent(projectDir));
+      const memData = await memResp.json();
+
+      // Load daily logs
+      const dailyResp = await fetch("/api/memory/" + encodeURIComponent(projectDir) + "/daily");
+      const dailyLogs = await dailyResp.json();
+
+      const name = projectDir.replace(/-/g, "/").replace(/^\//, "").split("/").slice(-2).join("/");
+      let html = '<div class="editor-label">' + esc(name) + ' — MEMORY.md</div>';
+      html += '<textarea class="editor-area" id="memory-editor">' + esc(memData.content) + '</textarea>';
+      html += '<div class="btn-row">';
+      html += '  <button class="btn-save" onclick="saveMemory()">Save</button>';
+      html += '  <button class="btn-secondary" onclick="appendDaily()">Add Daily Note</button>';
+      html += '</div>';
+
+      if (dailyLogs.length) {
+        html += '<div class="editor-label">Daily Logs</div>';
+        html += '<div class="daily-list">';
+        for (const d of dailyLogs) {
+          html += '<div class="daily-item" onclick="viewDaily(\'' + esc(d.date) + '\')">';
+          html += '  <span class="daily-date">' + esc(d.date) + '</span>';
+          html += '  <span class="daily-chevron">&#8250;</span>';
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+
+      html += '<div id="daily-viewer"></div>';
+      section.innerHTML = html;
+    }
+
+    async function saveMemory() {
+      const content = document.getElementById("memory-editor").value;
+      await fetch("/api/memory/" + encodeURIComponent(activeProject), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content })
+      });
+      alert("Saved!");
+    }
+
+    function appendDaily() {
+      const note = prompt("Add a note to today's log:");
+      if (!note) return;
+      fetch("/api/memory/" + encodeURIComponent(activeProject) + "/daily", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: note })
+      }).then(() => selectProject(activeProject));
+    }
+
+    async function viewDaily(date) {
+      const resp = await fetch("/api/memory/" + encodeURIComponent(activeProject) + "/daily/" + date);
+      const data = await resp.json();
+      const viewer = document.getElementById("daily-viewer");
+      viewer.innerHTML =
+        '<div class="editor-label">' + esc(date) + '</div>' +
+        '<textarea class="editor-area" style="min-height:120px;" readonly>' + esc(data.content) + '</textarea>';
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    loadProjects();
+  </script>
+</body>
+</html>

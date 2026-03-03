@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <title>Agent Brain</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -209,6 +212,63 @@
       font-weight: 500;
     }
 
+    /* Activity timeline */
+    .timeline-item {
+      display: flex;
+      gap: 10px;
+      padding: 10px 16px;
+      background: #fff;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+      font-size: 13px;
+    }
+    .timeline-item:first-child { border-radius: 12px 12px 0 0; }
+    .timeline-item:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
+    .timeline-item:only-child { border-radius: 12px; }
+    .timeline-icon {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; flex-shrink: 0;
+    }
+    .timeline-icon.allow { background: #e8f5e9; color: #2e7d32; }
+    .timeline-icon.deny { background: #ffebee; color: #c62828; }
+    .timeline-icon.auto { background: #e3f2fd; color: #1565c0; }
+    .timeline-icon.info { background: #f3e5f5; color: #6a1b9a; }
+    .timeline-body { flex: 1; min-width: 0; }
+    .timeline-text { color: #1c1c1e; line-height: 1.4; }
+    .timeline-time { color: #8e8e93; font-size: 11px; margin-top: 2px; }
+
+    /* Nav pills */
+    .nav-pills {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .nav-pill {
+      padding: 8px 16px;
+      background: #fff;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #1c1c1e;
+      text-decoration: none;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .nav-pill:active { background: #f2f2f7; }
+    .nav-pill .badge {
+      display: inline-block;
+      background: #ff3b30;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 8px;
+      margin-left: 4px;
+    }
+
     /* Pulse animation for attention dot */
     @keyframes pulse-attention {
       0%, 100% { box-shadow: 0 0 0 0 rgba(255,149,0,0.4); }
@@ -235,7 +295,17 @@
     </div>
   </div>
 
+  <div class="nav-pills">
+    <a href="/orchestrator" class="nav-pill" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600;">Orchestrator</a>
+    <a href="/memory" class="nav-pill">Memory</a>
+    <a href="/mailbox" class="nav-pill">Mailbox <span id="mailbox-badge" class="badge" style="display:none;">0</span></a>
+    <a href="/chat" class="nav-pill">Sessions</a>
+    <a href="/settings" class="nav-pill">Settings</a>
+  </div>
+
   <div id="dashboard"></div>
+
+  <div id="timeline-section" style="padding:0 16px;"></div>
 
   <div class="footer">
     <a href="/chat">Browse All Sessions &rarr;</a>
@@ -437,16 +507,86 @@
       el.innerHTML = html;
     }
 
+    // Activity timeline
+    async function refreshTimeline() {
+      try {
+        const resp = await fetch("/api/events/recent");
+        const events = await resp.json();
+        const el = document.getElementById("timeline-section");
+        if (!events.length) { el.innerHTML = ""; return; }
+
+        let html = '<div class="section-header">Recent Activity</div>';
+        const shown = events.slice(0, 15);
+        for (const e of shown) {
+          var icon = "info", symbol = "i", text = e.type;
+
+          if (e.type === "permission_resolved") {
+            var decision = e.data.decision || "allow";
+            icon = decision === "allow" ? (e.data.source === "auto" ? "auto" : "allow") : "deny";
+            symbol = decision === "allow" ? "\u2713" : "\u2717";
+            var src = e.data.source === "auto" ? "Auto-approved" : (e.data.source === "blocked_pattern" ? "Blocked" : (decision === "allow" ? "Approved" : "Denied"));
+            text = src + ": <strong>" + esc(e.data.tool || "") + "</strong>";
+          } else if (e.type === "permission_timeout") {
+            icon = "deny"; symbol = "\u23f1";
+            text = "Timed out: <strong>" + esc(e.data.tool || "") + "</strong>";
+          } else if (e.type === "session_archived") {
+            icon = "info"; symbol = "\ud83d\udce6";
+            text = "Session archived";
+          } else if (e.type === "handoff_triggered") {
+            icon = "info"; symbol = "\u27a1";
+            text = "Handoff to new session";
+          } else if (e.type === "memory_updated") {
+            icon = "auto"; symbol = "\ud83d\udcbe";
+            text = "Memory updated: " + esc(e.data.file || "");
+          } else if (e.type === "mailbox_message") {
+            icon = "info"; symbol = "\u2709";
+            text = "Message: " + esc(e.data.subject || "");
+          }
+
+          html += '<div class="timeline-item">';
+          html += '  <div class="timeline-icon ' + icon + '">' + symbol + '</div>';
+          html += '  <div class="timeline-body">';
+          html += '    <div class="timeline-text">' + text + '</div>';
+          html += '    <div class="timeline-time">' + timeAgo(e.ts) + (e.session_id ? ' &bull; ' + esc((e.session_id || "").slice(0, 12)) : '') + '</div>';
+          html += '  </div>';
+          html += '</div>';
+        }
+        el.innerHTML = html;
+      } catch (_) {}
+    }
+
     // Poll every 3 seconds
-    setInterval(refresh, 3000);
+    setInterval(function() { refresh(); refreshTimeline(); refreshMailboxBadge(); }, 3000);
 
     // Immediate refresh on tab visibility
     document.addEventListener("visibilitychange", function() {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState === "visible") { refresh(); refreshTimeline(); refreshMailboxBadge(); }
     });
+
+    // Mailbox badge
+    async function refreshMailboxBadge() {
+      try {
+        const resp = await fetch("/api/mailbox/broadcast/unread-count");
+        const data = await resp.json();
+        const badge = document.getElementById("mailbox-badge");
+        if (data.count > 0) {
+          badge.textContent = data.count;
+          badge.style.display = "inline-block";
+        } else {
+          badge.style.display = "none";
+        }
+      } catch (_) {}
+    }
 
     // Initial load
     refresh();
+    refreshTimeline();
+    refreshMailboxBadge();
+
+    // Register service worker for PWA
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(function() {});
+    }
   </script>
 </body>
 </html>

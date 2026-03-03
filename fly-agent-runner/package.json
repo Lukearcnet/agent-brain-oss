@@ -1,0 +1,15 @@
+{
+  "name": "fly-agent-runner",
+  "version": "1.0.0",
+  "description": "Fly.io service that runs Claude Agent SDK tasks remotely",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.63",
+    "@supabase/supabase-js": "^2.49.4",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}

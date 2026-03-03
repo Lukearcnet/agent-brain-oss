@@ -5,8 +5,12 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFile } = require("child_process");
+const db = require("./lib/db");
 const app = express();
 app.use(express.json({ limit: "2mb" }));
+
+// Serve static files (PWA manifest, service worker, icons)
+app.use(express.static(path.join(__dirname, "public")));
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -20,15 +24,100 @@ const ARCHIVE_DIR = path.join(__dirname, "sessions", "archive");
 if (!fs.existsSync(ARCHIVE_DIR)) fs.mkdirSync(ARCHIVE_DIR);
 
 // ── Settings ─────────────────────────────────────────────────────────────────
-const SETTINGS_PATH = path.join(__dirname, "settings.json");
+// Settings are stored in Supabase with an in-memory cache.
+// Synchronous callers use db.getCachedSettings(); async callers use db.loadSettings().
 
 function loadSettings() {
-  try { return JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8")); }
-  catch (_) { return { autoApproval: { enabled: false, tools: {}, blockedPatterns: [] } }; }
+  return db.getCachedSettings();
 }
 
-function saveSettings(settings) {
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+async function loadSettingsAsync() {
+  return db.loadSettings();
+}
+
+async function saveSettings(settings) {
+  await db.saveSettings(settings);
+}
+
+// ── Event Log ────────────────────────────────────────────────────────────────
+// Events stored in Supabase. logEvent is fire-and-forget (async, non-blocking).
+
+function logEvent(type, sessionId, data = {}) {
+  const event = { ts: new Date().toISOString(), type, session_id: sessionId || null, data };
+  db.logEvent(type, sessionId, data).catch(e => console.error("[db] logEvent:", e.message));
+  return event;
+}
+
+async function queryEvents(opts) {
+  return db.queryEvents(opts);
+}
+
+// ── Project Name Mapping & Auto-Naming ──────────────────────────────────────
+// Maps CC project directory keys to friendly project names for auto-naming.
+// When a new session is first seen, it gets named "Project-Name #N".
+
+const PROJECT_NAMES = {
+  "-Users-lukeblanton-agent-brain": "Agent Brain",
+  "-Users-lukeblanton-Documents-TCC-Project-Insiders-MVP": "Insiders MVP",
+  "-Users-lukeblanton-Documents-arc-ios-local": "Arc Social",
+  // Worktrees map to same project
+  "-Users-lukeblanton--claude-worktrees-arc-ios-local-dreamy-sanderson": "Arc Social",
+  "-Users-lukeblanton--claude-worktrees-arc-ios-local-exciting-blackburn": "Arc Social",
+  "-Users-lukeblanton--claude-worktrees-arc-ios-local-unruffled-kapitsa": "Arc Social",
+};
+
+function getProjectName(projectDir) {
+  if (PROJECT_NAMES[projectDir]) return PROJECT_NAMES[projectDir];
+  // Fallback: use last path segment, prettified
+  const parts = projectDir.replace(/^-/, "").split("-");
+  const last = parts[parts.length - 1];
+  return last.charAt(0).toUpperCase() + last.slice(1);
+}
+
+async function getNextSessionNumber(projectName) {
+  // Count existing sessions with this project name prefix
+  const sessions = await listSessions();
+  let maxNum = 0;
+  const pattern = new RegExp("^" + projectName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(\\d+)?$", "i");
+  for (const s of sessions) {
+    const match = (s.title || "").match(pattern);
+    if (match) {
+      const num = parseInt(match[1] || "1", 10);
+      if (num > maxNum) maxNum = num;
+    }
+  }
+  return maxNum + 1;
+}
+
+async function autoNameSession(session) {
+  if (session.title && session.title.trim()) return; // already named
+  if (!session.cc_project_dir) return;
+  const projectName = getProjectName(session.cc_project_dir);
+  const num = await getNextSessionNumber(projectName);
+  session.title = projectName + " " + num;
+}
+
+// ── Project Memory System ────────────────────────────────────────────────────
+// Per-project persistent memory stored in Supabase tables:
+// project_memory, daily_logs, memory_topics
+
+// ── Inter-Session Mailbox ────────────────────────────────────────────────────
+// Mailbox stored in Supabase. All functions are async.
+
+async function sendMailboxMessage(opts) {
+  return db.sendMailboxMessage(opts);
+}
+
+async function readMailbox(sessionId, opts) {
+  return db.readMailbox(sessionId, opts);
+}
+
+async function markMailboxRead(messageId) {
+  return db.markMailboxRead(messageId);
+}
+
+async function getUnreadCount(sessionId) {
+  return db.getUnreadCount(sessionId);
 }
 
 // ── Hook-based Permission System ─────────────────────────────────────────────
@@ -38,10 +127,11 @@ function saveSettings(settings) {
 // If "block" → respond immediately with deny.
 
 const pendingHookPermissions = new Map(); // id → { resolve, data, timestamp }
+const recentlyResolvedSessions = new Map(); // CC session UUID → timestamp (suppress JSONL re-detection)
 let hookPermissionCounter = 0;
 
-function createHookPermission(data) {
-  const id = "hook-" + (++hookPermissionCounter) + "-" + Date.now();
+function createHookPermission(data, preId) {
+  const id = preId || ("hook-" + (++hookPermissionCounter) + "-" + Date.now());
   return new Promise((resolve) => {
     const entry = {
       id,
@@ -54,6 +144,7 @@ function createHookPermission(data) {
     // Timeout after 90 seconds — deny if user doesn't respond
     setTimeout(() => {
       if (pendingHookPermissions.has(id)) {
+        logEvent("permission_timeout", entry.data.session_id, { hook_id: id, tool: entry.data.tool_name });
         pendingHookPermissions.delete(id);
         resolve({ behavior: "deny", message: "Permission request timed out (90s)" });
       }
@@ -65,6 +156,17 @@ function resolveHookPermission(id, behavior) {
   const entry = pendingHookPermissions.get(id);
   if (!entry) return false;
   pendingHookPermissions.delete(id);
+  // Track this CC session as recently resolved so JSONL detection doesn't re-surface it
+  const ccSessionId = entry.data.session_id;
+  if (ccSessionId && ccSessionId !== "unknown") {
+    recentlyResolvedSessions.set(ccSessionId, Date.now());
+  }
+  logEvent("permission_resolved", ccSessionId, {
+    hook_id: id,
+    tool: entry.data.tool_name,
+    decision: behavior,
+    source: "dashboard"
+  });
   if (behavior === "allow") {
     entry.resolve({ behavior: "allow" });
   } else {
@@ -92,6 +194,71 @@ function checkToolPolicy(toolName, toolInput) {
   }
 
   return "auto";
+}
+
+// ── Push Notifications (ntfy.sh) ─────────────────────────────────────────────
+
+async function sendPushNotification({ title, message, priority, hookId }) {
+  const settings = loadSettings();
+  const notif = settings.notifications;
+  if (!notif || !notif.enabled || !notif.ntfyTopic) return;
+
+  const server = notif.ntfyServer || "https://ntfy.sh";
+  const url = `${server}/${notif.ntfyTopic}`;
+
+  const headers = {
+    "Title": title || "Agent Brain",
+    "Priority": String(priority || 4),
+    "Tags": "robot",
+  };
+
+  // If we have a callback URL and hook ID, add Allow/Deny action buttons
+  if (notif.agentBrainUrl && hookId) {
+    const base = notif.agentBrainUrl.replace(/\/$/, "");
+    const allowUrl = `${base}/api/hooks/pending/${encodeURIComponent(hookId)}/resolve`;
+    const denyUrl = allowUrl;
+    headers["Actions"] = [
+      `http, Allow, ${allowUrl}, method=POST, headers.Content-Type=application/json, body={"behavior":"allow"}`,
+      `http, Deny, ${denyUrl}, method=POST, headers.Content-Type=application/json, body={"behavior":"deny"}`
+    ].join("; ");
+
+    // Click opens dashboard
+    headers["Click"] = `${base}/`;
+  }
+
+  try {
+    const https = require(server.startsWith("https") ? "https" : "http");
+    const { URL } = require("url");
+    const parsed = new URL(url);
+
+    const reqOptions = {
+      hostname: parsed.hostname,
+      port: parsed.port,
+      path: parsed.pathname,
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Type": "text/plain",
+        "Content-Length": Buffer.byteLength(message || "")
+      }
+    };
+
+    await new Promise((resolve, reject) => {
+      const req = https.request(reqOptions, (res) => {
+        res.resume();
+        res.on("end", resolve);
+      });
+      req.on("error", (e) => {
+        console.error("[ntfy] Push notification failed:", e.message);
+        resolve(); // Don't block on notification failure
+      });
+      req.write(message || "");
+      req.end();
+    });
+    console.log("[ntfy] Notification sent:", title);
+  } catch (e) {
+    console.error("[ntfy] Push notification error:", e.message);
+  }
 }
 
 // Clean up expired hook permissions every 30 seconds
@@ -424,47 +591,21 @@ function nowId() {
 
 // ── Session management ───────────────────────────────────────────────────────
 
-function createSession() {
+async function createSession() {
   const session_id = nowId();
-  const session = {
-    session_id,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    title: "",
-    provider: "claude-code",
-    claude_session_id: null,
-    cc_project_dir: null,
-    messages: []
-  };
-  saveSession(session);
-  return session;
+  return db.createSession(session_id);
 }
 
-function saveSession(session) {
-  session.updated_at = new Date().toISOString();
-  const p = path.join(SESSIONS_DIR, `${session.session_id}.json`);
-  fs.writeFileSync(p, JSON.stringify(session, null, 2));
+async function saveSession(session) {
+  await db.saveSession(session);
 }
 
-function loadSession(session_id) {
-  const p = path.join(SESSIONS_DIR, `${session_id}.json`);
-  if (!fs.existsSync(p)) return null;
-  return JSON.parse(fs.readFileSync(p, "utf8"));
+async function loadSession(session_id) {
+  return db.loadSession(session_id);
 }
 
-function listSessions() {
-  if (!fs.existsSync(SESSIONS_DIR)) return [];
-  const files = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith(".json") && f !== "folders.json").sort().reverse();
-  return files.map(f => {
-    const data = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), "utf8"));
-    return {
-      session_id: data.session_id,
-      title: data.title || "(untitled)",
-      created_at: data.created_at,
-      updated_at: data.updated_at,
-      claude_session_id: data.claude_session_id || null
-    };
-  });
+async function listSessions() {
+  return db.listSessions();
 }
 
 function autoTitle(session) {
@@ -479,47 +620,26 @@ function autoTitle(session) {
 
 // ── Folder management ─────────────────────────────────────────────────────
 
-const FOLDERS_FILE = path.join(SESSIONS_DIR, "folders.json");
-
-function loadFolders() {
-  if (!fs.existsSync(FOLDERS_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(FOLDERS_FILE, "utf8")); } catch (_) { return []; }
+async function loadFolders() {
+  return db.loadFolders();
 }
 
-function saveFolders(folders) {
-  fs.writeFileSync(FOLDERS_FILE, JSON.stringify(folders, null, 2));
+async function createFolder(name) {
+  return db.createFolder(name);
 }
 
-function createFolder(name) {
-  const folders = loadFolders();
-  const id = "f_" + Date.now();
-  folders.push({ id, name, session_ids: [] });
-  saveFolders(folders);
-  return folders;
-}
-
-function moveToFolder(sessionId, folderId) {
-  const folders = loadFolders();
-  // Remove from any existing folder first
-  for (const f of folders) {
-    f.session_ids = f.session_ids.filter(s => s !== sessionId);
-  }
-  if (folderId) {
-    const folder = folders.find(f => f.id === folderId);
-    if (folder) folder.session_ids.push(sessionId);
-  }
-  saveFolders(folders);
-  return folders;
+async function moveToFolder(sessionId, folderId) {
+  return db.moveToFolder(sessionId, folderId);
 }
 
 // ── API routes ───────────────────────────────────────────────────────────────
 
-app.get("/api/sessions", (_req, res) => {
-  res.json(listSessions());
+app.get("/api/sessions", async (_req, res) => {
+  res.json(await listSessions());
 });
 
-app.get("/api/sessions/:id", (req, res) => {
-  const session = loadSession(req.params.id);
+app.get("/api/sessions/:id", async (req, res) => {
+  const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   // If this is a linked CC session, read messages live from JSONL
@@ -537,7 +657,7 @@ app.post("/chat/new", async (req, res) => {
   if (!firstMessage) return res.status(400).json({ error: "First message required" });
 
   // Create Agent Brain session
-  const session = createSession();
+  const session = await createSession();
 
   try {
     // Snapshot existing JSONL files so we can detect the new one
@@ -567,7 +687,7 @@ app.post("/chat/new", async (req, res) => {
 
     // Auto-title from first message
     session.title = firstMessage.length > 50 ? firstMessage.slice(0, 47) + "..." : firstMessage;
-    saveSession(session);
+    await saveSession(session);
 
     // Watch for the new JSONL to appear (poll for up to 30 seconds)
     let linked = false;
@@ -586,7 +706,7 @@ app.post("/chat/new", async (req, res) => {
             if (Date.now() - stat.mtimeMs < 20000) {
               session.cc_project_dir = dir;
               session.claude_session_id = f.replace(".jsonl", "");
-              saveSession(session);
+              await saveSession(session);
               linked = true;
               break;
             }
@@ -600,72 +720,66 @@ app.post("/chat/new", async (req, res) => {
     res.json({ session_id: session.session_id, linked });
   } catch (e) {
     // Still return the session even if linking fails
-    saveSession(session);
+    await saveSession(session);
     res.json({ session_id: session.session_id, linked: false, error: e.message });
   }
 });
 
-app.patch("/api/sessions/:id", (req, res) => {
-  const session = loadSession(req.params.id);
+app.patch("/api/sessions/:id", async (req, res) => {
+  const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
   if (req.body.title !== undefined) session.title = req.body.title;
-  saveSession(session);
+  await saveSession(session);
   res.json({ ok: true });
 });
 
-app.post("/api/sessions/:id/archive", (req, res) => {
-  const src = path.join(SESSIONS_DIR, `${req.params.id}.json`);
-  const dst = path.join(ARCHIVE_DIR, `${req.params.id}.json`);
-  if (!fs.existsSync(src)) return res.status(404).json({ error: "Session not found" });
-  fs.renameSync(src, dst);
+app.post("/api/sessions/:id/archive", async (req, res) => {
+  await db.archiveSession(req.params.id);
+  logEvent("session_archived", req.params.id, {});
   res.json({ ok: true });
 });
 
-app.delete("/api/sessions/:id", (req, res) => {
-  const p = path.join(SESSIONS_DIR, `${req.params.id}.json`);
-  if (!fs.existsSync(p)) return res.status(404).json({ error: "Session not found" });
-  fs.unlinkSync(p);
+app.delete("/api/sessions/:id", async (req, res) => {
+  await db.deleteSession(req.params.id);
+  logEvent("session_deleted", req.params.id, {});
   res.json({ ok: true });
 });
 
 // ── Folder API routes ──────────────────────────────────────────────────────
 
-app.get("/api/folders", (_req, res) => {
-  res.json(loadFolders());
+app.get("/api/folders", async (_req, res) => {
+  res.json(await loadFolders());
 });
 
-app.post("/api/folders", (req, res) => {
+app.post("/api/folders", async (req, res) => {
   const name = (req.body.name || "").trim();
   if (!name) return res.status(400).json({ error: "Name required" });
-  const folders = createFolder(name);
+  const folders = await createFolder(name);
   res.json(folders);
 });
 
-app.patch("/api/folders/:id", (req, res) => {
-  const folders = loadFolders();
-  const folder = folders.find(f => f.id === req.params.id);
-  if (!folder) return res.status(404).json({ error: "Folder not found" });
-  if (req.body.name !== undefined) folder.name = req.body.name;
-  saveFolders(folders);
-  res.json(folders);
+app.patch("/api/folders/:id", async (req, res) => {
+  // Rename folder directly in Supabase
+  if (req.body.name !== undefined) {
+    await db.supabase.from("folders").update({ name: req.body.name }).eq("id", req.params.id);
+  }
+  res.json(await loadFolders());
 });
 
-app.delete("/api/folders/:id", (req, res) => {
-  let folders = loadFolders();
-  folders = folders.filter(f => f.id !== req.params.id);
-  saveFolders(folders);
-  res.json(folders);
+app.delete("/api/folders/:id", async (req, res) => {
+  await db.deleteFolder(req.params.id);
+  res.json(await loadFolders());
 });
 
-app.post("/api/sessions/:id/move", (req, res) => {
+app.post("/api/sessions/:id/move", async (req, res) => {
   const folderId = req.body.folder_id || null; // null = remove from folder
-  const folders = moveToFolder(req.params.id, folderId);
+  const folders = await moveToFolder(req.params.id, folderId);
   res.json(folders);
 });
 
 // All sessions are Claude Desktop — sending a message means injecting via keystroke
 app.post("/api/sessions/:id/message", async (req, res) => {
-  const session = loadSession(req.params.id);
+  const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   const content = (req.body.content || "").trim();
@@ -707,16 +821,21 @@ app.get("/api/claude-sessions/:projectDir/:sessionId/pending-permission", (req, 
 });
 
 // Resume a Claude Code session into Agent Brain
-app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", (req, res) => {
+app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", async (req, res) => {
   const { projectDir, sessionId } = req.params;
 
   // Check if an Agent Brain session already exists for this CC session
-  const existing = listSessions().find(s => {
-    const full = loadSession(s.session_id);
-    return full && full.claude_session_id === sessionId && full.cc_project_dir === projectDir;
-  });
-  if (existing) {
-    return res.json({ session_id: existing.session_id });
+  const sessions = await listSessions();
+  let existingId = null;
+  for (const s of sessions) {
+    const full = await loadSession(s.session_id);
+    if (full && full.claude_session_id === sessionId && full.cc_project_dir === projectDir) {
+      existingId = s.session_id;
+      break;
+    }
+  }
+  if (existingId) {
+    return res.json({ session_id: existingId });
   }
 
   // Verify the CC session exists
@@ -724,18 +843,13 @@ app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", (req, res) => {
   if (!messages) return res.status(404).json({ error: "Session not found" });
 
   // Create a new Agent Brain session linked to this CC session (read-through, no message copy)
-  const session = createSession();
+  const session = await createSession();
   session.claude_session_id = sessionId;
   session.cc_project_dir = projectDir;
   session.messages = []; // messages are read live from JSONL
-  // Use first user message as title
-  const firstUser = messages.find(m => m.role === "user");
-  if (firstUser) {
-    let t = firstUser.content.trim();
-    if (t.length > 50) t = t.slice(0, 47) + "...";
-    session.title = t;
-  }
-  saveSession(session);
+  // Auto-name: "Project-Name #N"
+  await autoNameSession(session);
+  await saveSession(session);
   res.json({ session_id: session.session_id });
 });
 
@@ -744,8 +858,8 @@ app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", (req, res) => {
 // Test permission overrides — fake permissions for testing the permission bar
 const testPermissionOverrides = new Map(); // sessionId → { tools, expires }
 
-app.get("/api/sessions/:id/pending-permission", (req, res) => {
-  const session = loadSession(req.params.id);
+app.get("/api/sessions/:id/pending-permission", async (req, res) => {
+  const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   // Check test overrides first
@@ -763,7 +877,7 @@ app.get("/api/sessions/:id/pending-permission", (req, res) => {
 });
 
 app.post("/api/sessions/:id/approve", async (req, res) => {
-  const session = loadSession(req.params.id);
+  const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   // Clear any test permission override
@@ -788,8 +902,8 @@ app.post("/api/sessions/:id/approve", async (req, res) => {
 });
 
 // Test permission bar — sets a fake permission picked up by polling
-app.post("/api/sessions/:id/test-permission", (req, res) => {
-  const session = loadSession(req.params.id);
+app.post("/api/sessions/:id/test-permission", async (req, res) => {
+  const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
 
   testPermissionOverrides.set(req.params.id, {
@@ -817,14 +931,26 @@ app.post("/api/approve", async (req, res) => {
 
 // ── Dashboard API ──────────────────────────────────────────────────────────
 
-app.get("/api/dashboard", (_req, res) => {
-  const sessions = listSessions();
+app.get("/api/dashboard", async (_req, res) => {
+  const sessions = await listSessions();
   const results = [];
   const seenCC = new Map(); // "dir:claudeSessionId" → index in results
 
+  // Build a lookup of active hook permissions by CC session ID
+  // so we can merge them with named AB sessions instead of showing duplicates
+  const hooksBySessionId = new Map(); // CC session UUID → [{ hookId, entry }]
+  for (const [id, entry] of pendingHookPermissions) {
+    const ccSessionId = entry.data.session_id;
+    if (ccSessionId && ccSessionId !== "unknown") {
+      if (!hooksBySessionId.has(ccSessionId)) hooksBySessionId.set(ccSessionId, []);
+      hooksBySessionId.get(ccSessionId).push({ hookId: id, entry });
+    }
+  }
+  const claimedHookIds = new Set(); // track which hooks got merged into a named session
+
   // First: add all linked Agent Brain sessions
   for (const s of sessions) {
-    const full = loadSession(s.session_id);
+    const full = await loadSession(s.session_id);
     if (!full) continue;
 
     let state = { status: "idle", permission: null, current_tool: null, last_activity: s.updated_at };
@@ -839,7 +965,31 @@ app.get("/api/dashboard", (_req, res) => {
         last_activity: new Date().toISOString()
       };
     } else if (full.cc_project_dir && full.claude_session_id) {
-      state = getSessionState(full.cc_project_dir, full.claude_session_id);
+      // Check if there's a hook pending for this CC session — if so, use that
+      // instead of JSONL detection (hook is the source of truth)
+      const hooks = hooksBySessionId.get(full.claude_session_id);
+      if (hooks && hooks.length > 0) {
+        const h = hooks[0]; // use first pending hook for this session
+        claimedHookIds.add(h.hookId);
+        state = {
+          status: "needs_attention",
+          permission: {
+            pending: true,
+            hook_id: h.hookId,
+            tools: [{ name: h.entry.data.tool_name, input: h.entry.data.input_summary }]
+          },
+          current_tool: null,
+          last_activity: new Date(h.entry.timestamp).toISOString()
+        };
+      } else {
+        state = getSessionState(full.cc_project_dir, full.claude_session_id);
+        // Suppress JSONL "needs_attention" for sessions we just resolved via hook
+        // (JSONL lags behind — Claude Code hasn't written a new line yet)
+        const resolvedAt = recentlyResolvedSessions.get(full.claude_session_id);
+        if (state.status === "needs_attention" && resolvedAt && (Date.now() - resolvedAt) < 15000) {
+          state = { status: "active", permission: null, current_tool: null, last_activity: state.last_activity };
+        }
+      }
     }
 
     const item = {
@@ -873,9 +1023,32 @@ app.get("/api/dashboard", (_req, res) => {
       const ccKey = cc.project_dir + ":" + cc.session_id;
       if (seenCC.has(ccKey)) continue; // Already shown via a linked AB session
 
-      const state = getSessionState(cc.project_dir, cc.session_id);
-      // Only include active or needs_attention CC sessions (skip idle ones to avoid clutter)
-      if (state.status === "idle") continue;
+      // Check if there's a hook pending for this unlinked CC session
+      const hooks = hooksBySessionId.get(cc.session_id);
+      let state;
+      if (hooks && hooks.length > 0) {
+        const h = hooks[0];
+        claimedHookIds.add(h.hookId);
+        state = {
+          status: "needs_attention",
+          permission: {
+            pending: true,
+            hook_id: h.hookId,
+            tools: [{ name: h.entry.data.tool_name, input: h.entry.data.input_summary }]
+          },
+          current_tool: null,
+          last_activity: new Date(h.entry.timestamp).toISOString()
+        };
+      } else {
+        state = getSessionState(cc.project_dir, cc.session_id);
+        // Suppress JSONL "needs_attention" for sessions we just resolved via hook
+        const resolvedAt = recentlyResolvedSessions.get(cc.session_id);
+        if (state.status === "needs_attention" && resolvedAt && (Date.now() - resolvedAt) < 15000) {
+          state = { status: "active", permission: null, current_tool: null, last_activity: state.last_activity };
+        }
+        // Only include active or needs_attention CC sessions (skip idle ones to avoid clutter)
+        if (state.status === "idle") continue;
+      }
 
       results.push({
         session_id: cc.project_dir + "/" + cc.session_id, // composite ID for unlinked sessions
@@ -889,10 +1062,11 @@ app.get("/api/dashboard", (_req, res) => {
     }
   } catch (_) {}
 
-  // Third: include hook-based pending permissions (from PermissionRequest hooks)
-  // These are the most reliable — they come directly from Claude Code, not JSONL parsing
+  // Third: include any orphaned hook permissions that couldn't be matched to a session
+  // (e.g., if the session_id from the hook doesn't match any known session)
   const hookPending = [];
   for (const [id, entry] of pendingHookPermissions) {
+    if (claimedHookIds.has(id)) continue; // already merged into a named session above
     hookPending.push({
       id,
       session_id: "hook:" + id,
@@ -910,7 +1084,12 @@ app.get("/api/dashboard", (_req, res) => {
     });
   }
 
-  // Hook permissions go first (they are actively blocking Claude Code)
+  // Orphaned hook permissions go first (they are actively blocking Claude Code)
+  // Then sort results: needs_attention first, then active, then idle
+  results.sort((a, b) => {
+    const order = { needs_attention: 0, active: 1, idle: 2 };
+    return (order[a.status] || 2) - (order[b.status] || 2);
+  });
   res.json([...hookPending, ...results]);
 });
 
@@ -934,6 +1113,33 @@ app.post("/api/hooks/permission-request", async (req, res) => {
     inputSummary = String(toolInput).slice(0, 300);
   }
 
+  // Derive project directory from transcript path (e.g., /Users/lukeblanton/.claude/projects/-Users-lukeblanton-agent-brain/<uuid>.jsonl)
+  let projectDir = "";
+  if (transcriptPath) {
+    const match = transcriptPath.match(/\/\.claude\/projects\/([^/]+)\//);
+    if (match) projectDir = match[1];
+  }
+
+  // Auto-adopt: if we don't have a linked Agent Brain session for this CC session, create one
+  if (sessionId && sessionId !== "unknown" && projectDir) {
+    const allSessions = await listSessions();
+    let found = false;
+    for (const s of allSessions) {
+      const full = await loadSession(s.session_id);
+      if (full && full.claude_session_id === sessionId && full.cc_project_dir === projectDir) { found = true; break; }
+    }
+    if (!found) {
+      const newSession = await createSession();
+      newSession.claude_session_id = sessionId;
+      newSession.cc_project_dir = projectDir;
+      newSession.messages = [];
+      await autoNameSession(newSession);
+      await saveSession(newSession);
+      console.log(`[hook] Auto-adopted CC session ${sessionId.slice(0, 12)}... as "${newSession.title}" (${newSession.session_id})`);
+      logEvent("session_adopted", newSession.session_id, { cc_session_id: sessionId, project_dir: projectDir, title: newSession.title });
+    }
+  }
+
   console.log(`[hook] PermissionRequest: ${toolName} in session ${sessionId.slice(0, 12)}... — ${inputSummary.slice(0, 80)}`);
 
   // Check auto-approval policy
@@ -941,6 +1147,7 @@ app.post("/api/hooks/permission-request", async (req, res) => {
 
   if (policy === "auto") {
     console.log(`[hook] Auto-approved: ${toolName}`);
+    logEvent("permission_resolved", sessionId, { tool: toolName, decision: "allow", source: "auto" });
     return res.json({
       hookSpecificOutput: {
         hookEventName: "PermissionRequest",
@@ -951,6 +1158,7 @@ app.post("/api/hooks/permission-request", async (req, res) => {
 
   if (policy === "block") {
     console.log(`[hook] Blocked: ${toolName}`);
+    logEvent("permission_resolved", sessionId, { tool: toolName, decision: "deny", source: "blocked_pattern" });
     return res.json({
       hookSpecificOutput: {
         hookEventName: "PermissionRequest",
@@ -964,6 +1172,18 @@ app.post("/api/hooks/permission-request", async (req, res) => {
 
   // "ask" policy — hold request and wait for user decision via dashboard
   console.log(`[hook] Awaiting manual approval: ${toolName}`);
+
+  // Create the hook permission first so we have the ID for the notification
+  const hookId = "hook-" + (++hookPermissionCounter) + "-" + Date.now();
+
+  // Send push notification with Allow/Deny action buttons
+  sendPushNotification({
+    title: `Approve ${toolName}?`,
+    message: inputSummary.slice(0, 200),
+    priority: 4,
+    hookId
+  });
+
   const decision = await createHookPermission({
     tool_name: toolName,
     tool_input: toolInput,
@@ -971,7 +1191,7 @@ app.post("/api/hooks/permission-request", async (req, res) => {
     session_id: sessionId,
     transcript_path: transcriptPath,
     raw: hookInput
-  });
+  }, hookId);
 
   console.log(`[hook] Decision for ${toolName}: ${decision.behavior}`);
   res.json({
@@ -1014,10 +1234,239 @@ app.get("/api/settings", (_req, res) => {
   res.json(loadSettings());
 });
 
-app.put("/api/settings", (req, res) => {
+app.put("/api/settings", async (req, res) => {
   const settings = req.body;
-  saveSettings(settings);
+  await saveSettings(settings);
   res.json({ ok: true });
+});
+
+// ── Test Notification ────────────────────────────────────────────────────────
+
+app.post("/api/test-notification", async (req, res) => {
+  const settings = loadSettings();
+  const notif = settings.notifications;
+
+  if (!notif || !notif.ntfyTopic) {
+    return res.json({ ok: false, error: "Set an ntfy topic first" });
+  }
+
+  try {
+    // Temporarily force enabled so sendPushNotification doesn't bail out
+    const origEnabled = notif.enabled;
+    settings.notifications.enabled = true;
+    await saveSettings(settings);
+
+    await sendPushNotification({
+      title: "Agent Brain Test",
+      message: "If you see this, notifications are working!",
+      priority: 3,
+      hookId: null
+    });
+
+    // Restore original enabled state
+    settings.notifications.enabled = origEnabled;
+    await saveSettings(settings);
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// ── Event Log API ────────────────────────────────────────────────────────────
+
+app.get("/api/events", async (req, res) => {
+  const events = await queryEvents({
+    since: req.query.since,
+    type: req.query.type,
+    sessionId: req.query.session,
+    limit: parseInt(req.query.limit) || 50
+  });
+  res.json(events);
+});
+
+app.get("/api/events/recent", async (_req, res) => {
+  res.json(await queryEvents({ limit: 50 }));
+});
+
+// ── Memory API ───────────────────────────────────────────────────────────────
+
+// List all projects that have memory
+app.get("/api/memory", async (_req, res) => {
+  try {
+    const projects = await db.listProjects();
+    res.json(projects.map(p => ({
+      project_dir: p.name,
+      name: getProjectName(p.name),
+      has_memory: true
+    })));
+  } catch (_) { res.json([]); }
+});
+
+// Read/write MEMORY.md for a project
+app.get("/api/memory/:projectDir", async (req, res) => {
+  try {
+    const content = await db.getProjectMemory(req.params.projectDir);
+    res.json({ content, project_dir: req.params.projectDir });
+  } catch (_) { res.json({ content: "", project_dir: req.params.projectDir }); }
+});
+
+app.put("/api/memory/:projectDir", async (req, res) => {
+  const content = req.body.content || "";
+  await db.setProjectMemory(req.params.projectDir, content);
+  logEvent("memory_updated", null, { project_dir: req.params.projectDir, file: "MEMORY.md" });
+  res.json({ ok: true });
+});
+
+// Daily logs
+app.get("/api/memory/:projectDir/daily", async (req, res) => {
+  try {
+    const logs = await db.listDailyLogs(req.params.projectDir);
+    res.json(logs);
+  } catch (_) { res.json([]); }
+});
+
+app.get("/api/memory/:projectDir/daily/:date", async (req, res) => {
+  try {
+    const content = await db.getDailyLog(req.params.projectDir, req.params.date);
+    res.json({ date: req.params.date, content });
+  } catch (_) { res.json({ date: req.params.date, content: "" }); }
+});
+
+app.post("/api/memory/:projectDir/daily", async (req, res) => {
+  const content = req.body.content || "";
+  const result = await db.appendDailyLog(req.params.projectDir, content);
+  logEvent("memory_updated", null, { project_dir: req.params.projectDir, file: result.date + ".md" });
+  res.json({ ok: true, date: result.date });
+});
+
+// Topic files
+app.get("/api/memory/:projectDir/topics", async (req, res) => {
+  try {
+    const topics = await db.listTopics(req.params.projectDir);
+    res.json(topics);
+  } catch (_) { res.json([]); }
+});
+
+app.get("/api/memory/:projectDir/topics/:name", async (req, res) => {
+  try {
+    const content = await db.getTopic(req.params.projectDir, req.params.name);
+    res.json({ name: req.params.name, content });
+  } catch (_) { res.json({ name: req.params.name, content: "" }); }
+});
+
+app.put("/api/memory/:projectDir/topics/:name", async (req, res) => {
+  const content = req.body.content || "";
+  await db.setTopic(req.params.projectDir, req.params.name, content);
+  logEvent("memory_updated", null, { project_dir: req.params.projectDir, file: "topics/" + req.params.name + ".md" });
+  res.json({ ok: true });
+});
+
+// ── Mailbox API ──────────────────────────────────────────────────────────────
+
+app.post("/api/mailbox", async (req, res) => {
+  const { from_session, to_session, subject, body } = req.body;
+  if (!subject && !body) return res.status(400).json({ error: "Subject or body required" });
+  const msg = await sendMailboxMessage({ from_session, to_session, subject, body });
+  res.json(msg);
+});
+
+// Get ALL messages (for dashboard mailbox UI)
+app.get("/api/mailbox/all", async (_req, res) => {
+  try {
+    const msgs = await db.readAllMailbox({ limit: 50 });
+    res.json(msgs);
+  } catch (_) { res.json([]); }
+});
+
+app.get("/api/mailbox/:sessionId", async (req, res) => {
+  const unreadOnly = req.query.unread === "true";
+  const msgs = await readMailbox(req.params.sessionId, { unreadOnly });
+  res.json(msgs);
+});
+
+app.get("/api/mailbox/:sessionId/unread-count", async (req, res) => {
+  res.json({ count: await getUnreadCount(req.params.sessionId) });
+});
+
+app.post("/api/mailbox/:messageId/read", async (req, res) => {
+  const ok = await markMailboxRead(req.params.messageId);
+  if (!ok) return res.status(404).json({ error: "Message not found" });
+  res.json({ ok: true });
+});
+
+// ── Session Handoff API ──────────────────────────────────────────────────────
+
+app.post("/api/sessions/:id/handoff", async (req, res) => {
+  const session = await loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Build handoff context
+  const projectDir = session.cc_project_dir || "unknown";
+
+  // Read project memory
+  let memoryContent = "";
+  try { memoryContent = await db.getProjectMemory(projectDir); } catch (_) {}
+
+  // Read today's daily log
+  let dailyLog = "";
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    dailyLog = await db.getDailyLog(projectDir, today);
+  } catch (_) {}
+
+  // Extract last N messages for summary
+  const recentMsgs = (session.messages || []).slice(-20);
+  const msgSummary = recentMsgs
+    .filter(m => m.role === "user" || (m.role === "assistant" && m.content))
+    .map(m => `[${m.role}]: ${(m.content || "").slice(0, 500)}`)
+    .join("\n\n");
+
+  // Compose handoff prompt
+  const handoffPrompt = `This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+## Previous Session: ${session.title || "Untitled"}
+
+### Recent conversation:
+${msgSummary || "(no messages captured)"}
+
+### Project Memory (MEMORY.md):
+${memoryContent || "(no project memory yet)"}
+
+### Today's Log:
+${dailyLog || "(no daily log yet)"}
+
+Please continue the conversation from where we left off. Review the project memory and recent conversation to understand the context, then proceed with the task at hand.`;
+
+  // Create new session
+  const newSession = await createSession();
+  const newData = await loadSession(newSession.session_id);
+  newData.title = `Handoff from: ${session.title || req.params.id}`;
+  newData.cc_project_dir = session.cc_project_dir;
+  newData.handoff_from = req.params.id;
+  newData.handoff_prompt = handoffPrompt;
+  await saveSession(newData);
+
+  logEvent("handoff_triggered", req.params.id, {
+    new_session: newSession.session_id,
+    project_dir: projectDir
+  });
+
+  res.json({
+    ok: true,
+    new_session_id: newSession.session_id,
+    handoff_prompt: handoffPrompt
+  });
+});
+
+// Get handoff prompt for a session (if it was created via handoff)
+app.get("/api/sessions/:id/handoff-prompt", async (req, res) => {
+  const session = await loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  res.json({
+    handoff_prompt: session.handoff_prompt || null,
+    handoff_from: session.handoff_from || null
+  });
 });
 
 // ── Auto-approval engine ─────────────────────────────────────────────────────
@@ -1086,28 +1535,34 @@ setInterval(() => {
   for (const [key, ts] of autoApprovedRecently) {
     if (now - ts > 60000) autoApprovedRecently.delete(key);
   }
+  for (const [key, ts] of recentlyResolvedSessions) {
+    if (now - ts > 30000) recentlyResolvedSessions.delete(key);
+  }
 }, 60000);
 
-// ── HTML templates ───────────────────────────────────────────────────────────
+// ── HTML templates (read fresh on each request for live editing) ─────────────
 
-const HOME_HTML = fs.readFileSync(path.join(__dirname, "views", "home.html"), "utf8");
-const CHAT_HTML = fs.readFileSync(path.join(__dirname, "views", "chat.html"), "utf8");
-const DASHBOARD_HTML = fs.readFileSync(path.join(__dirname, "views", "dashboard.html"), "utf8");
-const SETTINGS_HTML = fs.readFileSync(path.join(__dirname, "views", "settings.html"), "utf8");
+function readView(name) {
+  return fs.readFileSync(path.join(__dirname, "views", name), "utf8");
+}
 
 // ── UI routes ────────────────────────────────────────────────────────────────
 
-app.get("/", (_req, res) => res.type("html").send(DASHBOARD_HTML));
-app.get("/settings", (_req, res) => res.type("html").send(SETTINGS_HTML));
+app.get("/", (_req, res) => res.type("html").send(readView("dashboard.html")));
+app.get("/settings", (_req, res) => res.type("html").send(readView("settings.html")));
 
 app.get("/chat", (_req, res) => {
-  res.type("html").send(HOME_HTML);
+  res.type("html").send(readView("home.html"));
 });
 
 app.get("/chat/:session_id", (req, res) => {
-  const html = CHAT_HTML.replace("{{SESSION_ID}}", req.params.session_id);
+  const html = readView("chat.html").replace("{{SESSION_ID}}", req.params.session_id);
   res.type("html").send(html);
 });
+
+app.get("/memory", (_req, res) => res.type("html").send(readView("memory.html")));
+app.get("/mailbox", (_req, res) => res.type("html").send(readView("mailbox.html")));
+app.get("/orchestrator", (_req, res) => res.type("html").send(readView("orchestrator.html")));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1126,6 +1581,606 @@ function timeAgo(isoStr) {
   return days + "d ago";
 }
 
+// ── Orchestrator ────────────────────────────────────────────────────────────
+// Top-level dispatch system. User sends multi-project instructions in a chat
+// interface; the orchestrator parses tasks, runs them via the Claude Agent SDK,
+// streams progress back via SSE, and routes critical updates to the user.
+
+const { createSDKTask, loadSDK } = require("./lib/sdk-adapter");
+
+const orchestratorClients = new Map(); // SSE client connections
+const activeTasks = new Map(); // taskId → { abortController, task, sessionId }
+
+// ── Task Queue (sequential by default, bump concurrency for parallel) ──────
+class TaskQueue {
+  constructor({ concurrency = 1 } = {}) {
+    this.concurrency = concurrency;
+    this.running = 0;
+    this.queue = [];
+  }
+  enqueue(taskFn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ taskFn, resolve, reject });
+      this._drain();
+    });
+  }
+  _drain() {
+    while (this.running < this.concurrency && this.queue.length > 0) {
+      const { taskFn, resolve, reject } = this.queue.shift();
+      this.running++;
+      taskFn()
+        .then(resolve)
+        .catch(reject)
+        .finally(() => { this.running--; this._drain(); });
+    }
+  }
+  cancelAll() { this.queue = []; }
+}
+// Note: each SDK query uses ~1GiB RAM. concurrency=1 keeps memory safe.
+// To enable parallel execution later, change to: new TaskQueue({ concurrency: 3 })
+const orchestratorQueue = new TaskQueue({ concurrency: 1 });
+
+// Kill existing Claude Code sessions before dispatching orchestrator tasks.
+// The Agent SDK creates Claude Code sessions that conflict with any running
+// sessions (Claude Desktop, Claude Code terminals, etc.). This clears the way.
+function killExistingClaudeSessions() {
+  return new Promise((resolve) => {
+    execFile("pkill", ["-x", "claude"], (err) => {
+      // pkill returns exit code 1 if no processes matched — that's fine
+      if (!err) console.log("[orchestrator] Killed existing Claude sessions to avoid concurrency conflicts");
+      resolve();
+    });
+  });
+}
+
+async function loadOrchestrator() {
+  return db.loadOrchestrator();
+}
+
+async function saveOrchestrator(data) {
+  await db.saveOrchestrator(data);
+}
+
+function broadcastOrchestrator(event, data) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const [id, client] of orchestratorClients) {
+    try { client.write(payload); } catch (_) { orchestratorClients.delete(id); }
+  }
+}
+
+// Project keyword → directory mapping for task parsing
+const PROJECT_KEYWORDS = {
+  "agent brain": { dir: "-Users-lukeblanton-agent-brain", name: "Agent Brain", cwd: "/Users/lukeblanton/agent-brain" },
+  "ios-app": { dir: "-Users-lukeblanton-Documents-arc-ios-local", name: "Arc Social", cwd: "/Users/lukeblanton/Documents/arc-ios-local" },
+  "ios app": { dir: "-Users-lukeblanton-Documents-arc-ios-local", name: "Arc Social", cwd: "/Users/lukeblanton/Documents/arc-ios-local" },
+  "arc social": { dir: "-Users-lukeblanton-Documents-arc-ios-local", name: "Arc Social", cwd: "/Users/lukeblanton/Documents/arc-ios-local" },
+  "arc": { dir: "-Users-lukeblanton-Documents-arc-ios-local", name: "Arc Social", cwd: "/Users/lukeblanton/Documents/arc-ios-local" },
+  "insiders-mvp": { dir: "-Users-lukeblanton-Documents-TCC-Project-Insiders-MVP", name: "Insiders MVP", cwd: "/Users/lukeblanton/Documents/TCC Project/Insiders-MVP" },
+  "insiders mvp": { dir: "-Users-lukeblanton-Documents-TCC-Project-Insiders-MVP", name: "Insiders MVP", cwd: "/Users/lukeblanton/Documents/TCC Project/Insiders-MVP" },
+  "insiders": { dir: "-Users-lukeblanton-Documents-TCC-Project-Insiders-MVP", name: "Insiders MVP", cwd: "/Users/lukeblanton/Documents/TCC Project/Insiders-MVP" },
+};
+
+function parseOrchestratorTasks(message) {
+  const tasks = [];
+  const lowerMsg = message.toLowerCase();
+  const usedProjects = new Set(); // avoid duplicate projects
+
+  // Try numbered tasks: "1. agent brain - do X\n2. ios - do Y"
+  const numberedPattern = /(?:^|\n)\s*\d+[\.\)]\s*(.+?)(?=(?:\n\s*\d+[\.\)])|$)/gs;
+  const numberedMatches = [...message.matchAll(numberedPattern)].map(m => m[1].trim());
+
+  const taskTexts = numberedMatches.length > 0 ? numberedMatches : [message];
+
+  for (const taskText of taskTexts) {
+    const lowerTask = taskText.toLowerCase();
+    let matched = false;
+
+    // Sort keywords by length (longest first) so "agent brain" matches before "arc"
+    const sortedKeywords = Object.entries(PROJECT_KEYWORDS).sort((a, b) => b[0].length - a[0].length);
+
+    for (const [keyword, project] of sortedKeywords) {
+      if (lowerTask.includes(keyword) && !usedProjects.has(project.dir)) {
+        // Extract task description (everything after the project name reference)
+        const keywordIdx = lowerTask.indexOf(keyword);
+        let description = taskText;
+        const afterKeyword = taskText.slice(keywordIdx + keyword.length)
+          .replace(/^\s*[-:–—,]\s*/, "")
+          .replace(/^\s*(and|then|to|should|please)\s+/i, "")
+          .trim();
+        if (afterKeyword) description = afterKeyword;
+
+        tasks.push({
+          id: "task-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+          project_dir: project.dir,
+          project_name: project.name,
+          cwd: project.cwd,
+          description,
+          status: "pending",
+          started_at: null,
+          completed_at: null,
+          output: "",
+          error: null
+        });
+        usedProjects.add(project.dir);
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched && numberedMatches.length > 0) {
+      // Unmatched numbered item → generic task
+      tasks.push({
+        id: "task-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+        project_dir: null,
+        project_name: "General",
+        cwd: path.join(HOME),
+        description: taskText,
+        status: "pending",
+        started_at: null,
+        completed_at: null,
+        output: "",
+        error: null
+      });
+    }
+  }
+
+  // If no tasks found from numbered parsing and single-message mode matched nothing
+  if (tasks.length === 0) {
+    // Try matching any project keyword in the full message
+    const sortedKeywords = Object.entries(PROJECT_KEYWORDS).sort((a, b) => b[0].length - a[0].length);
+    for (const [keyword, project] of sortedKeywords) {
+      if (lowerMsg.includes(keyword)) {
+        tasks.push({
+          id: "task-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+          project_dir: project.dir,
+          project_name: project.name,
+          cwd: project.cwd,
+          description: message,
+          status: "pending",
+          started_at: null,
+          completed_at: null,
+          output: "",
+          error: null
+        });
+        break;
+      }
+    }
+  }
+
+  return tasks;
+}
+
+async function composeTaskPrompt(task) {
+  let prompt = "";
+
+  // Add project context from memory
+  if (task.project_dir) {
+    try {
+      const memContent = await db.getProjectMemory(task.project_dir);
+      if (memContent) prompt += "## Project Memory\n" + memContent + "\n\n";
+    } catch (_) {}
+
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const dailyContent = await db.getDailyLog(task.project_dir, today);
+      if (dailyContent) prompt += "## Today's Activity Log\n" + dailyContent + "\n\n";
+    } catch (_) {}
+
+    // Check for unread mailbox messages for this project
+    try {
+      const msgs = await readMailbox(task.project_dir, { unreadOnly: true });
+      if (msgs.length > 0) {
+        prompt += "## Unread Mailbox Messages\n";
+        for (const m of msgs.slice(0, 5)) {
+          prompt += `- From ${m.from_session || "unknown"}: ${m.subject || "(no subject)"} — ${m.body || ""}\n`;
+        }
+        prompt += "\n";
+      }
+    } catch (_) {}
+  }
+
+  prompt += "## Your Task\n" + task.description + "\n\n";
+
+  prompt += `## Orchestrator Communication
+You were dispatched by the Agent Brain orchestrator. Your task ID is: ${task.id}
+
+When you have important findings, complete a major step, or need user input, post an update using the Bash tool:
+curl -s -X POST http://localhost:3030/api/orchestrator/tasks/${task.id}/update -H "Content-Type: application/json" -d '{"type":"<type>","content":"<your update>"}'
+
+Update types: "progress" (status updates), "finding" (important discoveries), "needs_decision" (user must choose — include the question and options), "completed" (task done — include a summary).
+
+When your task is complete, always send a "completed" update with a summary.
+
+Also update project memory before finishing:
+curl -s -X POST http://localhost:3030/api/memory/${task.project_dir || "general"}/daily -H "Content-Type: application/json" -d '{"content":"## Orchestrator Task\\n- <what you accomplished>\\n- <next steps>"}'
+
+Now begin working on your task.`;
+
+  return prompt;
+}
+
+async function spawnTask(task) {
+  const prompt = await composeTaskPrompt(task);
+  task.status = "running";
+  task.started_at = new Date().toISOString();
+
+  const model = task.model || "sonnet";
+  console.log(`[orchestrator] Running: ${task.project_name} (${model}) — ${task.description.slice(0, 60)}`);
+  console.log(`[orchestrator] CWD: ${task.cwd}`);
+
+  let outputBuffer = "";
+
+  // Permission bridge: routes SDK permission requests through Agent Brain's
+  // auto-approval engine + phone dashboard. Honors settings.json tool policies.
+  async function orchestratorCanUseTool(toolName, toolInput, options) {
+    const policy = checkToolPolicy(toolName, toolInput);
+
+    if (policy === "auto") {
+      return { behavior: "allow" };
+    }
+    if (policy === "block") {
+      console.log(`[orchestrator] Blocked tool: ${toolName} (policy)`);
+      return { behavior: "deny", message: `Tool "${toolName}" is blocked by policy` };
+    }
+
+    // policy === "ask" — route to dashboard for user approval
+    const inputSummary = typeof toolInput === "object"
+      ? JSON.stringify(toolInput).slice(0, 200)
+      : String(toolInput || "").slice(0, 200);
+
+    console.log(`[orchestrator] Permission request: ${toolName} for ${task.project_name}`);
+
+    // Broadcast to orchestrator UI so user sees the request
+    broadcastOrchestrator("task_permission", {
+      task_id: task.id,
+      project_name: task.project_name,
+      tool: toolName,
+      input_summary: inputSummary,
+      ts: new Date().toISOString()
+    });
+
+    // Create a hook permission entry (same system the dashboard + push notifications use)
+    const hookData = {
+      tool_name: toolName,
+      tool_input: toolInput,
+      session_id: `orchestrator-${task.id}`,
+      transcript_path: null,
+      source: "orchestrator"
+    };
+
+    // Send push notification
+    const hookId = "orch-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+    sendPushNotification({
+      title: `${task.project_name}: Allow ${toolName}?`,
+      message: inputSummary.slice(0, 200),
+      priority: 4,
+      hookId
+    });
+
+    const result = await createHookPermission(hookData, hookId);
+
+    // Broadcast the decision back to UI
+    broadcastOrchestrator("task_permission_resolved", {
+      task_id: task.id,
+      project_name: task.project_name,
+      tool: toolName,
+      decision: result.behavior,
+      ts: new Date().toISOString()
+    });
+
+    return result;
+  }
+
+  const sdkTask = createSDKTask({
+    prompt,
+    cwd: task.cwd,
+    model,
+    maxTurns: task.maxTurns || 50,
+    maxBudgetUsd: task.maxBudgetUsd || undefined,
+    permissionMode: "default",
+    allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+    canUseTool: orchestratorCanUseTool,
+  });
+
+  activeTasks.set(task.id, { abortController: sdkTask.abortController, task, sessionId: null });
+
+  // ── Map SDK events → SSE broadcasts ──
+
+  sdkTask.events.on("message", (msg) => {
+    // SDKAssistantMessage — text and tool_use blocks
+    if (msg.type === "assistant" && msg.message && Array.isArray(msg.message.content)) {
+      for (const block of msg.message.content) {
+        if (block.type === "text" && block.text && block.text.trim()) {
+          outputBuffer += block.text;
+          broadcastOrchestrator("task_output", {
+            task_id: task.id,
+            project_name: task.project_name,
+            text: block.text,
+            output_type: "text"
+          });
+        } else if (block.type === "tool_use") {
+          const toolSummary = block.name + (block.input ? ": " + JSON.stringify(block.input).slice(0, 100) : "");
+          broadcastOrchestrator("task_output", {
+            task_id: task.id,
+            project_name: task.project_name,
+            text: toolSummary,
+            output_type: "tool_use",
+            tool: block.name
+          });
+        }
+      }
+    }
+    // SDKResultMessage — session finished
+    else if (msg.type === "result" || "result" in msg) {
+      const sessionId = msg.session_id || null;
+      if (sessionId) {
+        const active = activeTasks.get(task.id);
+        if (active) active.sessionId = sessionId;
+      }
+      broadcastOrchestrator("task_output", {
+        task_id: task.id,
+        project_name: task.project_name,
+        text: "Session finished: " + (msg.subtype || "done"),
+        output_type: "result",
+        cost: msg.cost_usd || null,
+        duration: msg.duration_ms || null
+      });
+    }
+    // SDKSystemMessage — log but don't broadcast to UI
+    else if (msg.type === "system") {
+      const sessionId = msg.session_id || null;
+      if (sessionId && msg.subtype === "init") {
+        const active = activeTasks.get(task.id);
+        if (active) active.sessionId = sessionId;
+      }
+      console.log(`[orchestrator] SDK system: ${task.project_name} — ${msg.subtype || "event"}`);
+    }
+  });
+
+  sdkTask.events.on("done", async () => {
+    task.status = "completed";
+    task.completed_at = new Date().toISOString();
+    task.output = outputBuffer.slice(-8000);
+    activeTasks.delete(task.id);
+
+    console.log(`[orchestrator] Task ${task.id} finished: completed`);
+
+    broadcastOrchestrator("task_completed", {
+      task_id: task.id,
+      project_name: task.project_name,
+      status: "completed",
+      error: null,
+      duration_ms: new Date(task.completed_at) - new Date(task.started_at)
+    });
+
+    await db.upsertOrchestratorTask(task);
+    await db.addOrchestratorMessage({
+      role: "system",
+      type: "task_completed",
+      task_id: task.id,
+      project_name: task.project_name,
+      content: `${task.project_name} task completed.`,
+      ts: new Date().toISOString()
+    });
+    logEvent("orchestrator_task_done", null, { task_id: task.id, project: task.project_name, status: "completed" });
+  });
+
+  sdkTask.events.on("cancelled", async () => {
+    task.status = "cancelled";
+    task.completed_at = new Date().toISOString();
+    task.output = outputBuffer.slice(-8000);
+    activeTasks.delete(task.id);
+
+    broadcastOrchestrator("task_cancelled", { task_id: task.id, project_name: task.project_name });
+
+    await db.upsertOrchestratorTask(task);
+    await db.addOrchestratorMessage({
+      role: "system",
+      content: `${task.project_name} task cancelled.`,
+      task_id: task.id,
+      ts: new Date().toISOString()
+    });
+  });
+
+  sdkTask.events.on("error", async (err) => {
+    task.status = "failed";
+    task.error = err.message;
+    task.completed_at = new Date().toISOString();
+    task.output = outputBuffer.slice(-8000);
+    activeTasks.delete(task.id);
+
+    broadcastOrchestrator("task_error", { task_id: task.id, project_name: task.project_name, error: err.message });
+
+    await db.upsertOrchestratorTask(task);
+    await db.addOrchestratorMessage({
+      role: "system",
+      type: "task_error",
+      task_id: task.id,
+      content: `Failed: ${task.project_name}: ${err.message}`,
+      ts: new Date().toISOString()
+    });
+  });
+
+  // Start execution (non-blocking — events handle completion)
+  sdkTask.run().catch((err) => {
+    // Safety net: if run() throws before emitting error
+    if (activeTasks.has(task.id)) {
+      sdkTask.events.emit("error", err);
+    }
+  });
+
+  return task;
+}
+
+// ── Orchestrator API ──────────────────────────────────────────────────────
+
+app.get("/api/orchestrator", async (_req, res) => {
+  const orch = await loadOrchestrator();
+  // Merge live status for active tasks
+  for (const task of orch.tasks) {
+    if (activeTasks.has(task.id)) task.status = "running";
+  }
+  res.json(orch);
+});
+
+app.post("/api/orchestrator/message", async (req, res) => {
+  const content = (req.body.content || "").trim();
+  if (!content) return res.status(400).json({ error: "Message required" });
+
+  // Add user message
+  const userMsg = { role: "user", content, ts: new Date().toISOString() };
+  await db.addOrchestratorMessage(userMsg);
+  broadcastOrchestrator("message", userMsg);
+
+  // Parse tasks
+  const tasks = parseOrchestratorTasks(content);
+
+  if (tasks.length === 0) {
+    const reply = {
+      role: "orchestrator",
+      content: "I couldn't identify any project tasks from your message. Try mentioning a project name (Agent Brain, Arc Social, Insiders MVP) and what you'd like done.",
+      ts: new Date().toISOString()
+    };
+    await db.addOrchestratorMessage(reply);
+    broadcastOrchestrator("message", reply);
+    return res.json({ ok: true, tasks: [] });
+  }
+
+  // Kill existing Claude Code sessions to avoid API concurrency conflicts
+  broadcastOrchestrator("message", {
+    role: "system",
+    content: "Clearing active Claude sessions...",
+    ts: new Date().toISOString()
+  });
+  await killExistingClaudeSessions();
+
+  // Orchestrator response
+  const lines = tasks.map(t => `• **${t.project_name}**: ${t.description.slice(0, 120)}`);
+  const reply = {
+    role: "orchestrator",
+    content: `Dispatching ${tasks.length} task${tasks.length > 1 ? "s" : ""}:\n${lines.join("\n")}`,
+    ts: new Date().toISOString()
+  };
+  await db.addOrchestratorMessage(reply);
+  for (const task of tasks) {
+    await db.upsertOrchestratorTask(task);
+  }
+  broadcastOrchestrator("message", reply);
+
+  // Queue tasks for sequential execution (broadcasts "spawned" immediately for UI)
+  for (const task of tasks) {
+    broadcastOrchestrator("task_spawned", {
+      task_id: task.id,
+      project_name: task.project_name,
+      description: task.description
+    });
+    orchestratorQueue.enqueue(() => spawnTask(task));
+  }
+
+  logEvent("orchestrator_dispatch", null, {
+    task_count: tasks.length,
+    projects: tasks.map(t => t.project_name)
+  });
+
+  res.json({
+    ok: true,
+    tasks: tasks.map(t => ({ id: t.id, project_name: t.project_name, description: t.description }))
+  });
+});
+
+// SSE stream for real-time orchestrator updates
+app.get("/api/orchestrator/stream", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive"
+  });
+
+  const clientId = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+  orchestratorClients.set(clientId, res);
+
+  // Send initial connection event
+  res.write(`event: connected\ndata: {"client_id":"${clientId}"}\n\n`);
+
+  // Keepalive every 30s
+  const keepalive = setInterval(() => {
+    try { res.write(": keepalive\n\n"); } catch (_) { clearInterval(keepalive); }
+  }, 30000);
+
+  req.on("close", () => {
+    orchestratorClients.delete(clientId);
+    clearInterval(keepalive);
+  });
+});
+
+// Task update endpoint (called by child claude -p sessions)
+app.post("/api/orchestrator/tasks/:taskId/update", async (req, res) => {
+  const { taskId } = req.params;
+  const { type, content } = req.body;
+
+  const orch = await loadOrchestrator();
+  const task = orch.tasks.find(t => t.id === taskId);
+  if (!task) return res.status(404).json({ error: "Task not found" });
+
+  const msg = {
+    role: "task_update",
+    task_id: taskId,
+    project_name: task.project_name,
+    update_type: type || "progress",
+    content: content || "",
+    ts: new Date().toISOString()
+  };
+  await db.addOrchestratorMessage(msg);
+
+  if (type === "completed") {
+    task.status = "completed";
+    task.completed_at = new Date().toISOString();
+  } else if (type === "needs_decision") {
+    task.status = "needs_input";
+  }
+
+  await db.upsertOrchestratorTask(task);
+
+  broadcastOrchestrator("task_update", msg);
+
+  // Send push notification for important updates
+  if (type === "needs_decision" || type === "finding") {
+    sendPushNotification({
+      title: `${task.project_name}: ${type === "needs_decision" ? "Decision needed" : "Finding"}`,
+      message: (content || "").slice(0, 200),
+      priority: type === "needs_decision" ? 5 : 3,
+      hookId: null
+    });
+  }
+
+  res.json({ ok: true });
+});
+
+// Cancel a running task
+app.post("/api/orchestrator/tasks/:taskId/cancel", (req, res) => {
+  const { taskId } = req.params;
+  const active = activeTasks.get(taskId);
+  if (!active) return res.status(404).json({ error: "Task not running" });
+
+  // Abort the SDK query — the "cancelled" event handler on spawnTask() handles cleanup
+  active.abortController.abort();
+
+  res.json({ ok: true });
+});
+
+// Clear orchestrator conversation
+app.post("/api/orchestrator/clear", async (_req, res) => {
+  // Abort all running SDK tasks
+  for (const [id, active] of activeTasks) {
+    try { active.abortController.abort(); } catch (_) {}
+  }
+  activeTasks.clear();
+  orchestratorQueue.cancelAll(); // Clear queued-but-not-started tasks
+  await db.clearOrchestrator();
+  broadcastOrchestrator("cleared", {});
+  res.json({ ok: true });
+});
+
 // ── Cross-session notification polling (disabled — revisit with push notifications) ──
 // Keeping the code for later. macOS `display notification` works on Mac but
 // doesn't forward to iPhone. Need ntfy.sh or similar for phone push.
@@ -1133,6 +2188,20 @@ function timeAgo(isoStr) {
 // ── Server startup ───────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3030;
+
+// Pre-warm settings cache before starting server
+db.initSettingsCache()
+  .then(() => console.log("[db] Settings cache initialized"))
+  .catch(e => console.warn("[db] Settings cache init failed:", e.message));
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Agent Brain running on http://localhost:${PORT}`);
+
+  // Verify Claude Agent SDK is available for orchestrator
+  loadSDK()
+    .then(() => console.log("[orchestrator] Claude Agent SDK loaded successfully"))
+    .catch((e) => {
+      console.warn("[orchestrator] Claude Agent SDK not available:", e.message);
+      console.warn("[orchestrator] Install with: npm install @anthropic-ai/claude-agent-sdk");
+    });
 });

@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <title>Settings - Agent Brain</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -40,6 +43,62 @@
     .header-btn:active { background: rgba(255,255,255,0.25); }
 
     .content { padding: 16px; max-width: 600px; }
+
+    /* Input card */
+    .input-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .input-card label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .input-card input[type="text"] {
+      width: 100%;
+      font-size: 15px;
+      padding: 10px 12px;
+      border: 1px solid #e8e8ed;
+      border-radius: 10px;
+      background: #f9f9f9;
+      outline: none;
+      font-family: 'SF Mono', 'Menlo', monospace;
+    }
+    .input-card input[type="text"]:focus {
+      border-color: #007aff;
+      background: #fff;
+    }
+    .input-card .hint {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 4px;
+    }
+    .test-btn {
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .test-btn:active { opacity: 0.8; }
+    .test-btn:disabled { background: #d1d1d6; }
+
+    .divider {
+      height: 1px;
+      background: #e8e8ed;
+      margin: 24px 0 8px;
+    }
 
     /* Toggle row */
     .toggle-card {
@@ -285,12 +344,51 @@
       const aa = settings.autoApproval;
       const tools = aa.tools || {};
       const patterns = aa.blockedPatterns || [];
+      const notif = settings.notifications || { enabled: false, ntfyTopic: "", ntfyServer: "https://ntfy.sh", agentBrainUrl: "" };
 
       // Sort tools: auto first, then ask, then block
       const order = { auto: 0, ask: 1, block: 2 };
       const sortedTools = Object.entries(tools).sort((a, b) => (order[a[1]] || 1) - (order[b[1]] || 1));
 
       let html = `
+        <div class="section-header">Push Notifications</div>
+        <div class="section-desc">Get notified on your phone when sessions need attention. Uses <a href="https://ntfy.sh" target="_blank" style="color:#007aff;">ntfy.sh</a> — install the app on your phone first.</div>
+
+        <div class="toggle-card">
+          <div>
+            <div class="toggle-label">Push Notifications</div>
+            <div class="toggle-desc">Send alerts via ntfy.sh</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" ${notif.enabled ? "checked" : ""} onchange="toggleNotifications(this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="input-card">
+          <label>ntfy Topic</label>
+          <input type="text" id="ntfyTopic" value="${escHtml(notif.ntfyTopic)}" placeholder="agent-brain-abc123" onchange="updateNotifField('ntfyTopic', this.value)">
+          <div class="hint">Use a unique, hard-to-guess name. This is your private channel.</div>
+        </div>
+
+        <div class="input-card">
+          <label>Agent Brain URL (for action buttons)</label>
+          <input type="text" id="agentBrainUrl" value="${escHtml(notif.agentBrainUrl)}" placeholder="http://100.x.x.x:3030" onchange="updateNotifField('agentBrainUrl', this.value)">
+          <div class="hint">Your Tailscale IP or hostname so notification buttons can call back.</div>
+        </div>
+
+        <div class="input-card">
+          <label>ntfy Server</label>
+          <input type="text" id="ntfyServer" value="${escHtml(notif.ntfyServer || 'https://ntfy.sh')}" placeholder="https://ntfy.sh" onchange="updateNotifField('ntfyServer', this.value)">
+          <div class="hint">Default: https://ntfy.sh (free public server)</div>
+          <button class="test-btn" onclick="testNotification(this)">Send Test Notification</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="section-header">Auto-Approval</div>
+        <div class="section-desc">Tools set to "Ask" will trigger push notifications when enabled above.</div>
+
         <div class="toggle-card">
           <div>
             <div class="toggle-label">Auto-Approval</div>
@@ -377,6 +475,38 @@
       input.value = "";
       save();
       render();
+    }
+
+    function toggleNotifications(enabled) {
+      if (!settings.notifications) settings.notifications = {};
+      settings.notifications.enabled = enabled;
+      save();
+    }
+
+    function updateNotifField(field, value) {
+      if (!settings.notifications) settings.notifications = {};
+      settings.notifications[field] = value.trim();
+      save();
+    }
+
+    async function testNotification(btn) {
+      btn.disabled = true;
+      btn.textContent = "Sending...";
+      try {
+        const res = await fetch("/api/test-notification", { method: "POST" });
+        const data = await res.json();
+        if (data.ok) {
+          btn.textContent = "Sent!";
+        } else {
+          btn.textContent = data.error || "Failed";
+        }
+      } catch (e) {
+        btn.textContent = "Error: " + e.message;
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = "Send Test Notification";
+      }, 3000);
     }
 
     function escHtml(s) {

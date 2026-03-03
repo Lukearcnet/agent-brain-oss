@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>Agent Brain — Mailbox</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, system-ui, sans-serif; background: #f2f2f7; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+    .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); display: flex; align-items: center; gap: 12px; color: #fff; }
+    .header a { color: rgba(255,255,255,0.85); text-decoration: none; font-size: 22px; padding: 4px; }
+    .header .title { font-size: 17px; font-weight: 600; flex: 1; }
+    .compose-btn { background: rgba(255,255,255,0.15); border: none; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.85); cursor: pointer; }
+    .section-label { font-size: 13px; font-weight: 600; color: #8e8e93; text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 16px 8px; }
+    .msg-card { background: #fff; margin: 0 16px 1px; padding: 14px 16px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .msg-card:first-of-type { border-radius: 12px 12px 0 0; }
+    .msg-card:last-of-type { border-radius: 0 0 12px 12px; margin-bottom: 12px; }
+    .msg-card:only-of-type { border-radius: 12px; margin-bottom: 12px; }
+    .msg-card:active { background: #f2f2f7; }
+    .msg-card.unread { border-left: 3px solid #007aff; }
+    .msg-subject { font-size: 16px; font-weight: 500; color: #1c1c1e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .msg-card.unread .msg-subject { font-weight: 600; }
+    .msg-preview { font-size: 13px; color: #8e8e93; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .msg-meta { font-size: 11px; color: #aeaeb2; margin-top: 4px; display: flex; justify-content: space-between; }
+    .msg-detail { display: none; margin: 0 16px 12px; background: #fff; border-radius: 12px; padding: 16px; }
+    .msg-detail.active { display: block; }
+    .msg-detail-subject { font-size: 17px; font-weight: 600; color: #1c1c1e; margin-bottom: 4px; }
+    .msg-detail-meta { font-size: 12px; color: #8e8e93; margin-bottom: 12px; }
+    .msg-detail-body { font-size: 15px; color: #1c1c1e; line-height: 1.5; white-space: pre-wrap; }
+    .empty { text-align: center; padding: 60px 16px; color: #8e8e93; font-size: 15px; }
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.45); z-index: 100; justify-content: center; align-items: flex-end; padding: 0 10px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    .modal-overlay.active { display: flex; }
+    .modal { background: rgba(255,255,255,0.95); border-radius: 14px; width: 100%; max-width: 400px; padding: 16px; }
+    .modal-title { font-size: 17px; font-weight: 600; text-align: center; margin-bottom: 12px; color: #1c1c1e; }
+    .modal input, .modal textarea { width: 100%; font-size: 16px; padding: 10px 14px; border: 1px solid #d1d1d6; border-radius: 10px; background: #fff; -webkit-appearance: none; margin-bottom: 8px; font-family: -apple-system, system-ui, sans-serif; }
+    .modal textarea { min-height: 100px; resize: vertical; }
+    .modal-send { width: 100%; padding: 14px; background: #007aff; color: #fff; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; }
+    .modal-cancel { display: block; width: 100%; margin-top: 8px; padding: 16px; border: none; background: rgba(255,255,255,0.95); border-radius: 14px; font-size: 18px; font-weight: 600; cursor: pointer; color: #007aff; max-width: 400px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/">&larr;</a>
+    <div class="title">Mailbox</div>
+    <button class="compose-btn" onclick="openCompose()">Compose</button>
+  </div>
+  <div id="messages-list"></div>
+  <div id="msg-detail" class="msg-detail"></div>
+  <div class="modal-overlay" id="compose-modal" onclick="closeCompose(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title">New Message</div>
+        <input type="text" id="compose-to" placeholder="To session ID (or 'broadcast')">
+        <input type="text" id="compose-subject" placeholder="Subject">
+        <textarea id="compose-body" placeholder="Message body..."></textarea>
+        <button class="modal-send" onclick="sendMessage()">Send</button>
+      </div>
+      <button class="modal-cancel" onclick="closeCompose()">Cancel</button>
+    </div>
+  </div>
+  <script>
+    let allMessages = [];
+    async function loadMessages() {
+      const resp = await fetch("/api/mailbox/all");
+      allMessages = await resp.json();
+      render();
+    }
+    function render() {
+      const el = document.getElementById("messages-list");
+      if (!allMessages.length) {
+        el.innerHTML = '<div class="empty">No messages yet. Use Compose to send one.</div>';
+        return;
+      }
+      let html = '<div class="section-label">Messages</div>';
+      for (const m of allMessages) {
+        html += '<div class="msg-card' + (m.read ? '' : ' unread') + '" onclick="viewMessage(\'' + esc(m.id) + '\')">';
+        html += '<div class="msg-subject">' + esc(m.subject || "(no subject)") + '</div>';
+        html += '<div class="msg-preview">' + esc((m.body || "").slice(0, 80)) + '</div>';
+        var toLabel = m.to_session === "broadcast" ? "broadcast" : (m.to_session || "").split("-").pop().slice(0, 16);
+        html += '<div class="msg-meta"><span>From: ' + esc((m.from_session || "system").slice(0, 16)) + ' → ' + esc(toLabel) + '</span><span>' + timeAgo(m.ts) + '</span></div>';
+        html += '</div>';
+      }
+      el.innerHTML = html;
+    }
+    async function viewMessage(id) {
+      const msg = allMessages.find(m => m.id === id);
+      if (!msg) return;
+      if (!msg.read) {
+        await fetch("/api/mailbox/" + encodeURIComponent(id) + "/read", { method: "POST" });
+        msg.read = true;
+        render();
+      }
+      const el = document.getElementById("msg-detail");
+      el.classList.add("active");
+      el.innerHTML = '<div class="msg-detail-subject">' + esc(msg.subject || "") + '</div>' +
+        '<div class="msg-detail-meta">From: ' + esc(msg.from_session || "system") + ' &bull; ' + timeAgo(msg.ts) + '</div>' +
+        '<div class="msg-detail-body">' + esc(msg.body) + '</div>';
+    }
+    function openCompose() {
+      document.getElementById("compose-to").value = "broadcast";
+      document.getElementById("compose-subject").value = "";
+      document.getElementById("compose-body").value = "";
+      document.getElementById("compose-modal").classList.add("active");
+    }
+    function closeCompose(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("compose-modal").classList.remove("active");
+    }
+    async function sendMessage() {
+      const to = document.getElementById("compose-to").value.trim() || "broadcast";
+      const subject = document.getElementById("compose-subject").value.trim();
+      const body = document.getElementById("compose-body").value.trim();
+      if (!subject && !body) return;
+      await fetch("/api/mailbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_session: "dashboard", to_session: to, subject, body })
+      });
+      closeCompose();
+      loadMessages();
+    }
+    function timeAgo(iso) {
+      if (!iso) return "";
+      const diff = Date.now() - new Date(iso).getTime();
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return "just now";
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+    function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+    loadMessages();
+  </script>
+</body>
+</html>

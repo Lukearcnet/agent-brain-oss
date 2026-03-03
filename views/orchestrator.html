@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>Agent Brain — Orchestrator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #fff;
+      z-index: 10;
+      flex-shrink: 0;
+    }
+    .header a { color: rgba(255,255,255,0.85); text-decoration: none; font-size: 22px; padding: 4px; }
+    .header .title { font-size: 17px; font-weight: 600; flex: 1; }
+    .header-btn {
+      background: rgba(255,255,255,0.15);
+      border: none; border-radius: 8px;
+      padding: 6px 12px; font-size: 13px; font-weight: 500;
+      color: rgba(255,255,255,0.85); cursor: pointer;
+    }
+    .header-btn:active { background: rgba(255,255,255,0.25); }
+
+    /* ── Task bar ── */
+    .task-bar {
+      background: #fff;
+      border-bottom: 1px solid #e5e5ea;
+      padding: 8px 16px;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      flex-shrink: 0;
+      -webkit-overflow-scrolling: touch;
+    }
+    .task-bar:empty { display: none; }
+    .task-chip {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      background: #f2f2f7;
+      color: #1c1c1e;
+      white-space: nowrap;
+    }
+    .task-chip.pending { background: #f3f4f6; color: #6b7280; }
+    .task-chip.running { background: #e8f5e9; color: #2e7d32; }
+    .task-chip.completed { background: #e3f2fd; color: #1565c0; }
+    .task-chip.failed { background: #fce4ec; color: #c62828; }
+    .task-chip.cancelled { background: #f3f4f6; color: #9ca3af; }
+    .task-chip.needs_input { background: #fff3e0; color: #e65100; }
+    .task-chip.awaiting_permission { background: #fef3c7; color: #92400e; }
+    .task-chip .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block;
+    }
+    .task-chip.pending .dot { background: #9ca3af; }
+    .task-chip.running .dot { background: #4caf50; animation: pulse 1.5s infinite; }
+    .task-chip.completed .dot { background: #2196f3; }
+    .task-chip.failed .dot { background: #f44336; }
+    .task-chip.cancelled .dot { background: #d1d5db; }
+    .task-chip.needs_input .dot { background: #ff9800; animation: pulse 1s infinite; }
+    .task-chip.awaiting_permission .dot { background: #f59e0b; animation: pulse 0.8s infinite; }
+    .task-chip .cancel-btn {
+      background: none; border: none;
+      font-size: 14px; color: #999; cursor: pointer;
+      padding: 0 2px; line-height: 1;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── Chat area ── */
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      padding-bottom: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .msg {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 16px;
+      font-size: 15px;
+      line-height: 1.45;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+    }
+    .msg.user {
+      align-self: flex-end;
+      background: #4f46e5;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.orchestrator {
+      align-self: flex-start;
+      background: #fff;
+      color: #1c1c1e;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .msg.system {
+      align-self: center;
+      background: transparent;
+      color: #8e8e93;
+      font-size: 13px;
+      text-align: center;
+      padding: 4px 12px;
+    }
+
+    /* Task update cards */
+    .msg.task-update {
+      align-self: flex-start;
+      max-width: 90%;
+      background: #fff;
+      border-left: 3px solid #4f46e5;
+      border-radius: 4px 12px 12px 4px;
+      padding: 10px 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .msg.task-update.finding { border-left-color: #f59e0b; }
+    .msg.task-update.needs_decision { border-left-color: #ef4444; }
+    .msg.task-update.completed { border-left-color: #22c55e; }
+
+    .msg.permission-request {
+      align-self: flex-start;
+      max-width: 90%;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-left: 3px solid #f59e0b;
+      border-radius: 4px 12px 12px 4px;
+      padding: 10px 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .permission-header {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #92400e;
+      margin-bottom: 4px;
+    }
+    .permission-tool {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+    .permission-input {
+      font-size: 12px;
+      color: #6b7280;
+      font-family: "SF Mono", "Menlo", monospace;
+      margin-top: 4px;
+      word-break: break-all;
+    }
+    .permission-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .permission-actions button {
+      flex: 1;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .perm-allow { background: #22c55e; color: #fff; }
+    .perm-allow:active { background: #16a34a; }
+    .perm-deny { background: #ef4444; color: #fff; }
+    .perm-deny:active { background: #dc2626; }
+    .permission-resolved {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-top: 4px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      display: inline-block;
+    }
+    .permission-resolved.allowed { background: #dcfce7; color: #166534; }
+    .permission-resolved.denied { background: #fecaca; color: #991b1b; }
+    .task-update-header {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #8e8e93;
+      margin-bottom: 4px;
+    }
+    .task-update-body { font-size: 14px; color: #1c1c1e; line-height: 1.4; }
+
+    /* Live output indicator */
+    .live-output {
+      align-self: flex-start;
+      max-width: 90%;
+      background: #1c1c1e;
+      color: #a3e635;
+      font-family: "SF Mono", "Menlo", monospace;
+      font-size: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .live-output .project-tag {
+      color: #818cf8;
+      font-weight: 600;
+    }
+
+    .msg-time {
+      font-size: 10px;
+      color: #aeaeb2;
+      margin-top: 2px;
+    }
+    .msg.user .msg-time { text-align: right; color: rgba(255,255,255,0.6); }
+
+    /* ── Input area ── */
+    .input-area {
+      flex-shrink: 0;
+      background: #fff;
+      border-top: 1px solid #e5e5ea;
+      padding: 10px 16px;
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+    .input-area textarea {
+      flex: 1;
+      border: 1px solid #d1d1d6;
+      border-radius: 20px;
+      padding: 10px 16px;
+      font-size: 16px;
+      font-family: -apple-system, system-ui, sans-serif;
+      resize: none;
+      max-height: 120px;
+      min-height: 40px;
+      line-height: 1.35;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    .input-area textarea:focus { border-color: #4f46e5; }
+    .send-btn {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: #4f46e5;
+      border: none;
+      color: #fff;
+      font-size: 18px;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .send-btn:active { background: #4338ca; }
+    .send-btn:disabled { background: #d1d1d6; }
+
+    /* ── Empty state ── */
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 40px 24px;
+      color: #8e8e93;
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-state .title { font-size: 20px; font-weight: 600; color: #1c1c1e; margin-bottom: 8px; }
+    .empty-state .subtitle { font-size: 14px; line-height: 1.5; max-width: 300px; }
+    .empty-state .examples {
+      margin-top: 20px;
+      text-align: left;
+      font-size: 13px;
+      color: #636366;
+      line-height: 1.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/">&larr;</a>
+    <div class="title">Orchestrator</div>
+    <button class="header-btn" onclick="clearConversation()">Clear</button>
+  </div>
+
+  <div class="task-bar" id="task-bar"></div>
+
+  <div class="chat-area" id="chat-area">
+    <div class="empty-state" id="empty-state">
+      <div class="icon">🎛️</div>
+      <div class="title">Multi-Project Orchestrator</div>
+      <div class="subtitle">Dispatch tasks across your projects. I'll spawn Claude sessions, stream progress, and route critical updates back to you.</div>
+      <div class="examples">
+        <strong>Try something like:</strong><br>
+        "Go into Agent Brain and research X"<br>
+        "Review the Insiders MVP scheduling feature"<br>
+        "Work on 3 things: 1. Agent Brain - ... 2. iOS app - ... 3. Insiders - ..."
+      </div>
+    </div>
+  </div>
+
+  <div class="input-area">
+    <textarea id="input" rows="1" placeholder="Tell me what to work on..." oninput="autoResize(this)" onkeydown="handleKey(event)"></textarea>
+    <button class="send-btn" id="send-btn" onclick="sendMessage()">↑</button>
+  </div>
+
+  <script>
+    let messages = [];
+    let tasks = [];
+    let liveOutputs = {}; // taskId → last few lines
+    let eventSource = null;
+
+    // ── Load initial state ──
+    async function loadState() {
+      try {
+        const resp = await fetch("/api/orchestrator");
+        const data = await resp.json();
+        messages = data.messages || [];
+        tasks = data.tasks || [];
+        renderAll();
+      } catch (_) {}
+    }
+
+    // ── SSE connection ──
+    function connectSSE() {
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource("/api/orchestrator/stream");
+
+      eventSource.addEventListener("message", (e) => {
+        const msg = JSON.parse(e.data);
+        messages.push(msg);
+        appendMessage(msg);
+        scrollToBottom();
+      });
+
+      eventSource.addEventListener("task_spawned", (e) => {
+        const data = JSON.parse(e.data);
+        // Add or update task — starts as pending until SDK picks it up
+        const existing = tasks.find(t => t.id === data.task_id);
+        if (!existing) {
+          tasks.push({ id: data.task_id, project_name: data.project_name, description: data.description, status: "pending" });
+        }
+        liveOutputs[data.task_id] = [];
+        renderTaskBar();
+      });
+
+      eventSource.addEventListener("task_output", (e) => {
+        const data = JSON.parse(e.data);
+        if (!liveOutputs[data.task_id]) liveOutputs[data.task_id] = [];
+
+        // Flip chip from pending → running on first output
+        const task = tasks.find(t => t.id === data.task_id);
+        if (task && task.status === "pending") {
+          task.status = "running";
+          renderTaskBar();
+        }
+
+        let displayText = "";
+        if (data.output_type === "tool_use") {
+          displayText = "▸ " + data.text;
+        } else if (data.output_type === "error") {
+          displayText = "✖ " + data.text;
+        } else if (data.output_type === "result") {
+          displayText = "✓ " + data.text;
+        } else {
+          displayText = data.text;
+        }
+
+        liveOutputs[data.task_id].push(displayText);
+        // Keep last 8 lines
+        if (liveOutputs[data.task_id].length > 8) {
+          liveOutputs[data.task_id] = liveOutputs[data.task_id].slice(-8);
+        }
+        updateLiveOutput(data.task_id, data.project_name);
+      });
+
+      eventSource.addEventListener("task_completed", (e) => {
+        const data = JSON.parse(e.data);
+        const task = tasks.find(t => t.id === data.task_id);
+        if (task) task.status = data.status;
+        delete liveOutputs[data.task_id];
+        removeLiveOutput(data.task_id);
+        renderTaskBar();
+      });
+
+      eventSource.addEventListener("task_error", (e) => {
+        const data = JSON.parse(e.data);
+        const task = tasks.find(t => t.id === data.task_id);
+        if (task) task.status = "failed";
+        delete liveOutputs[data.task_id];
+        removeLiveOutput(data.task_id);
+        renderTaskBar();
+      });
+
+      eventSource.addEventListener("task_cancelled", (e) => {
+        const data = JSON.parse(e.data);
+        const task = tasks.find(t => t.id === data.task_id);
+        if (task) task.status = "cancelled";
+        delete liveOutputs[data.task_id];
+        removeLiveOutput(data.task_id);
+        renderTaskBar();
+      });
+
+      eventSource.addEventListener("task_update", (e) => {
+        const msg = JSON.parse(e.data);
+        messages.push(msg);
+        appendMessage(msg);
+        scrollToBottom();
+        // Update task status if needed
+        if (msg.update_type === "completed" || msg.update_type === "needs_decision") {
+          const task = tasks.find(t => t.id === msg.task_id);
+          if (task) {
+            task.status = msg.update_type === "completed" ? "completed" : "needs_input";
+            renderTaskBar();
+          }
+        }
+      });
+
+      eventSource.addEventListener("task_permission", (e) => {
+        const data = JSON.parse(e.data);
+        // Update chip to awaiting_permission
+        const task = tasks.find(t => t.id === data.task_id);
+        if (task) {
+          task.status = "awaiting_permission";
+          renderTaskBar();
+        }
+        // Show permission request card in chat
+        appendPermissionRequest(data);
+        scrollToBottom();
+      });
+
+      eventSource.addEventListener("task_permission_resolved", (e) => {
+        const data = JSON.parse(e.data);
+        // Flip chip back to running
+        const task = tasks.find(t => t.id === data.task_id);
+        if (task) {
+          task.status = "running";
+          renderTaskBar();
+        }
+        // Update the permission card in chat
+        resolvePermissionCard(data);
+      });
+
+      eventSource.addEventListener("cleared", () => {
+        messages = [];
+        tasks = [];
+        liveOutputs = {};
+        renderAll();
+      });
+
+      eventSource.onerror = () => {
+        // Reconnect after 3 seconds
+        setTimeout(connectSSE, 3000);
+      };
+    }
+
+    // ── Rendering ──
+    function renderAll() {
+      const chatArea = document.getElementById("chat-area");
+      const emptyState = document.getElementById("empty-state");
+
+      if (messages.length === 0) {
+        emptyState.style.display = "flex";
+        // Clear any message elements
+        chatArea.querySelectorAll(".msg, .live-output").forEach(el => el.remove());
+      } else {
+        emptyState.style.display = "none";
+        // Clear and re-render all messages
+        chatArea.querySelectorAll(".msg, .live-output").forEach(el => el.remove());
+        for (const msg of messages) {
+          appendMessage(msg);
+        }
+      }
+
+      renderTaskBar();
+      scrollToBottom();
+    }
+
+    function appendMessage(msg) {
+      const chatArea = document.getElementById("chat-area");
+      const emptyState = document.getElementById("empty-state");
+      emptyState.style.display = "none";
+
+      const el = document.createElement("div");
+
+      if (msg.role === "user") {
+        el.className = "msg user";
+        el.innerHTML = esc(msg.content) + '<div class="msg-time">' + formatTime(msg.ts) + '</div>';
+      } else if (msg.role === "orchestrator") {
+        el.className = "msg orchestrator";
+        el.innerHTML = formatMarkdown(msg.content) + '<div class="msg-time">' + formatTime(msg.ts) + '</div>';
+      } else if (msg.role === "system") {
+        el.className = "msg system";
+        el.textContent = msg.content;
+      } else if (msg.role === "task_update") {
+        el.className = "msg task-update " + (msg.update_type || "progress");
+        const typeLabel = {
+          progress: "Progress",
+          finding: "Finding",
+          needs_decision: "Decision Needed",
+          completed: "Completed"
+        }[msg.update_type] || "Update";
+        el.innerHTML =
+          '<div class="task-update-header">' + esc(msg.project_name || "") + ' — ' + typeLabel + '</div>' +
+          '<div class="task-update-body">' + esc(msg.content) + '</div>' +
+          '<div class="msg-time">' + formatTime(msg.ts) + '</div>';
+      }
+
+      chatArea.appendChild(el);
+    }
+
+    function updateLiveOutput(taskId, projectName) {
+      let el = document.getElementById("live-" + taskId);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "live-output";
+        el.id = "live-" + taskId;
+        document.getElementById("chat-area").appendChild(el);
+      }
+      const lines = liveOutputs[taskId] || [];
+      el.innerHTML = '<span class="project-tag">[' + esc(projectName) + ']</span>\n' +
+        lines.map(l => esc(l)).join("\n");
+      el.scrollTop = el.scrollHeight;
+      scrollToBottom();
+    }
+
+    function removeLiveOutput(taskId) {
+      const el = document.getElementById("live-" + taskId);
+      if (el) el.remove();
+    }
+
+    function renderTaskBar() {
+      const bar = document.getElementById("task-bar");
+      // Only show recent/active tasks
+      const recentTasks = tasks.filter(t =>
+        t.status === "pending" || t.status === "running" || t.status === "needs_input" || t.status === "awaiting_permission" ||
+        (t.status === "completed" && t.completed_at && (Date.now() - new Date(t.completed_at).getTime() < 300000)) ||
+        (t.status === "failed" && t.completed_at && (Date.now() - new Date(t.completed_at).getTime() < 300000)) ||
+        (t.status === "cancelled" && t.completed_at && (Date.now() - new Date(t.completed_at).getTime() < 60000))
+      ).slice(-6);
+
+      if (recentTasks.length === 0) {
+        bar.innerHTML = "";
+        return;
+      }
+
+      bar.innerHTML = recentTasks.map(t => {
+        const statusClass = t.status || "pending";
+        const cancelBtn = (t.status === "running" || t.status === "awaiting_permission")
+          ? ' <button class="cancel-btn" onclick="cancelTask(\'' + esc(t.id) + '\')" title="Cancel">✕</button>'
+          : '';
+        return '<div class="task-chip ' + statusClass + '">' +
+          '<span class="dot"></span>' +
+          esc(t.project_name || "Task") +
+          cancelBtn +
+          '</div>';
+      }).join("");
+    }
+
+    // ── Actions ──
+    async function sendMessage() {
+      const input = document.getElementById("input");
+      const content = input.value.trim();
+      if (!content) return;
+
+      input.value = "";
+      autoResize(input);
+      document.getElementById("send-btn").disabled = true;
+
+      try {
+        await fetch("/api/orchestrator/message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content })
+        });
+      } catch (e) {
+        // Message will come through SSE
+      }
+
+      document.getElementById("send-btn").disabled = false;
+      input.focus();
+    }
+
+    async function cancelTask(taskId) {
+      if (!confirm("Cancel this task?")) return;
+      try {
+        await fetch("/api/orchestrator/tasks/" + encodeURIComponent(taskId) + "/cancel", { method: "POST" });
+      } catch (_) {}
+    }
+
+    async function clearConversation() {
+      if (!confirm("Clear conversation and stop all tasks?")) return;
+      try {
+        await fetch("/api/orchestrator/clear", { method: "POST" });
+      } catch (_) {}
+    }
+
+    // ── Helpers ──
+    function handleKey(e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function autoResize(textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
+    }
+
+    function appendPermissionRequest(data) {
+      const chatArea = document.getElementById("chat-area");
+      const card = document.createElement("div");
+      card.className = "msg permission-request";
+      card.id = "perm-" + data.task_id + "-" + Date.now();
+      card.dataset.taskId = data.task_id;
+      card.dataset.tool = data.tool;
+      card.innerHTML = `
+        <div class="permission-header">🔐 Permission Request — ${esc(data.project_name)}</div>
+        <div class="permission-tool">${esc(data.tool)}</div>
+        <div class="permission-input">${esc(data.input_summary || "")}</div>
+        <div class="permission-actions" data-task-id="${esc(data.task_id)}">
+          <button class="perm-allow" onclick="resolvePermission('${esc(data.task_id)}', '${esc(data.tool)}', 'allow', this)">✓ Allow</button>
+          <button class="perm-deny" onclick="resolvePermission('${esc(data.task_id)}', '${esc(data.tool)}', 'deny', this)">✗ Deny</button>
+        </div>
+        <div class="msg-time">${formatTime(data.ts)}</div>
+      `;
+      chatArea.appendChild(card);
+    }
+
+    function resolvePermissionCard(data) {
+      // Find the most recent unresolved permission card for this task
+      const cards = document.querySelectorAll(`.permission-request[data-task-id="${data.task_id}"][data-tool="${data.tool}"]`);
+      const card = cards[cards.length - 1];
+      if (!card) return;
+
+      const actionsDiv = card.querySelector(".permission-actions");
+      if (actionsDiv) {
+        const isAllowed = data.decision === "allow";
+        actionsDiv.innerHTML = `<span class="permission-resolved ${isAllowed ? 'allowed' : 'denied'}">${isAllowed ? '✓ Allowed' : '✗ Denied'}</span>`;
+      }
+    }
+
+    async function resolvePermission(taskId, tool, behavior, btn) {
+      // Find the hook ID by querying pending hooks for this orchestrator task
+      const btnRow = btn.parentElement;
+      btnRow.innerHTML = '<span style="color:#92400e;font-size:12px;">Processing…</span>';
+      try {
+        const resp = await fetch("/api/hooks/pending");
+        const hooks = await resp.json();
+        // Find the hook for this orchestrator task
+        const hook = hooks.find(h => h.data && h.data.session_id === "orchestrator-" + taskId);
+        if (hook) {
+          await fetch("/api/hooks/pending/" + encodeURIComponent(hook.id) + "/resolve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ behavior })
+          });
+          const isAllowed = behavior === "allow";
+          btnRow.innerHTML = `<span class="permission-resolved ${isAllowed ? 'allowed' : 'denied'}">${isAllowed ? '✓ Allowed' : '✗ Denied'}</span>`;
+        } else {
+          btnRow.innerHTML = '<span style="color:#92400e;font-size:12px;">Hook not found (may have timed out)</span>';
+        }
+      } catch (err) {
+        btnRow.innerHTML = '<span style="color:#ef4444;font-size:12px;">Error: ' + esc(err.message) + '</span>';
+      }
+    }
+
+    function scrollToBottom() {
+      const chatArea = document.getElementById("chat-area");
+      requestAnimationFrame(() => {
+        chatArea.scrollTop = chatArea.scrollHeight;
+      });
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s || "";
+      return d.innerHTML;
+    }
+
+    function formatMarkdown(text) {
+      // Simple markdown: **bold** and bullet points
+      return esc(text)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^• (.+)$/gm, '<div style="padding-left:12px;">• $1</div>');
+    }
+
+    function formatTime(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      const now = new Date();
+      const diffMs = now - d;
+      if (diffMs < 60000) return "just now";
+      if (diffMs < 3600000) return Math.floor(diffMs / 60000) + "m ago";
+      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+
+    // ── Init ──
+    loadState();
+    connectSSE();
+  </script>
+</body>
+</html>
