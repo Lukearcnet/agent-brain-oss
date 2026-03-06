@@ -9,6 +9,7 @@
   <title>Agent Brain — Orchestrator</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { overflow-x: hidden; max-width: 100vw; }
     body {
       font-family: -apple-system, system-ui, sans-serif;
       background: #f2f2f7;
@@ -313,7 +314,7 @@
 </head>
 <body>
   <div class="header">
-    <a href="/">&larr;</a>
+    <a href="#" onclick="history.back(); return false;">&larr;</a>
     <div class="title">Orchestrator</div>
     <button class="header-btn" onclick="clearConversation()">Clear</button>
   </div>

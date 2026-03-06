@@ -11,6 +11,7 @@
   <title>Agent Brain</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { overflow-x: hidden; max-width: 100vw; }
     body {
       font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
       background: #f2f2f7;
@@ -163,12 +164,24 @@
 </head>
 <body>
   <div class="header">
-    <a href="/">&larr;</a>
+    <a href="#" onclick="history.back(); return false;">&larr;</a>
     <div class="title" id="chat-title">Chat</div>
     <button class="copy-btn" onclick="copyChat(this)">Copy</button>
     <button class="copy-btn" onclick="openActionMenu()" style="font-size:16px; padding:6px 10px;">&middot;&middot;&middot;</button>
   </div>
   <div class="messages" id="messages"></div>
+  <div id="checkpoint-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:linear-gradient(135deg,#f5f3ff,#ede9fe); padding:12px 14px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <span style="font-size:12px;font-weight:600;color:#fff;background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:3px 10px;border-radius:6px;">Checkpoint</span>
+      <span style="font-size:12px;color:#8e8e93;" id="checkpoint-time"></span>
+    </div>
+    <div style="font-size:14px; color:#1c1c1e; margin-bottom:10px; white-space:pre-wrap; max-height:200px; overflow-y:auto;" id="checkpoint-question"></div>
+    <div id="checkpoint-options" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+    <div style="display:flex;gap:8px;">
+      <textarea id="checkpoint-input" placeholder="Type a response..." style="flex:1;border:1px solid #e5e5ea;border-radius:10px;padding:10px 14px;font-size:15px;font-family:inherit;resize:none;min-height:44px;outline:none;"></textarea>
+      <button onclick="respondToCheckpoint()" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-size:15px;font-weight:600;cursor:pointer;">Send</button>
+    </div>
+  </div>
   <div id="permission-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#f0f4ff; padding:10px 14px;">
     <div style="font-size:13px; font-weight:600; color:#1c1c1e; margin-bottom:6px;" id="permission-label">Permission requested</div>
     <div style="font-size:11px; color:#666; margin-bottom:8px; word-break:break-all;" id="permission-detail"></div>
@@ -306,33 +319,80 @@
     async function doHandoff() {
       closeActionMenu();
       try {
-        const resp = await fetch("/api/sessions/" + SESSION_ID + "/handoff", { method: "POST" });
+        const resp = await fetch("/api/sessions/" + SESSION_ID + "/handoff", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ handoff_notes: "" })
+        });
         const data = await resp.json();
-        if (data.ok && data.new_session_id) {
-          // Show the handoff prompt so user can copy it into a new Claude Code session
+        if (data.ok && data.handoff_id) {
+          // Show handoff modal with spawn + copy options
           const modal = document.createElement("div");
           modal.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);z-index:200;display:flex;flex-direction:column;justify-content:flex-end;padding:0 10px;padding-bottom:max(12px,env(safe-area-inset-bottom));";
           modal.innerHTML =
             '<div style="width:100%;max-width:400px;margin:0 auto;">' +
-            '  <div style="background:rgba(255,255,255,0.97);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-radius:14px;overflow:hidden;max-height:60vh;display:flex;flex-direction:column;">' +
+            '  <div style="background:rgba(255,255,255,0.97);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;">' +
             '    <div style="padding:14px 16px;font-size:15px;font-weight:600;text-align:center;color:#1c1c1e;border-bottom:1px solid rgba(0,0,0,0.08);">Handoff Ready</div>' +
-            '    <div style="padding:12px 16px;font-size:13px;color:#8e8e93;">A handoff prompt has been composed from this session\'s conversation and project memory. Copy it into a new Claude Code session to continue.</div>' +
-            '    <textarea readonly style="flex:1;min-height:120px;margin:0 16px;padding:10px;font-size:12px;font-family:SF Mono,ui-monospace,monospace;border:1px solid #d1d1d6;border-radius:8px;background:#f9f9f9;color:#1c1c1e;resize:none;" id="handoff-prompt-text"></textarea>' +
-            '    <div style="display:flex;gap:8px;padding:12px 16px;">' +
-            '      <button onclick="copyHandoff(this)" style="flex:1;padding:12px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Copy Prompt</button>' +
-            '      <button onclick="window.location.href=\'/chat/' + data.new_session_id + '\'" style="flex:1;padding:12px;background:#34c759;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">View New Session</button>' +
+            '    <div style="padding:12px 16px;font-size:13px;color:#8e8e93;">Briefing compiled from all context (' + Math.round(data.briefing_length / 1024) + 'KB). Choose how to continue:</div>' +
+            '    <div style="display:flex;flex-direction:column;gap:8px;padding:12px 16px;">' +
+            '      <button onclick="spawnHandoff(\'' + data.handoff_id + '\', this)" style="padding:14px;background:#34c759;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Spawn on Desktop</button>' +
+            '      <button onclick="showHandoffBriefing(\'' + data.handoff_id + '\', this)" style="padding:14px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">View & Copy Briefing</button>' +
             '    </div>' +
             '  </div>' +
             '  <button onclick="this.closest(\'div[style]\').parentElement.remove()" style="display:block;width:100%;margin-top:8px;padding:16px;border:none;background:rgba(255,255,255,0.95);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-radius:14px;font-size:18px;font-weight:600;cursor:pointer;color:#007aff;">Close</button>' +
             '</div>';
           document.body.appendChild(modal);
-          document.getElementById("handoff-prompt-text").value = data.handoff_prompt;
           modal.addEventListener("click", function(e) { if (e.target === modal) modal.remove(); });
         } else {
           alert("Handoff failed: " + (data.error || "Unknown error"));
         }
       } catch (err) {
         alert("Handoff failed: " + err.message);
+      }
+    }
+
+    async function spawnHandoff(handoffId, btn) {
+      btn.textContent = "Spawning...";
+      btn.style.background = "#8e8e93";
+      try {
+        const resp = await fetch("/api/handoffs/" + handoffId + "/spawn", { method: "POST" });
+        const data = await resp.json();
+        if (data.ok) {
+          btn.textContent = "Spawned!";
+          btn.style.background = "#34c759";
+        } else {
+          btn.textContent = "Failed";
+          btn.style.background = "#ff3b30";
+          alert("Spawn failed: " + (data.error || "Unknown error"));
+        }
+      } catch (err) {
+        btn.textContent = "Failed";
+        btn.style.background = "#ff3b30";
+        alert("Spawn failed: " + err.message);
+      }
+    }
+
+    async function showHandoffBriefing(handoffId, btn) {
+      btn.textContent = "Loading...";
+      try {
+        const resp = await fetch("/api/handoffs/" + handoffId);
+        const data = await resp.json();
+        btn.textContent = "View & Copy Briefing";
+        // Replace the modal content with the briefing
+        const container = btn.closest("div[style*='border-radius:14px']");
+        if (!container) return;
+        container.innerHTML =
+          '<div style="padding:14px 16px;font-size:15px;font-weight:600;text-align:center;color:#1c1c1e;border-bottom:1px solid rgba(0,0,0,0.08);">Handoff Briefing</div>' +
+          '<textarea readonly style="flex:1;min-height:200px;max-height:50vh;margin:12px 16px;padding:10px;font-size:12px;font-family:SF Mono,ui-monospace,monospace;border:1px solid #d1d1d6;border-radius:8px;background:#f9f9f9;color:#1c1c1e;resize:none;" id="handoff-prompt-text"></textarea>' +
+          '<div style="display:flex;gap:8px;padding:12px 16px;">' +
+          '  <button onclick="copyHandoff(this)" style="flex:1;padding:12px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Copy Briefing</button>' +
+          '  <button onclick="spawnHandoff(\'' + handoffId + '\', this)" style="flex:1;padding:12px;background:#34c759;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Spawn</button>' +
+          '</div>';
+        container.style.maxHeight = "70vh";
+        document.getElementById("handoff-prompt-text").value = data.briefing || "(no briefing)";
+      } catch (err) {
+        btn.textContent = "Failed to load";
+        alert("Error: " + err.message);
       }
     }
 
@@ -353,7 +413,7 @@
       }
       btn.textContent = "Copied!";
       btn.style.background = "#34c759";
-      setTimeout(function() { btn.textContent = "Copy Prompt"; btn.style.background = "#007aff"; }, 2000);
+      setTimeout(function() { btn.textContent = "Copy Briefing"; btn.style.background = "#007aff"; }, 2000);
     }
 
     function autoResize(el) {
@@ -489,6 +549,82 @@
     let isLinkedCC = false;
     let lastMessageCount = 0;
     let pollTimer = null;
+    let currentProjectDir = null;
+    let currentCheckpointId = null;
+
+    // ── Checkpoint handling ──
+    function timeAgo(iso) {
+      if (!iso) return "";
+      const diff = Date.now() - new Date(iso).getTime();
+      const s = Math.floor(diff / 1000);
+      if (s < 10) return "just now";
+      if (s < 60) return s + "s ago";
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+
+    async function loadCheckpoints() {
+      if (!currentProjectDir) return;
+      try {
+        const resp = await fetch("/api/checkpoints?project_dir=" + encodeURIComponent(currentProjectDir));
+        const checkpoints = await resp.json();
+        const bar = document.getElementById("checkpoint-bar");
+
+        if (checkpoints.length === 0) {
+          bar.style.display = "none";
+          currentCheckpointId = null;
+          return;
+        }
+
+        // Show the most recent pending checkpoint
+        const cp = checkpoints[0];
+        currentCheckpointId = cp.id;
+        document.getElementById("checkpoint-question").textContent = cp.question;
+        document.getElementById("checkpoint-time").textContent = timeAgo(cp.created_at);
+
+        // Render quick-reply options
+        const optsEl = document.getElementById("checkpoint-options");
+        if (cp.options && cp.options.length > 0) {
+          optsEl.innerHTML = cp.options.map(opt =>
+            '<button onclick="respondToCheckpointQuick(\'' + escHtml(opt).replace(/'/g, "\\'") + '\')" style="padding:8px 16px;background:#fff;border:1px solid #e5e5ea;border-radius:8px;font-size:14px;color:#1c1c1e;cursor:pointer;">' + escHtml(opt) + '</button>'
+          ).join("");
+          optsEl.style.display = "flex";
+        } else {
+          optsEl.style.display = "none";
+        }
+
+        bar.style.display = "";
+        scrollToBottom();
+      } catch (_) {}
+    }
+
+    async function respondToCheckpoint() {
+      const input = document.getElementById("checkpoint-input");
+      const response = input.value.trim();
+      if (!response || !currentCheckpointId) return;
+      await sendCheckpointResponse(response);
+      input.value = "";
+    }
+
+    async function respondToCheckpointQuick(response) {
+      if (!currentCheckpointId) return;
+      await sendCheckpointResponse(response);
+    }
+
+    async function sendCheckpointResponse(response) {
+      try {
+        await fetch("/api/checkpoints/" + encodeURIComponent(currentCheckpointId) + "/respond", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ response })
+        });
+        document.getElementById("checkpoint-bar").style.display = "none";
+        currentCheckpointId = null;
+      } catch (_) {}
+    }
 
     async function loadSession() {
       try {
@@ -496,10 +632,13 @@
         const data = await resp.json();
         if (data.title) document.getElementById("chat-title").textContent = data.title;
         isLinkedCC = !!(data.cc_project_dir && data.claude_session_id);
+        currentProjectDir = data.cc_project_dir || null;
         if (data.messages) {
           renderMessages(data.messages);
           lastMessageCount = data.messages.length;
         }
+        // Load checkpoints for this project
+        if (currentProjectDir) loadCheckpoints();
         // Start polling for linked Claude Code sessions
         if (isLinkedCC) startPolling();
       } catch (e) {}
@@ -524,6 +663,8 @@
           const pData = await pResp.json();
           updatePermissionBar(pData);
         }
+        // Also refresh checkpoints
+        if (currentProjectDir) loadCheckpoints();
       } catch (_) {}
     }
 

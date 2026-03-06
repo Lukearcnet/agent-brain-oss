@@ -99,6 +99,47 @@ CREATE TABLE permission_requests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Auth services (token broker)
+CREATE TABLE auth_services (
+  service TEXT PRIMARY KEY,                -- "gcloud", "github", "vercel", "supabase"
+  display_name TEXT NOT NULL,              -- "Google Cloud"
+  token_encrypted TEXT,                    -- AES-encrypted current token (cached)
+  expires_at TIMESTAMPTZ,                  -- NULL = never expires (API keys)
+  refresh_command TEXT,                    -- shell command to run on Mac to get fresh token
+  auto_approve BOOLEAN DEFAULT true,       -- auto-fulfill or require phone tap
+  last_refreshed_at TIMESTAMPTZ,
+  metadata JSONB DEFAULT '{}'              -- extra info (project ID, scopes, etc.)
+);
+
+-- Auth requests (Fly.io → Mac token relay)
+CREATE TABLE auth_requests (
+  id TEXT PRIMARY KEY,
+  task_id TEXT,                            -- which orchestrator task needs it
+  service TEXT NOT NULL REFERENCES auth_services(service),
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending → approved → fulfilled / denied / expired
+  token_encrypted TEXT,                    -- filled once fulfilled
+  created_at TIMESTAMPTZ DEFAULT now(),
+  decided_at TIMESTAMPTZ,
+  fulfilled_at TIMESTAMPTZ
+);
+
+-- Session handoffs (context transfer between Claude sessions)
+CREATE TABLE session_handoffs (
+  id TEXT PRIMARY KEY,
+  project_dir TEXT NOT NULL,
+  project_name TEXT,
+  from_session_title TEXT,              -- title of the source session
+  handoff_notes TEXT NOT NULL DEFAULT '',-- what the dying session was working on
+  briefing TEXT NOT NULL DEFAULT '',     -- full compiled briefing (all context)
+  status TEXT NOT NULL DEFAULT 'pending',-- pending → spawned → completed
+  source_folder_id TEXT,                -- folder of the source session (new session inherits)
+  spawned_session_id TEXT,              -- Agent Brain session ID created on spawn
+  is_morning_refresh BOOLEAN DEFAULT FALSE, -- true if this is a daily morning refresh
+  created_at TIMESTAMPTZ DEFAULT now(),
+  spawned_at TIMESTAMPTZ
+);
+-- Migration: ALTER TABLE session_handoffs ADD COLUMN IF NOT EXISTS is_morning_refresh BOOLEAN DEFAULT FALSE;
+
 -- Project memory
 CREATE TABLE project_memory (
   project_dir TEXT PRIMARY KEY,
@@ -123,3 +164,95 @@ CREATE TABLE memory_topics (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (project_dir, name)
 );
+
+-- Remote commands (Fly.io → Mac command execution relay)
+-- Allows remote agents to execute Mac-only commands (keychain, osascript, etc.)
+CREATE TABLE remote_commands (
+  id TEXT PRIMARY KEY,
+  task_id TEXT,                            -- which orchestrator task requested it
+  command TEXT NOT NULL,                   -- shell command to run on Mac
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending → running → completed / denied / failed / timeout
+  output_encrypted TEXT,                   -- AES-encrypted stdout
+  error TEXT,                              -- error message if failed
+  timeout_ms INTEGER DEFAULT 30000,        -- max execution time
+  created_at TIMESTAMPTZ DEFAULT now(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+
+-- Memory facts (structured learnings extracted from tasks)
+-- Auto-populated after each orchestrator task completes
+CREATE TABLE memory_facts (
+  id BIGSERIAL PRIMARY KEY,
+  project_dir TEXT NOT NULL,               -- project directory key
+  category TEXT NOT NULL,                  -- "convention", "gotcha", "command", "pattern", "dependency", "test"
+  fact TEXT NOT NULL,                      -- the actual learning
+  source_task_id TEXT,                     -- which task discovered this
+  confidence FLOAT DEFAULT 1.0,            -- 1.0 = verified, 0.5 = inferred
+  created_at TIMESTAMPTZ DEFAULT now(),
+  last_confirmed_at TIMESTAMPTZ,           -- when fact was last validated
+  superseded_by BIGINT REFERENCES memory_facts(id)  -- NULL = current, set when newer fact replaces
+);
+CREATE INDEX idx_facts_project ON memory_facts (project_dir, category, created_at DESC);
+CREATE INDEX idx_facts_active ON memory_facts (project_dir, superseded_by) WHERE superseded_by IS NULL;
+
+-- Session messages (real-time messages from phone to running Claude Code sessions)
+-- Delivered via PreToolUse hook that checks for pending messages on every tool call
+CREATE TABLE session_messages (
+  id TEXT PRIMARY KEY,
+  project_dir TEXT NOT NULL,               -- target project directory key (e.g. "-Users-lukeblanton-agent-brain")
+  content TEXT NOT NULL,                   -- message text from user
+  sender TEXT NOT NULL DEFAULT 'user',     -- "user" or project key of sending session
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending → delivered → expired
+  created_at TIMESTAMPTZ DEFAULT now(),
+  delivered_at TIMESTAMPTZ
+);
+CREATE INDEX idx_session_messages_pending ON session_messages (project_dir, status, created_at)
+  WHERE status = 'pending';
+
+-- Session checkpoints (Claude asks a question, user responds from phone)
+-- Uses long-poll pattern: Claude's curl blocks until user responds (like permission system)
+CREATE TABLE session_checkpoints (
+  id TEXT PRIMARY KEY,
+  project_dir TEXT NOT NULL,               -- which project's session is asking
+  question TEXT NOT NULL,                  -- what Claude is asking (plan summary, decision point, etc.)
+  options JSONB DEFAULT '[]',              -- optional quick-reply options ["Yes, proceed", "Modify", "Cancel"]
+  response TEXT,                           -- user's response (filled when they reply)
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending → responded → expired
+  created_at TIMESTAMPTZ DEFAULT now(),
+  responded_at TIMESTAMPTZ
+);
+CREATE INDEX idx_checkpoints_pending ON session_checkpoints (project_dir, status, created_at DESC)
+  WHERE status = 'pending';
+
+-- File lock registry for cross-session safety
+CREATE TABLE file_locks (
+  id TEXT PRIMARY KEY,
+  file_path TEXT NOT NULL,
+  project_dir TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  session_title TEXT,
+  acquired_at TIMESTAMPTZ DEFAULT now(),
+  last_activity_at TIMESTAMPTZ DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active'
+);
+CREATE UNIQUE INDEX idx_file_locks_active_path ON file_locks (file_path) WHERE status = 'active';
+CREATE INDEX idx_file_locks_session ON file_locks (session_id, status);
+CREATE INDEX idx_file_locks_expiry ON file_locks (expires_at) WHERE status = 'active';
+CREATE INDEX idx_file_locks_project ON file_locks (project_dir, status);
+
+-- Personal task tracker
+CREATE TABLE user_tasks (
+  id TEXT PRIMARY KEY,
+  content TEXT NOT NULL,
+  project TEXT,
+  completed BOOLEAN NOT NULL DEFAULT false,
+  parent_id TEXT REFERENCES user_tasks(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_user_tasks_project ON user_tasks (project);
+CREATE INDEX idx_user_tasks_parent ON user_tasks (parent_id);
+CREATE INDEX idx_user_tasks_sort ON user_tasks (sort_order);

@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy this file to projects.json and customize for your projects",
+  "my-project": {
+    "dir": "-Users-yourname-my-project",
+    "name": "My Project",
+    "cwd": "/Users/yourname/my-project",
+    "repo_url": "https://github.com/yourname/my-project.git",
+    "default_branch": "main"
+  },
+  "another project": {
+    "dir": "-Users-yourname-Documents-another-project",
+    "name": "Another Project",
+    "cwd": "/Users/yourname/Documents/another-project",
+    "repo_url": "https://github.com/yourname/another-project.git",
+    "default_branch": "main"
+  }
+}

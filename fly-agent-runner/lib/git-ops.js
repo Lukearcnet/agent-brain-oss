@@ -19,22 +19,38 @@ function exec(cmd, args, opts = {}) {
 }
 
 /**
+ * Inject GitHub token into HTTPS URL for authenticated access.
+ * https://github.com/user/repo.git → https://TOKEN@github.com/user/repo.git
+ */
+function authedUrl(repoUrl) {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token || !repoUrl.startsWith("https://")) return repoUrl;
+  return repoUrl.replace("https://", `https://${token}@`);
+}
+
+/**
  * Clone or pull a repo. Returns the local path.
  */
 async function ensureRepo(repoUrl, projectName) {
   const repoDir = path.join(REPOS_DIR, projectName.toLowerCase().replace(/\s+/g, "-"));
 
   if (fs.existsSync(path.join(repoDir, ".git"))) {
-    // Already cloned — fetch latest
+    // Already cloned — update remote URL in case token changed, then fetch
     console.log(`[git] Fetching latest for ${projectName}...`);
+    await exec("git", ["remote", "set-url", "origin", authedUrl(repoUrl)], { cwd: repoDir });
     await exec("git", ["fetch", "--all"], { cwd: repoDir });
     return repoDir;
   }
 
-  // Fresh clone
-  console.log(`[git] Cloning ${repoUrl} into ${repoDir}...`);
+  // Fresh clone with authenticated URL
+  console.log(`[git] Cloning ${projectName}...`);
   fs.mkdirSync(repoDir, { recursive: true });
-  await exec("git", ["clone", repoUrl, repoDir]);
+  await exec("git", ["clone", authedUrl(repoUrl), repoDir]);
+
+  // Set git identity for commits
+  await exec("git", ["config", "user.email", "agent-brain@fly.dev"], { cwd: repoDir });
+  await exec("git", ["config", "user.name", "Agent Brain Runner"], { cwd: repoDir });
+
   return repoDir;
 }
 
@@ -42,7 +58,8 @@ async function ensureRepo(repoUrl, projectName) {
  * Create and checkout a new branch for this task.
  */
 async function createTaskBranch(repoDir, taskId, defaultBranch = "main") {
-  const branchName = `orchestrator/task-${taskId}`;
+  // taskId already has "task-" prefix, so just use orchestrator/{taskId}
+  const branchName = `orchestrator/${taskId}`;
 
   // Ensure we're on the default branch and up to date
   await exec("git", ["checkout", defaultBranch], { cwd: repoDir });
@@ -84,4 +101,22 @@ async function commitAndPush(repoDir, branchName, taskId, projectName) {
   return { branch: branchName, commitHash, hasChanges: true };
 }
 
-module.exports = { ensureRepo, createTaskBranch, commitAndPush, REPOS_DIR };
+/**
+ * Get the diff of the current branch vs the default branch.
+ * Returns truncated diff suitable for review prompt (~8000 chars max).
+ */
+async function getDiff(repoDir, defaultBranch = "main") {
+  try {
+    const diff = await exec("git", ["diff", `${defaultBranch}...HEAD`, "--stat"], { cwd: repoDir });
+    const fullDiff = await exec("git", ["diff", `${defaultBranch}...HEAD`], { cwd: repoDir });
+    // Truncate to keep prompt size reasonable
+    const truncated = fullDiff.length > 8000
+      ? fullDiff.slice(0, 8000) + "\n\n... (diff truncated, " + fullDiff.length + " total chars)"
+      : fullDiff;
+    return { stat: diff, diff: truncated, fullLength: fullDiff.length };
+  } catch (e) {
+    return { stat: "", diff: "", fullLength: 0, error: e.message };
+  }
+}
+
+module.exports = { ensureRepo, createTaskBranch, commitAndPush, getDiff, REPOS_DIR };

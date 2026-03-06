@@ -1,0 +1,17 @@
+{
+  "name": "ai-monitor",
+  "version": "1.0.0",
+  "description": "Twice-daily AI developments briefing via Claude Haiku + ntfy.sh",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "run": "node index.js --run-now"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@supabase/supabase-js": "^2.98.0",
+    "cheerio": "^1.0.0",
+    "fast-xml-parser": "^4.5.0",
+    "node-cron": "^3.0.3"
+  }
+}

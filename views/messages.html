@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>Message Sessions - Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .header a.back {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 22px;
+      padding: 4px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .header .title {
+      font-size: 17px;
+      font-weight: 600;
+      flex: 1;
+      color: #fff;
+    }
+
+    /* Project selector */
+    .project-selector {
+      padding: 12px 16px;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      flex-shrink: 0;
+    }
+    .project-btn {
+      padding: 10px 18px;
+      background: #fff;
+      border: 2px solid transparent;
+      border-radius: 14px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #1c1c1e;
+      cursor: pointer;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      transition: all 0.15s;
+    }
+    .project-btn:active { transform: scale(0.97); }
+    .project-btn.selected {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+    }
+    .project-btn .pending-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff9500;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    /* Messages area */
+    .messages-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      -webkit-overflow-scrolling: touch;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .msg-bubble {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      font-size: 15px;
+      line-height: 1.4;
+      word-wrap: break-word;
+    }
+    .msg-bubble.sent {
+      align-self: flex-end;
+      background: #007aff;
+      color: #fff;
+      border-bottom-right-radius: 6px;
+    }
+    .msg-bubble.delivered {
+      align-self: flex-end;
+      background: #34c759;
+      color: #fff;
+      border-bottom-right-radius: 6px;
+    }
+    .msg-bubble.pending {
+      align-self: flex-end;
+      background: #ff9500;
+      color: #fff;
+      border-bottom-right-radius: 6px;
+    }
+    .msg-meta {
+      font-size: 11px;
+      color: #8e8e93;
+      margin-top: 4px;
+      text-align: right;
+    }
+    .msg-meta.left { text-align: left; }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #8e8e93;
+      gap: 8px;
+    }
+    .empty-state .icon { font-size: 48px; opacity: 0.3; }
+    .empty-state p { font-size: 15px; text-align: center; max-width: 280px; line-height: 1.5; }
+
+    /* Input bar */
+    .input-bar {
+      padding: 10px 16px;
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+      background: #fff;
+      border-top: 0.5px solid rgba(0,0,0,0.1);
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      flex-shrink: 0;
+    }
+    .input-bar textarea {
+      flex: 1;
+      border: 1px solid #e5e5ea;
+      border-radius: 20px;
+      padding: 10px 16px;
+      font-size: 16px;
+      font-family: inherit;
+      resize: none;
+      max-height: 120px;
+      line-height: 1.4;
+      outline: none;
+    }
+    .input-bar textarea:focus {
+      border-color: #007aff;
+    }
+    .send-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #007aff;
+      border: none;
+      color: #fff;
+      font-size: 18px;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+      transition: all 0.15s;
+    }
+    .send-btn:active { transform: scale(0.9); }
+    .send-btn:disabled { background: #c7c7cc; }
+
+    /* Status bar */
+    .status-bar {
+      padding: 6px 16px;
+      background: #e8f5e9;
+      color: #2e7d32;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: center;
+      display: none;
+    }
+    .status-bar.error {
+      background: #ffebee;
+      color: #c62828;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="#" onclick="history.back(); return false;" class="back">&larr;</a>
+    <div class="title">Message Sessions</div>
+  </div>
+
+  <div class="project-selector" id="projectSelector">
+    <!-- Populated by JS -->
+  </div>
+
+  <div class="status-bar" id="statusBar"></div>
+
+  <div class="messages-area" id="messagesArea">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">&#x1F4AC;</div>
+      <p>Select a project above to send messages to its running Claude Code session</p>
+    </div>
+  </div>
+
+  <div class="input-bar">
+    <textarea id="messageInput" rows="1" placeholder="Message to session..." disabled></textarea>
+    <button class="send-btn" id="sendBtn" disabled>&#x2191;</button>
+  </div>
+
+  <script>
+    let selectedProject = null;
+    let projects = [];
+
+    // Auto-resize textarea
+    const textarea = document.getElementById('messageInput');
+    textarea.addEventListener('input', () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+      document.getElementById('sendBtn').disabled = !textarea.value.trim() || !selectedProject;
+    });
+
+    // Send on Enter (Shift+Enter for newline)
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    async function loadProjects() {
+      try {
+        const resp = await fetch('/api/projects');
+        projects = await resp.json();
+        renderProjectSelector();
+      } catch (e) {
+        console.error('Failed to load projects:', e);
+      }
+    }
+
+    function renderProjectSelector() {
+      const container = document.getElementById('projectSelector');
+      container.innerHTML = projects.map(p => `
+        <button class="project-btn ${selectedProject === p.dir ? 'selected' : ''}"
+                onclick="selectProject('${p.dir}')">
+          ${p.name}
+        </button>
+      `).join('');
+    }
+
+    function selectProject(dir) {
+      selectedProject = dir;
+      renderProjectSelector();
+      textarea.disabled = false;
+      textarea.placeholder = `Message to ${projects.find(p => p.dir === dir)?.name || 'session'}...`;
+      textarea.focus();
+      document.getElementById('sendBtn').disabled = !textarea.value.trim();
+      loadMessages();
+    }
+
+    async function loadMessages() {
+      if (!selectedProject) return;
+      try {
+        const resp = await fetch(`/api/sessions/messages/${encodeURIComponent(selectedProject)}?limit=30`);
+        const messages = await resp.json();
+        renderMessages(messages.reverse()); // Oldest first
+      } catch (e) {
+        console.error('Failed to load messages:', e);
+      }
+    }
+
+    function renderMessages(messages) {
+      const area = document.getElementById('messagesArea');
+      const empty = document.getElementById('emptyState');
+
+      if (messages.length === 0) {
+        empty.style.display = 'flex';
+        empty.querySelector('p').textContent = 'No messages yet. Type below to send a message to the running session.';
+        // Remove any existing message bubbles
+        area.querySelectorAll('.msg-wrapper').forEach(el => el.remove());
+        return;
+      }
+
+      empty.style.display = 'none';
+      // Remove existing messages
+      area.querySelectorAll('.msg-wrapper').forEach(el => el.remove());
+
+      messages.forEach(msg => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'msg-wrapper';
+        wrapper.style.display = 'flex';
+        wrapper.style.flexDirection = 'column';
+
+        const statusClass = msg.status === 'delivered' ? 'delivered' : msg.status === 'pending' ? 'pending' : 'sent';
+        const statusText = msg.status === 'delivered' ? 'Delivered' : msg.status === 'pending' ? 'Pending...' : 'Sent';
+
+        wrapper.innerHTML = `
+          <div class="msg-bubble ${statusClass}">${escapeHtml(msg.content)}</div>
+          <div class="msg-meta">${statusText} &middot; ${timeAgo(msg.created_at)}</div>
+        `;
+        area.appendChild(wrapper);
+      });
+
+      // Scroll to bottom
+      area.scrollTop = area.scrollHeight;
+    }
+
+    async function sendMessage() {
+      const content = textarea.value.trim();
+      if (!content || !selectedProject) return;
+
+      const sendBtn = document.getElementById('sendBtn');
+      sendBtn.disabled = true;
+      textarea.value = '';
+      textarea.style.height = 'auto';
+
+      try {
+        const resp = await fetch('/api/sessions/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_dir: selectedProject,
+            content: content
+          })
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json();
+          showStatus('Failed: ' + (err.error || 'Unknown error'), true);
+          return;
+        }
+
+        showStatus('Message sent! Will be delivered on next tool call.', false);
+        loadMessages();
+      } catch (e) {
+        showStatus('Network error: ' + e.message, true);
+      } finally {
+        sendBtn.disabled = false;
+        textarea.focus();
+      }
+    }
+
+    function showStatus(text, isError) {
+      const bar = document.getElementById('statusBar');
+      bar.textContent = text;
+      bar.className = 'status-bar' + (isError ? ' error' : '');
+      bar.style.display = 'block';
+      setTimeout(() => { bar.style.display = 'none'; }, 4000);
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/\n/g, '<br>');
+    }
+
+    function timeAgo(iso) {
+      if (!iso) return '';
+      const diff = Date.now() - new Date(iso).getTime();
+      const s = Math.floor(diff / 1000);
+      if (s < 10) return 'just now';
+      if (s < 60) return s + 's ago';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + 'h ago';
+      return Math.floor(h / 24) + 'd ago';
+    }
+
+    document.getElementById('sendBtn').addEventListener('click', sendMessage);
+
+    // Poll for updates every 5 seconds when a project is selected
+    setInterval(() => {
+      if (selectedProject) loadMessages();
+    }, 5000);
+
+    // Initial load
+    loadProjects();
+  </script>
+</body>
+</html>

@@ -88,6 +88,12 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .session-item.archived {
+      opacity: 0.5;
+    }
+    .session-item.archived .session-title {
+      color: #8e8e93;
+    }
     .session-time { font-size: 13px; color: #8e8e93; margin-top: 3px; }
     .session-action-btn {
       background: none;
@@ -443,20 +449,22 @@
 
     function sessionItemHtml(s) {
       const ago = timeAgo(s.updated_at);
+      const archivedClass = s.archived ? ' archived' : '';
+      const archivedBadge = s.archived ? ' <span style="font-size:11px;color:#8e8e93;">(archived)</span>' : '';
       if (s.source === "claude-code") {
         // CC session not yet adopted — clicking adopts it
         const shortPath = (s.project_path || "").split("/").filter(Boolean).slice(-1)[0] || "";
         const meta = ago + (shortPath ? ' &bull; ' + esc(shortPath) : '');
-        return '<div class="session-item" onclick="adoptCCSession(\'' + esc(s.project_dir) + '\', \'' + s.session_id + '\')" style="cursor:pointer;">' +
+        return '<div class="session-item' + archivedClass + '" onclick="adoptCCSession(\'' + esc(s.project_dir) + '\', \'' + s.session_id + '\')" style="cursor:pointer;">' +
           '<div class="session-link">' +
-            '<div class="session-title">' + esc(s.title) + '</div>' +
+            '<div class="session-title">' + esc(s.title) + archivedBadge + '</div>' +
             '<div class="session-time">' + meta + '</div>' +
           '</div>' +
         '</div>';
       }
-      return '<div class="session-item">' +
+      return '<div class="session-item' + archivedClass + '">' +
         '<a href="/chat/' + s.session_id + '" class="session-link">' +
-          '<div class="session-title">' + esc(s.title) + '</div>' +
+          '<div class="session-title">' + esc(s.title) + archivedBadge + '</div>' +
           '<div class="session-time">' + ago + '</div>' +
         '</a>' +
         '<button class="session-action-btn" onclick="openModal(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">&middot;&middot;&middot;</button>' +

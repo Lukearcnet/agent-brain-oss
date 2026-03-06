@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>Email</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif; background: #fff; min-height: 100vh; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+
+    /* ── Header ───────────────────────────────────────────────────────── */
+    .hdr { background: #fff; padding: 10px 12px 6px; padding-top: max(10px, env(safe-area-inset-top)); border-bottom: 1px solid #dadce0; position: sticky; top: 0; z-index: 100; }
+    .hdr-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .hdr-left { display: flex; align-items: center; gap: 6px; }
+    .hdr-title { font-size: 20px; font-weight: 600; color: #202124; }
+    .hdr-right { display: flex; gap: 6px; align-items: center; }
+    .hdr-count { font-size: 12px; color: #5f6368; background: #f1f3f4; border-radius: 10px; padding: 2px 8px; font-weight: 500; }
+    .ib { background: none; border: none; font-size: 18px; padding: 6px; color: #5f6368; cursor: pointer; border-radius: 50%; -webkit-tap-highlight-color: transparent; }
+    .ib:active { background: #f1f3f4; }
+    .lk { font-size: 12px; font-weight: 500; color: #5f6368; text-decoration: none; padding: 4px 8px; border-radius: 4px; }
+    .lk:active { background: #f1f3f4; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; margin: 0 -12px; padding: 0 12px; }
+    .tab { flex: 1; padding: 8px 4px 6px; text-align: center; font-size: 13px; font-weight: 500; color: #5f6368; cursor: pointer; border-bottom: 2px solid transparent; -webkit-tap-highlight-color: transparent; }
+    .tab.on { color: #1a73e8; border-bottom-color: #1a73e8; }
+    .tab .tab-count { font-size: 10px; background: #f1f3f4; border-radius: 8px; padding: 1px 5px; margin-left: 3px; }
+    .tab.on .tab-count { background: #e8f0fe; color: #1a73e8; }
+
+    /* Account chips */
+    .chips { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 4px; -webkit-overflow-scrolling: touch; }
+    .chips::-webkit-scrollbar { display: none; }
+    .chip { flex-shrink: 0; display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 16px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1.5px solid transparent; -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
+    .chip.on { opacity: 1; }
+    .chip.off { opacity: 0.3; }
+    .chip-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+    /* ── Email List ───────────────────────────────────────────────────── */
+    .email-list { padding-bottom: max(80px, env(safe-area-inset-bottom)); }
+    .email-empty { text-align: center; padding: 40px 20px; color: #70757a; font-size: 14px; }
+    .email-item { display: flex; align-items: stretch; border-bottom: 1px solid #f1f3f4; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .email-item:active { background: #f8f9fa; }
+    .email-item.unread { background: #f2f6fc; }
+    .ei-bar { width: 4px; flex-shrink: 0; }
+    .ei-body { flex: 1; padding: 12px 12px 12px 10px; min-width: 0; display: flex; gap: 10px; }
+    .ei-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; color: #fff; flex-shrink: 0; }
+    .ei-content { flex: 1; min-width: 0; }
+    .ei-row1 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+    .ei-sender { font-size: 14px; font-weight: 400; color: #202124; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .email-item.unread .ei-sender { font-weight: 600; }
+    .ei-time { font-size: 12px; color: #70757a; flex-shrink: 0; margin-left: 8px; }
+    .ei-subject { font-size: 13px; color: #202124; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
+    .email-item.unread .ei-subject { font-weight: 600; }
+    .ei-snippet { font-size: 12px; color: #5f6368; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ei-badges { display: flex; gap: 4px; margin-top: 3px; }
+    .ei-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+    .badge-rn { background: #fce8e6; color: #c5221f; }
+    .badge-rt { background: #fef7e0; color: #e37400; }
+    .badge-fyi { background: #e8f0fe; color: #1a73e8; }
+    .badge-sens { background: #fce8e6; color: #c5221f; }
+    .badge-responded { background: #e6f4ea; color: #137333; }
+    .badge-sent { background: #e8f0fe; color: #1a73e8; }
+    .badge-draft { background: #f1f3f4; color: #5f6368; }
+
+    /* ── Reading View ─────────────────────────────────────────────────── */
+    .reader { display: none; position: fixed; inset: 0; background: #fff; z-index: 200; flex-direction: column; overflow: hidden; }
+    .reader.open { display: flex; }
+    .rd-hdr { display: flex; align-items: center; gap: 8px; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); border-bottom: 1px solid #dadce0; flex-shrink: 0; background: #fff; }
+    .rd-back { background: none; border: none; font-size: 24px; color: #5f6368; cursor: pointer; padding: 4px; }
+    .rd-hdr-title { flex: 1; font-size: 14px; font-weight: 500; color: #202124; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rd-hdr-acct { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500; flex-shrink: 0; }
+    .rd-hdr-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .rd-scroll { flex: 1; overflow-y: auto; }
+    .rd-subject { font-size: 20px; font-weight: 400; color: #202124; padding: 16px 16px 8px; line-height: 1.3; }
+    .rd-meta { padding: 8px 16px 12px; display: flex; align-items: flex-start; gap: 10px; }
+    .rd-avatar { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; color: #fff; flex-shrink: 0; }
+    .rd-meta-body { flex: 1; min-width: 0; }
+    .rd-from { font-size: 14px; font-weight: 500; color: #202124; }
+    .rd-from-email { font-size: 13px; color: #5f6368; font-weight: 400; }
+    .rd-to { font-size: 12px; color: #70757a; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rd-date { font-size: 12px; color: #70757a; flex-shrink: 0; text-align: right; max-width: 100px; }
+    .rd-body-frame { border: none; width: 100%; min-height: 300px; padding: 0; }
+    .rd-body-text { padding: 16px; font-size: 14px; color: #202124; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .rd-actions { display: flex; gap: 8px; padding: 12px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); border-top: 1px solid #dadce0; flex-shrink: 0; background: #fff; }
+    .rd-btn { flex: 1; padding: 10px; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dadce0; background: #fff; color: #202124; cursor: pointer; text-align: center; font-family: inherit; -webkit-tap-highlight-color: transparent; }
+    .rd-btn:active { background: #f1f3f4; }
+    .rd-btn.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    .rd-btn.primary:active { background: #1557b0; }
+    .rd-btn.done { background: #e6f4ea; color: #137333; border-color: #e6f4ea; }
+
+    /* ── Compose Modal ────────────────────────────────────────────────── */
+    .cmp-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: none; align-items: flex-end; justify-content: center; }
+    .cmp-bg.open { display: flex; }
+    .cmp { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; }
+    .cmp-hdr { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #e8eaed; flex-shrink: 0; }
+    .cmp-hdr h3 { font-size: 18px; font-weight: 600; color: #202124; }
+    .cmp-close { background: none; border: none; font-size: 22px; color: #5f6368; cursor: pointer; padding: 4px; }
+    .cmp-body { padding: 12px 16px; flex: 1; overflow-y: auto; }
+    .cmp-field { display: flex; align-items: center; border-bottom: 1px solid #f1f3f4; padding: 8px 0; }
+    .cmp-label { font-size: 14px; color: #70757a; width: 50px; flex-shrink: 0; }
+    .cmp-input { flex: 1; border: none; font-size: 14px; color: #202124; font-family: inherit; outline: none; padding: 4px 0; }
+    .cmp-select { flex: 1; border: none; font-size: 14px; color: #202124; font-family: inherit; outline: none; background: none; padding: 4px 0; -webkit-appearance: none; }
+    .cmp-subj { border: none; font-size: 16px; color: #202124; font-family: inherit; outline: none; width: 100%; padding: 12px 0; border-bottom: 1px solid #f1f3f4; font-weight: 500; }
+    .cmp-editor { border: none; font-size: 14px; color: #202124; font-family: inherit; outline: none; width: 100%; min-height: 200px; padding: 12px 0; resize: none; line-height: 1.5; }
+    .cmp-footer { display: flex; align-items: center; gap: 10px; padding: 10px 16px; padding-bottom: max(10px, env(safe-area-inset-bottom)); border-top: 1px solid #e8eaed; flex-shrink: 0; }
+    .cmp-send { background: #1a73e8; color: #fff; border: none; padding: 10px 24px; border-radius: 20px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; }
+    .cmp-send:active { background: #1557b0; }
+    .cmp-send:disabled { opacity: 0.5; }
+    .cmp-cc-toggle { font-size: 13px; color: #1a73e8; cursor: pointer; background: none; border: none; font-family: inherit; }
+    .cmp-cc-fields { display: none; }
+    .cmp-cc-fields.show { display: block; }
+
+    /* ── Settings Panel ───────────────────────────────────────────────── */
+    .settings-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 400; display: none; }
+    .settings-bg.open { display: block; }
+    .settings { position: fixed; top: 0; right: -320px; bottom: 0; width: 310px; max-width: 90vw; background: #fff; z-index: 401; transition: right 0.25s ease; overflow-y: auto; box-shadow: -2px 0 12px rgba(0,0,0,0.1); }
+    .settings-bg.open .settings { right: 0; }
+    .st-hdr { display: flex; align-items: center; justify-content: space-between; padding: 16px; padding-top: max(16px, env(safe-area-inset-top)); border-bottom: 1px solid #e8eaed; }
+    .st-hdr h3 { font-size: 18px; font-weight: 600; color: #202124; }
+    .st-close { background: none; border: none; font-size: 22px; color: #5f6368; cursor: pointer; padding: 4px; }
+    .st-section { padding: 16px; }
+    .st-section-title { font-size: 11px; font-weight: 600; color: #5f6368; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .st-acct { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f1f3f4; }
+    .st-acct:last-child { border-bottom: none; }
+    .st-acct-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .st-acct-info { flex: 1; min-width: 0; }
+    .st-acct-label { font-size: 14px; font-weight: 500; color: #202124; }
+    .st-acct-email { font-size: 12px; color: #5f6368; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .st-btn { font-size: 12px; font-weight: 500; padding: 6px 12px; border-radius: 6px; border: 1px solid #dadce0; background: #fff; color: #1a73e8; cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; white-space: nowrap; }
+    .st-btn:active { background: #f8f9fa; }
+    .st-btn.reauthing { color: #5f6368; pointer-events: none; }
+    .st-add-btn { display: flex; align-items: center; gap: 6px; width: 100%; padding: 10px; margin-top: 8px; border: 1px dashed #dadce0; border-radius: 8px; background: none; color: #1a73e8; font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; }
+    .st-add-btn:active { background: #f8f9fa; }
+
+    /* ── FAB ───────────────────────────────────────────────────────────── */
+    .fab { position: fixed; bottom: max(24px, env(safe-area-inset-bottom)); right: 20px; display: flex; align-items: center; gap: 10px; background: #c2e7ff; color: #001d35; border: none; padding: 14px 20px; border-radius: 16px; font-size: 14px; font-weight: 500; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.15); -webkit-tap-highlight-color: transparent; z-index: 50; font-family: inherit; }
+    .fab:active { background: #a8d8ea; }
+    .fab-icon { font-size: 22px; line-height: 1; }
+
+    /* ── Loading ───────────────────────────────────────────────────────── */
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid #dadce0; border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-row { display: flex; align-items: center; justify-content: center; padding: 20px; gap: 8px; color: #70757a; font-size: 13px; }
+
+    .hide { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<div class="hdr" id="list-hdr">
+  <div class="hdr-top">
+    <div class="hdr-left">
+      <span class="hdr-title">Email</span>
+      <span class="hdr-count" id="unread-count"></span>
+    </div>
+    <div class="hdr-right">
+      <button class="ib" onclick="pollNow()" id="poll-btn" title="Refresh">&#x27F3;</button>
+      <button class="ib" onclick="openSettings()" title="Settings">&#x2699;</button>
+      <a href="/calendar" class="lk">Calendar</a>
+      <a href="/" class="lk">Home</a>
+    </div>
+  </div>
+  <div class="tabs" id="tabs">
+    <div class="tab on" data-t="inbox" onclick="switchTab('inbox')">Inbox</div>
+    <div class="tab" data-t="sent" onclick="switchTab('sent')">Sent</div>
+    <div class="tab" data-t="drafts" onclick="switchTab('drafts')">Drafts</div>
+  </div>
+  <div class="chips" id="chips"></div>
+</div>
+
+<!-- ── Email List ──────────────────────────────────────────────────────────── -->
+<div id="email-list" class="email-list"></div>
+
+<!-- ── Reading View ────────────────────────────────────────────────────────── -->
+<div class="reader" id="reader">
+  <div class="rd-hdr">
+    <button class="rd-back" onclick="closeReader()">&#8249;</button>
+    <span class="rd-hdr-title" id="rd-hdr-title"></span>
+    <div class="rd-hdr-acct" id="rd-hdr-acct"></div>
+  </div>
+  <div class="rd-scroll" id="rd-scroll"></div>
+  <div class="rd-actions" id="rd-actions"></div>
+</div>
+
+<!-- ── Compose Modal ───────────────────────────────────────────────────────── -->
+<div class="cmp-bg" id="cmp-bg" onclick="if(event.target===this)closeCompose()">
+  <div class="cmp">
+    <div class="cmp-hdr">
+      <h3 id="cmp-title">Compose</h3>
+      <button class="cmp-close" onclick="closeCompose()">&#10005;</button>
+    </div>
+    <div class="cmp-body">
+      <div class="cmp-field">
+        <span class="cmp-label">From</span>
+        <select class="cmp-select" id="cmp-from"></select>
+      </div>
+      <div class="cmp-field">
+        <span class="cmp-label">To</span>
+        <input class="cmp-input" id="cmp-to" type="email" inputmode="email" autocomplete="email" autocapitalize="none" autocorrect="off" placeholder="Recipients">
+        <button class="cmp-cc-toggle" id="cmp-cc-btn" onclick="toggleCc()">Cc/Bcc</button>
+      </div>
+      <div class="cmp-cc-fields" id="cmp-cc-wrap">
+        <div class="cmp-field">
+          <span class="cmp-label">Cc</span>
+          <input class="cmp-input" id="cmp-cc" type="email" inputmode="email" autocapitalize="none" autocorrect="off" placeholder="Cc">
+        </div>
+        <div class="cmp-field">
+          <span class="cmp-label">Bcc</span>
+          <input class="cmp-input" id="cmp-bcc" type="email" inputmode="email" autocapitalize="none" autocorrect="off" placeholder="Bcc">
+        </div>
+      </div>
+      <input class="cmp-subj" id="cmp-subj" placeholder="Subject">
+      <textarea class="cmp-editor" id="cmp-body" placeholder="Compose email"></textarea>
+    </div>
+    <div class="cmp-footer">
+      <button class="cmp-send" id="cmp-send" onclick="sendEmail()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings Panel ──────────────────────────────────────────────────────── -->
+<div class="settings-bg" id="settings-bg" onclick="if(event.target===this)closeSettings()">
+  <div class="settings">
+    <div class="st-hdr">
+      <h3>Accounts</h3>
+      <button class="st-close" onclick="closeSettings()">&#10005;</button>
+    </div>
+    <div class="st-section" id="st-accounts"></div>
+  </div>
+</div>
+
+<!-- ── FAB ──────────────────────────────────────────────────────────────────── -->
+<button class="fab" id="fab" onclick="openCompose()">
+  <span class="fab-icon">&#9998;</span> Compose
+</button>
+
+<script>
+// ═════════════════════════════════════════════════════════════════════════════
+// ── State ────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+let emails = [];
+let sentEmails = [];
+let draftEmails = [];
+let accounts = [];
+let activeAcct = new Set();
+let currentTab = 'inbox';
+let replyCtx = null;
+let currentEmail = null;
+let sentLoaded = false;
+let draftsLoaded = false;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Helpers ──────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function esc(s) { const e = document.createElement('span'); e.textContent = s || ''; return e.innerHTML; }
+function clr(em) { return em.email_accounts?.calendar_color || '#1a73e8'; }
+function acctLabel(em) { return em.email_accounts?.label || ''; }
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), n = new Date(), diff = n - d;
+  if (diff < 86400000 && d.getDate() === n.getDate()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (diff < 7 * 86400000) return d.toLocaleDateString([], { weekday: 'short' });
+  if (d.getFullYear() === n.getFullYear()) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+function fmtDateFull(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) +
+    ' at ' + new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function initial(name, email) {
+  if (name) return name.charAt(0).toUpperCase();
+  if (email) return email.charAt(0).toUpperCase();
+  return '?';
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Tabs ────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+async function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.t === tab));
+
+  const listEl = document.getElementById('email-list');
+  if (tab === 'sent' && !sentLoaded) {
+    listEl.innerHTML = '<div class="loading-row"><span class="spinner"></span> Loading sent...</div>';
+    await loadSent();
+  } else if (tab === 'drafts' && !draftsLoaded) {
+    listEl.innerHTML = '<div class="loading-row"><span class="spinner"></span> Loading drafts...</div>';
+    await loadDrafts();
+  }
+  renderList();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Chips ───────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function renderChips() {
+  document.getElementById('chips').innerHTML = accounts.map(a => {
+    const on = activeAcct.has(a.id);
+    const c = a.calendar_color || '#1a73e8';
+    return `<div class="chip ${on ? 'on' : 'off'}" style="background:${c}15;border-color:${on ? c : 'transparent'}" onclick="toggleAcct('${a.id}')"><span class="chip-dot" style="background:${c}"></span><span style="color:${c}">${esc(a.label)}</span></div>`;
+  }).join('');
+}
+
+function toggleAcct(id) {
+  if (activeAcct.has(id)) {
+    if (activeAcct.size === 1) accounts.forEach(a => activeAcct.add(a.id));
+    else activeAcct.delete(id);
+  } else {
+    activeAcct.add(id);
+  }
+  renderChips();
+  renderList();
+}
+
+function getVisibleEmails() {
+  let list;
+  if (currentTab === 'sent') list = sentEmails;
+  else if (currentTab === 'drafts') list = draftEmails;
+  else list = emails;
+
+  if (activeAcct.size < accounts.length) {
+    list = list.filter(e => activeAcct.has(e.account_id));
+  }
+  return list;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Data Loading ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+async function loadAccounts() {
+  try {
+    const r = await fetch('/api/email/accounts');
+    accounts = await r.json();
+    accounts.forEach(a => activeAcct.add(a.id));
+    renderChips();
+  } catch (e) { console.error('Load accounts:', e); }
+}
+
+async function loadEmails() {
+  try {
+    const r = await fetch('/api/email/inbox?limit=200');
+    emails = await r.json();
+  } catch (e) { console.error('Load emails:', e); }
+}
+
+async function loadSent() {
+  try {
+    const r = await fetch('/api/email/sent?limit=30');
+    sentEmails = await r.json();
+    sentLoaded = true;
+  } catch (e) { console.error('Load sent:', e); }
+}
+
+async function loadDrafts() {
+  try {
+    const r = await fetch('/api/email/drafts?limit=20');
+    draftEmails = await r.json();
+    draftsLoaded = true;
+  } catch (e) { console.error('Load drafts:', e); }
+}
+
+async function loadAndRender() {
+  if (currentTab === 'inbox') {
+    await loadEmails();
+  } else if (currentTab === 'sent') {
+    await loadSent();
+  } else if (currentTab === 'drafts') {
+    await loadDrafts();
+  }
+  renderList();
+  updateCounts();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Email List ───────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function renderList() {
+  const c = document.getElementById('email-list');
+  const list = getVisibleEmails();
+
+  if (list.length === 0) {
+    const label = currentTab === 'sent' ? 'No sent emails' : currentTab === 'drafts' ? 'No drafts' : 'No emails in this view';
+    c.innerHTML = `<div class="email-empty">${label}</div>`;
+    return;
+  }
+
+  if (currentTab === 'sent') {
+    c.innerHTML = list.map(em => renderSentItem(em)).join('');
+  } else if (currentTab === 'drafts') {
+    c.innerHTML = list.map(em => renderDraftItem(em)).join('');
+  } else {
+    c.innerHTML = list.map(em => renderInboxItem(em)).join('');
+  }
+}
+
+function renderInboxItem(em) {
+  const color = clr(em);
+  const isUnread = !em.responded && (em.classification === 'RESPOND_NOW' || em.classification === 'RESPOND_TODAY');
+  let badges = '';
+  if (em.classification === 'RESPOND_NOW') badges += '<span class="ei-badge badge-rn">Urgent</span>';
+  if (em.classification === 'RESPOND_TODAY') badges += '<span class="ei-badge badge-rt">Today</span>';
+  if (em.classification === 'FYI_NO_ACTION') badges += '<span class="ei-badge badge-fyi">FYI</span>';
+  if (em.is_sensitive) badges += '<span class="ei-badge badge-sens">Sensitive</span>';
+  if (em.responded) badges += '<span class="ei-badge badge-responded">Done</span>';
+
+  return `<div class="email-item ${isUnread ? 'unread' : ''}" onclick="openEmail('${em.id}')">
+    <div class="ei-bar" style="background:${color}"></div>
+    <div class="ei-body">
+      <div class="ei-avatar" style="background:${color}">${initial(em.from_name, em.from_address)}</div>
+      <div class="ei-content">
+        <div class="ei-row1">
+          <span class="ei-sender">${esc(em.from_name || em.from_address)}</span>
+          <span class="ei-time">${fmtTime(em.received_at)}</span>
+        </div>
+        <div class="ei-subject">${esc(em.subject || '(no subject)')}</div>
+        <div class="ei-snippet">${esc(em.snippet || em.summary || '')}</div>
+        ${badges ? '<div class="ei-badges">' + badges + '</div>' : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSentItem(em) {
+  const color = clr(em);
+  const toList = (em.to_addresses || []).join(', ');
+  return `<div class="email-item" onclick="openSentEmail('${em.id}','${em.account_id}')">
+    <div class="ei-bar" style="background:${color}"></div>
+    <div class="ei-body">
+      <div class="ei-avatar" style="background:${color}">&#10148;</div>
+      <div class="ei-content">
+        <div class="ei-row1">
+          <span class="ei-sender">To: ${esc(toList || 'unknown')}</span>
+          <span class="ei-time">${fmtTime(em.received_at)}</span>
+        </div>
+        <div class="ei-subject">${esc(em.subject || '(no subject)')}</div>
+        <div class="ei-snippet">${esc(em.snippet || '')}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderDraftItem(em) {
+  const color = clr(em);
+  const toList = (em.to_addresses || []).join(', ');
+  return `<div class="email-item" onclick="openSentEmail('${em.id}','${em.account_id}')">
+    <div class="ei-bar" style="background:${color}"></div>
+    <div class="ei-body">
+      <div class="ei-avatar" style="background:${color}; opacity:0.6">&#9998;</div>
+      <div class="ei-content">
+        <div class="ei-row1">
+          <span class="ei-sender">${toList ? 'To: ' + esc(toList) : '<span style="color:#70757a">No recipients</span>'}</span>
+          <span class="ei-time">${fmtTime(em.received_at)}</span>
+        </div>
+        <div class="ei-subject">${esc(em.subject || '(no subject)')}</div>
+        <div class="ei-snippet">${esc(em.snippet || '')}</div>
+        <div class="ei-badges"><span class="ei-badge badge-draft">Draft</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function updateCounts() {
+  const total = emails.length;
+  document.getElementById('unread-count').textContent = total > 0 ? total : '';
+
+  document.querySelectorAll('.tab').forEach(t => {
+    const existing = t.querySelector('.tab-count');
+    if (existing) existing.remove();
+    let count = 0;
+    if (t.dataset.t === 'inbox') count = total;
+    else if (t.dataset.t === 'sent' && sentLoaded) count = sentEmails.length;
+    else if (t.dataset.t === 'drafts' && draftsLoaded) count = draftEmails.length;
+    if (count > 0) {
+      const span = document.createElement('span');
+      span.className = 'tab-count';
+      span.textContent = count;
+      t.appendChild(span);
+    }
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Reading View ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+async function openEmail(id) {
+  const reader = document.getElementById('reader');
+  const scroll = document.getElementById('rd-scroll');
+  const actions = document.getElementById('rd-actions');
+
+  const em = emails.find(e => e.id === id);
+  if (!em) return;
+  currentEmail = em;
+
+  document.getElementById('rd-hdr-title').textContent = acctLabel(em);
+  document.getElementById('rd-hdr-acct').innerHTML =
+    `<span class="rd-hdr-dot" style="background:${clr(em)}"></span>${esc(em.email_accounts?.email || '')}`;
+
+  scroll.innerHTML = `<div class="rd-subject">${esc(em.subject || '(no subject)')}</div>
+    <div class="rd-meta">
+      <div class="rd-avatar" style="background:${clr(em)}">${initial(em.from_name, em.from_address)}</div>
+      <div class="rd-meta-body">
+        <div class="rd-from">${esc(em.from_name || em.from_address)} <span class="rd-from-email">&lt;${esc(em.from_address)}&gt;</span></div>
+        <div class="rd-to">to ${esc((em.to_addresses || []).join(', ') || 'me')}</div>
+      </div>
+      <div class="rd-date">${fmtTime(em.received_at)}</div>
+    </div>
+    <div class="loading-row"><span class="spinner"></span> Loading message...</div>`;
+  actions.innerHTML = '';
+
+  reader.classList.add('open');
+  document.getElementById('fab').classList.add('hide');
+
+  try {
+    const r = await fetch(`/api/email/inbox/${id}/full`);
+    const full = await r.json();
+    currentEmail = { ...em, ...full };
+
+    const toStr = (full.fullTo || em.to_addresses || []).map(t => typeof t === 'string' ? t : (t.address || t)).join(', ');
+    const ccStr = (full.fullCc || em.cc_addresses || []).map(t => typeof t === 'string' ? t : (t.address || t)).join(', ');
+
+    scroll.innerHTML = `
+      <div class="rd-subject">${esc(em.subject || '(no subject)')}</div>
+      <div class="rd-meta">
+        <div class="rd-avatar" style="background:${clr(em)}">${initial(em.from_name, em.from_address)}</div>
+        <div class="rd-meta-body">
+          <div class="rd-from">${esc(em.from_name || em.from_address)} <span class="rd-from-email">&lt;${esc(em.from_address)}&gt;</span></div>
+          <div class="rd-to">to ${esc(toStr || 'me')}${ccStr ? ' · cc: ' + esc(ccStr) : ''}</div>
+        </div>
+        <div class="rd-date">${fmtDateFull(em.received_at)}</div>
+      </div>
+      <div id="rd-body-container"></div>`;
+
+    const bodyContainer = document.getElementById('rd-body-container');
+    if (full.htmlBody) {
+      const frame = document.createElement('iframe');
+      frame.className = 'rd-body-frame';
+      frame.sandbox = 'allow-same-origin allow-popups allow-popups-to-escape-sandbox';
+      const wrapped = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>body{font-family:-apple-system,system-ui,sans-serif;font-size:14px;color:#202124;padding:16px;margin:0;line-height:1.5;word-break:break-word;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#1a73e8}blockquote{border-left:3px solid #dadce0;margin:8px 0;padding:4px 12px;color:#5f6368}pre{overflow-x:auto;background:#f8f9fa;padding:8px;border-radius:4px;font-size:13px}table{max-width:100%;border-collapse:collapse}td,th{padding:4px 8px}</style></head><body>${full.htmlBody}</body></html>`;
+      frame.srcdoc = wrapped;
+      frame.onload = function() { try { this.style.height = Math.max(300, this.contentDocument.body.scrollHeight + 32) + 'px'; } catch(e) {} };
+      bodyContainer.appendChild(frame);
+    } else {
+      bodyContainer.innerHTML = `<div class="rd-body-text">${esc(full.textBody || em.snippet || '')}</div>`;
+    }
+
+    const respondedBtn = em.responded
+      ? '<button class="rd-btn done">✓ Responded</button>'
+      : `<button class="rd-btn" onclick="markResponded('${em.id}')">Mark Done</button>`;
+    actions.innerHTML = `
+      <button class="rd-btn primary" onclick="replyTo()">Reply</button>
+      <button class="rd-btn" onclick="forwardEmail()">Forward</button>
+      ${respondedBtn}`;
+
+  } catch (err) {
+    scroll.innerHTML += `<div class="rd-body-text" style="color:#c5221f">Failed to load message: ${esc(err.message)}</div>`;
+  }
+}
+
+/** Open a sent/draft email for reading (fetches full body from Gmail API) */
+async function openSentEmail(msgId, accountId) {
+  const reader = document.getElementById('reader');
+  const scroll = document.getElementById('rd-scroll');
+  const actions = document.getElementById('rd-actions');
+
+  const list = currentTab === 'sent' ? sentEmails : draftEmails;
+  const em = list.find(e => e.id === msgId);
+  if (!em) return;
+  currentEmail = em;
+
+  document.getElementById('rd-hdr-title').textContent = acctLabel(em);
+  document.getElementById('rd-hdr-acct').innerHTML =
+    `<span class="rd-hdr-dot" style="background:${clr(em)}"></span>${esc(em.email_accounts?.email || '')}`;
+
+  const toStr = (em.to_addresses || []).join(', ');
+  scroll.innerHTML = `<div class="rd-subject">${esc(em.subject || '(no subject)')}</div>
+    <div class="rd-meta">
+      <div class="rd-avatar" style="background:${clr(em)}">&#10148;</div>
+      <div class="rd-meta-body">
+        <div class="rd-from">To: ${esc(toStr || 'unknown')}</div>
+        <div class="rd-to">from ${esc(em.email_accounts?.email || em.from_address || '')}</div>
+      </div>
+      <div class="rd-date">${fmtTime(em.received_at)}</div>
+    </div>
+    <div class="loading-row"><span class="spinner"></span> Loading message...</div>`;
+  actions.innerHTML = '';
+
+  reader.classList.add('open');
+  document.getElementById('fab').classList.add('hide');
+
+  try {
+    // Fetch full body — reuse the inbox full endpoint (it just needs the gmail message ID + account)
+    const r = await fetch(`/api/email/inbox/${msgId}/full`);
+    let full;
+    if (r.ok) {
+      full = await r.json();
+    } else {
+      // Sent emails may not be in our DB — fetch directly via a special param
+      // Fall back to just showing the snippet
+      full = { textBody: em.snippet || '' };
+    }
+    currentEmail = { ...em, ...full };
+
+    scroll.innerHTML = `
+      <div class="rd-subject">${esc(em.subject || '(no subject)')}</div>
+      <div class="rd-meta">
+        <div class="rd-avatar" style="background:${clr(em)}">&#10148;</div>
+        <div class="rd-meta-body">
+          <div class="rd-from">To: ${esc(toStr || 'unknown')}</div>
+          <div class="rd-to">from ${esc(em.email_accounts?.email || em.from_address || '')}</div>
+        </div>
+        <div class="rd-date">${fmtDateFull(em.received_at)}</div>
+      </div>
+      <div id="rd-body-container"></div>`;
+
+    const bodyContainer = document.getElementById('rd-body-container');
+    if (full.htmlBody) {
+      const frame = document.createElement('iframe');
+      frame.className = 'rd-body-frame';
+      frame.sandbox = 'allow-same-origin allow-popups allow-popups-to-escape-sandbox';
+      const wrapped = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>body{font-family:-apple-system,system-ui,sans-serif;font-size:14px;color:#202124;padding:16px;margin:0;line-height:1.5;word-break:break-word;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#1a73e8}blockquote{border-left:3px solid #dadce0;margin:8px 0;padding:4px 12px;color:#5f6368}pre{overflow-x:auto;background:#f8f9fa;padding:8px;border-radius:4px;font-size:13px}table{max-width:100%;border-collapse:collapse}td,th{padding:4px 8px}</style></head><body>${full.htmlBody}</body></html>`;
+      frame.srcdoc = wrapped;
+      frame.onload = function() { try { this.style.height = Math.max(300, this.contentDocument.body.scrollHeight + 32) + 'px'; } catch(e) {} };
+      bodyContainer.appendChild(frame);
+    } else {
+      bodyContainer.innerHTML = `<div class="rd-body-text">${esc(full.textBody || em.snippet || '')}</div>`;
+    }
+
+    actions.innerHTML = `<button class="rd-btn" onclick="closeReader()">Close</button>`;
+
+  } catch (err) {
+    scroll.innerHTML += `<div class="rd-body-text" style="color:#c5221f">Failed to load: ${esc(err.message)}</div>`;
+  }
+}
+
+function closeReader() {
+  document.getElementById('reader').classList.remove('open');
+  document.getElementById('fab').classList.remove('hide');
+  currentEmail = null;
+}
+
+async function markResponded(id) {
+  try {
+    await fetch(`/api/email/inbox/${id}/responded`, { method: 'POST' });
+    const em = emails.find(e => e.id === id);
+    if (em) em.responded = true;
+    renderList();
+    updateCounts();
+    const actions = document.getElementById('rd-actions');
+    const btns = actions.querySelectorAll('.rd-btn');
+    const last = btns[btns.length - 1];
+    if (last) { last.className = 'rd-btn done'; last.textContent = '✓ Responded'; last.onclick = null; }
+  } catch (e) { console.error('Mark responded:', e); }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Compose / Reply / Forward ────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function openCompose() {
+  replyCtx = null;
+  document.getElementById('cmp-title').textContent = 'Compose';
+  document.getElementById('cmp-from').innerHTML = accounts.map(a =>
+    `<option value="${a.id}">${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`
+  ).join('');
+  document.getElementById('cmp-to').value = '';
+  document.getElementById('cmp-cc').value = '';
+  document.getElementById('cmp-bcc').value = '';
+  document.getElementById('cmp-subj').value = '';
+  document.getElementById('cmp-body').value = '';
+  document.getElementById('cmp-cc-wrap').classList.remove('show');
+  document.getElementById('cmp-bg').classList.add('open');
+  setTimeout(() => document.getElementById('cmp-to').focus(), 100);
+}
+
+function replyTo() {
+  const em = currentEmail;
+  if (!em) return;
+  replyCtx = em;
+  document.getElementById('cmp-title').textContent = 'Reply';
+  document.getElementById('cmp-from').innerHTML = accounts.map(a =>
+    `<option value="${a.id}" ${a.id === em.account_id ? 'selected' : ''}>${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`
+  ).join('');
+  document.getElementById('cmp-to').value = em.from_address || '';
+  document.getElementById('cmp-subj').value = (em.subject || '').startsWith('Re:') ? em.subject : 'Re: ' + (em.subject || '');
+
+  const origBody = em.textBody || em.snippet || '';
+  const quote = `\n\n——— On ${fmtDateFull(em.received_at)}, ${em.from_name || em.from_address} wrote ———\n${origBody}`;
+  document.getElementById('cmp-body').value = '\n' + quote;
+  document.getElementById('cmp-cc').value = '';
+  document.getElementById('cmp-bcc').value = '';
+  document.getElementById('cmp-cc-wrap').classList.remove('show');
+  document.getElementById('cmp-bg').classList.add('open');
+  setTimeout(() => {
+    const el = document.getElementById('cmp-body');
+    el.focus();
+    el.setSelectionRange(0, 0);
+  }, 100);
+}
+
+function forwardEmail() {
+  const em = currentEmail;
+  if (!em) return;
+  replyCtx = null;
+  document.getElementById('cmp-title').textContent = 'Forward';
+  document.getElementById('cmp-from').innerHTML = accounts.map(a =>
+    `<option value="${a.id}" ${a.id === em.account_id ? 'selected' : ''}>${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`
+  ).join('');
+  document.getElementById('cmp-to').value = '';
+  document.getElementById('cmp-subj').value = (em.subject || '').startsWith('Fwd:') ? em.subject : 'Fwd: ' + (em.subject || '');
+  const fwd = `\n\n——— Forwarded message ———\nFrom: ${em.from_name || ''} <${em.from_address}>\nDate: ${fmtDateFull(em.received_at)}\nSubject: ${em.subject || ''}\n\n${em.textBody || em.snippet || ''}`;
+  document.getElementById('cmp-body').value = fwd;
+  document.getElementById('cmp-cc').value = '';
+  document.getElementById('cmp-bcc').value = '';
+  document.getElementById('cmp-cc-wrap').classList.remove('show');
+  document.getElementById('cmp-bg').classList.add('open');
+  setTimeout(() => document.getElementById('cmp-to').focus(), 100);
+}
+
+function closeCompose() {
+  document.getElementById('cmp-bg').classList.remove('open');
+  replyCtx = null;
+}
+
+function toggleCc() {
+  document.getElementById('cmp-cc-wrap').classList.toggle('show');
+}
+
+async function sendEmail() {
+  const btn = document.getElementById('cmp-send');
+  const orig = btn.textContent;
+  btn.textContent = 'Sending...';
+  btn.disabled = true;
+
+  const toVal = document.getElementById('cmp-to').value.trim();
+  if (!toVal || !toVal.includes('@')) {
+    alert('Please enter a valid email address in the To field.\n\nCurrent value: "' + toVal + '"');
+    btn.textContent = orig;
+    btn.disabled = false;
+    return;
+  }
+
+  const bodyText = document.getElementById('cmp-body').value;
+  const htmlBody = bodyText.split('\n').map(line => esc(line) || '<br>').join('<br>');
+
+  const payload = {
+    account_id: document.getElementById('cmp-from').value,
+    to: toVal,
+    cc: document.getElementById('cmp-cc').value || undefined,
+    bcc: document.getElementById('cmp-bcc').value || undefined,
+    subject: document.getElementById('cmp-subj').value,
+    body: htmlBody
+  };
+
+  if (replyCtx) {
+    payload.threadId = replyCtx.thread_id || replyCtx.threadId;
+    payload.inReplyTo = replyCtx.messageId;
+    payload.references = replyCtx.references;
+  }
+
+  try {
+    const r = await fetch('/api/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    if (data.ok) {
+      closeCompose();
+      if (replyCtx && currentEmail) await markResponded(currentEmail.id);
+      // Invalidate sent cache so next tab switch reloads
+      sentLoaded = false;
+    } else {
+      alert('Send failed: ' + (data.error || 'Unknown error'));
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+
+  btn.textContent = orig;
+  btn.disabled = false;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Settings Panel ──────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function openSettings() {
+  renderSettingsAccounts();
+  document.getElementById('settings-bg').classList.add('open');
+}
+
+function closeSettings() {
+  document.getElementById('settings-bg').classList.remove('open');
+}
+
+function renderSettingsAccounts() {
+  const el = document.getElementById('st-accounts');
+  el.innerHTML = `<div class="st-section-title">Connected Accounts</div>` +
+    accounts.map(a => {
+      const c = a.calendar_color || '#1a73e8';
+      return `<div class="st-acct">
+        <span class="st-acct-dot" style="background:${c}"></span>
+        <div class="st-acct-info">
+          <div class="st-acct-label">${esc(a.label)}</div>
+          <div class="st-acct-email">${esc(a.email)}</div>
+        </div>
+        <button class="st-btn" id="reauth-${a.id}" onclick="reauthorize('${a.id}','${esc(a.label)}')">Re-auth</button>
+      </div>`;
+    }).join('') +
+    `<button class="st-add-btn" onclick="addAccount()">
+      <span style="font-size:16px">+</span> Add Account
+    </button>`;
+}
+
+async function reauthorize(accountId, label) {
+  const btn = document.getElementById('reauth-' + accountId);
+  if (btn) { btn.textContent = 'Opening...'; btn.classList.add('reauthing'); }
+
+  try {
+    const r = await fetch('/api/email/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label })
+    });
+    const data = await r.json();
+    if (data.authUrl) {
+      const popup = window.open(data.authUrl, '_blank');
+      if (btn) { btn.textContent = 'Waiting...'; }
+      // Poll for popup close → means user completed or cancelled the flow
+      const pollClose = setInterval(async () => {
+        if (!popup || popup.closed) {
+          clearInterval(pollClose);
+          if (btn) {
+            btn.textContent = '✓ Connected';
+            btn.style.color = '#188038';
+            btn.style.borderColor = '#188038';
+          }
+          // Refresh accounts list
+          try {
+            const ar = await fetch('/api/email/accounts');
+            if (ar.ok) { accounts = await ar.json(); renderSettingsAccounts(); renderChips(); }
+          } catch(e) {}
+          // Reset button after a few seconds
+          setTimeout(() => {
+            if (btn) { btn.textContent = 'Re-auth'; btn.style.color = ''; btn.style.borderColor = ''; btn.classList.remove('reauthing'); }
+          }, 5000);
+        }
+      }, 500);
+      // Timeout fallback — stop polling after 2 minutes
+      setTimeout(() => {
+        clearInterval(pollClose);
+        if (btn && btn.textContent === 'Waiting...') {
+          btn.textContent = 'Re-auth'; btn.classList.remove('reauthing');
+        }
+      }, 120000);
+    }
+  } catch (e) {
+    console.error('Re-auth error:', e);
+    if (btn) { btn.textContent = 'Re-auth'; btn.classList.remove('reauthing'); }
+  }
+}
+
+async function addAccount() {
+  try {
+    const r = await fetch('/api/email/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'new' })
+    });
+    const data = await r.json();
+    if (data.authUrl) {
+      window.open(data.authUrl, '_blank');
+    }
+  } catch (e) {
+    console.error('Add account error:', e);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Polling ──────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+async function pollNow() {
+  const btn = document.getElementById('poll-btn');
+  btn.style.opacity = 0.4;
+  try {
+    if (currentTab === 'inbox') {
+      await fetch('/api/email/poll', { method: 'POST' });
+    }
+    await loadAndRender();
+  } catch (e) { console.error('Poll failed:', e); }
+  btn.style.opacity = 1;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Init ─────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+(async function init() {
+  await loadAccounts();
+  await loadEmails();
+  renderList();
+  updateCounts();
+})();
+
+setInterval(loadAndRender, 90000);
+</script>
+
+</body>
+</html>

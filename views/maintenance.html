@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>Maintenance - Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { overflow-x: hidden; max-width: 100vw; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header a {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 22px;
+      padding: 4px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .header .title {
+      font-size: 17px;
+      font-weight: 600;
+      flex: 1;
+      color: #fff;
+    }
+
+    .section { padding: 0 16px; }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 20px 4px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Status overview */
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .status-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .status-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .status-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .status-icon.db_health { background: #e3f2fd; color: #1565c0; }
+    .status-icon.security { background: #fce4ec; color: #c62828; }
+    .status-icon.docs_drift { background: #f3e5f5; color: #6a1b9a; }
+    .status-icon.code_cleanup { background: #e8f5e9; color: #2e7d32; }
+    .status-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+    .status-value {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .status-value.ok { background: #e8f5e9; color: #2e7d32; }
+    .status-value.warning { background: #fff3e0; color: #e65100; }
+    .status-value.critical { background: #ffebee; color: #c62828; }
+    .status-value.skipped { background: #f2f2f7; color: #8e8e93; }
+    .status-summary {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 4px;
+    }
+
+    /* Actions */
+    .actions-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .action-btn {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .action-btn.primary {
+      background: linear-gradient(135deg, #34c759, #30d158);
+      color: #fff;
+    }
+    .action-btn.secondary {
+      background: #fff;
+      color: #007aff;
+      border: 1px solid #e5e5ea;
+    }
+    .action-btn:active { opacity: 0.85; }
+    .action-btn:disabled { opacity: 0.5; }
+
+    /* Detail cards */
+    .detail-card {
+      background: #fff;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .detail-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .detail-header:active { background: #f8f8fa; }
+    .detail-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .detail-title-text {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+    .detail-chevron {
+      color: #c7c7cc;
+      font-size: 14px;
+      transition: transform 0.2s;
+    }
+    .detail-card.expanded .detail-chevron { transform: rotate(90deg); }
+    .detail-body {
+      display: none;
+      padding: 0 16px 14px;
+      border-top: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .detail-card.expanded .detail-body { display: block; }
+    .detail-summary {
+      font-size: 14px;
+      color: #48484a;
+      padding: 12px 0;
+      line-height: 1.5;
+    }
+    .detail-findings {
+      padding-top: 8px;
+    }
+    .finding-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .finding-item:last-child { border-bottom: none; }
+    .finding-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .finding-icon.ok { background: #e8f5e9; color: #2e7d32; }
+    .finding-icon.warning { background: #fff3e0; color: #e65100; }
+    .finding-icon.critical { background: #ffebee; color: #c62828; }
+    .finding-icon.info { background: #e3f2fd; color: #1565c0; }
+    .finding-content { flex: 1; min-width: 0; }
+    .finding-message {
+      font-size: 13px;
+      color: #1c1c1e;
+      line-height: 1.4;
+    }
+    .finding-details {
+      font-size: 11px;
+      color: #8e8e93;
+      margin-top: 4px;
+    }
+    .finding-action {
+      margin-top: 8px;
+    }
+    .finding-action-btn {
+      font-size: 12px;
+      color: #007aff;
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }
+    .detail-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 12px;
+      border-top: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .detail-time {
+      font-size: 11px;
+      color: #8e8e93;
+    }
+    .detail-run-btn {
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .detail-run-btn:active { opacity: 0.7; }
+    .detail-run-btn:disabled { opacity: 0.5; }
+
+    /* History */
+    .history-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #fff;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .history-item:first-child { border-radius: 12px 12px 0 0; }
+    .history-item:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
+    .history-item:only-child { border-radius: 12px; }
+    .history-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .history-icon.ok { background: #e8f5e9; color: #2e7d32; }
+    .history-icon.warning { background: #fff3e0; color: #e65100; }
+    .history-icon.critical { background: #ffebee; color: #c62828; }
+    .history-body { flex: 1; min-width: 0; }
+    .history-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: #1c1c1e;
+    }
+    .history-meta {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 2px;
+    }
+
+    /* Settings */
+    .setting-card {
+      background: #fff;
+      border-radius: 12px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .setting-row:last-child { border-bottom: none; }
+    .setting-label {
+      font-size: 15px;
+      color: #1c1c1e;
+    }
+    .setting-toggle {
+      position: relative;
+      width: 51px;
+      height: 31px;
+      background: #e5e5ea;
+      border-radius: 16px;
+      border: none;
+      cursor: pointer;
+      transition: background 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .setting-toggle.on { background: #34c759; }
+    .setting-toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 27px;
+      height: 27px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      transition: transform 0.2s;
+    }
+    .setting-toggle.on::after { transform: translateX(20px); }
+
+    .schedule-info {
+      background: #fff;
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+    .schedule-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1c1c1e;
+      margin-bottom: 6px;
+    }
+    .schedule-detail {
+      font-size: 13px;
+      color: #8e8e93;
+      line-height: 1.5;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 40px 16px;
+      color: #8e8e93;
+      font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="#" onclick="history.back(); return false;">&larr;</a>
+    <div class="title">Maintenance</div>
+  </div>
+
+  <div id="status-section" class="section"></div>
+  <div id="actions-section" class="section"></div>
+  <div id="details-section" class="section"></div>
+  <div id="history-section" class="section"></div>
+  <div id="settings-section" class="section"></div>
+
+  <script>
+    function timeAgo(iso) {
+      if (!iso) return "Never";
+      const diff = Date.now() - new Date(iso).getTime();
+      const s = Math.floor(diff / 1000);
+      if (s < 10) return "just now";
+      if (s < 60) return s + "s ago";
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+
+    function esc(s) {
+      if (!s) return "";
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    var checkTypes = ["db_health", "security", "docs_drift", "code_cleanup"];
+    var checkLabels = {
+      db_health: "Database Health",
+      security: "Security Scan",
+      docs_drift: "Documentation Drift",
+      code_cleanup: "Code Cleanup"
+    };
+    var checkIcons = {
+      db_health: "&#128451;",
+      security: "&#128274;",
+      docs_drift: "&#128196;",
+      code_cleanup: "&#128736;"
+    };
+    var severityIcons = {
+      ok: "&#10003;",
+      warning: "&#9888;",
+      critical: "&#10007;",
+      info: "i"
+    };
+
+    var maintenanceData = null;
+    var thresholds = {};
+    var expandedCards = {};
+    var fixSessions = {}; // Map of "check_type-finding_index" -> session status
+
+    async function loadData() {
+      try {
+        var [statusResp, thresholdsResp, historyResp, fixResp] = await Promise.all([
+          fetch("/api/maintenance/status"),
+          fetch("/api/maintenance/thresholds"),
+          fetch("/api/maintenance/checks?limit=20"),
+          fetch("/api/maintenance/findings/status")
+        ]);
+        maintenanceData = await statusResp.json();
+        thresholds = await thresholdsResp.json();
+        var history = await historyResp.json();
+        var fixes = await fixResp.json();
+
+        // Build fix session lookup
+        fixSessions = {};
+        for (var f of fixes) {
+          var key = f.check_type + "-" + f.finding_index;
+          fixSessions[key] = f;
+        }
+
+        renderStatus();
+        renderActions();
+        renderDetails();
+        renderHistory(history);
+        renderSettings();
+      } catch (err) {
+        console.error("Failed to load maintenance data:", err);
+      }
+    }
+
+    function renderStatus() {
+      var el = document.getElementById("status-section");
+      var checks = maintenanceData.checks || {};
+
+      var html = '<div class="section-header">System Health</div>';
+      html += '<div class="status-grid">';
+
+      for (var i = 0; i < checkTypes.length; i++) {
+        var type = checkTypes[i];
+        var check = checks[type] || { status: "skipped" };
+        var status = check.status || "skipped";
+
+        html += '<div class="status-card">';
+        html += '  <div class="status-card-header">';
+        html += '    <span class="status-icon ' + type + '">' + checkIcons[type] + '</span>';
+        html += '    <span class="status-label">' + esc(checkLabels[type]) + '</span>';
+        html += '  </div>';
+        html += '  <span class="status-value ' + status + '">' + esc(status) + '</span>';
+        if (check.summary) {
+          html += '  <div class="status-summary">' + esc(check.summary.slice(0, 50)) + '</div>';
+        }
+        html += '</div>';
+      }
+
+      html += '</div>';
+      el.innerHTML = html;
+    }
+
+    function renderActions() {
+      var el = document.getElementById("actions-section");
+      var nextRun = maintenanceData.next_run;
+
+      var html = '<div class="actions-row">';
+      html += '  <button class="action-btn primary" onclick="runAll(this)">Run All Checks</button>';
+      html += '</div>';
+
+      if (nextRun) {
+        var nextDate = new Date(nextRun);
+        var nextStr = nextDate.toLocaleString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit"
+        });
+        html += '<div class="schedule-info">';
+        html += '  <div class="schedule-title">Scheduled Runs</div>';
+        html += '  <div class="schedule-detail">Daily check: 6:00 AM CT<br>Security scan: Every hour<br>Next run: ' + esc(nextStr) + '</div>';
+        html += '</div>';
+      }
+
+      el.innerHTML = html;
+    }
+
+    function renderDetails() {
+      var el = document.getElementById("details-section");
+      var checks = maintenanceData.checks || {};
+
+      var html = '<div class="section-header">Check Details</div>';
+
+      for (var i = 0; i < checkTypes.length; i++) {
+        var type = checkTypes[i];
+        var check = checks[type] || { status: "skipped", summary: "Not run yet", findings: [] };
+        var status = check.status || "skipped";
+        var isExpanded = expandedCards[type];
+
+        html += '<div class="detail-card' + (isExpanded ? ' expanded' : '') + '" id="card-' + type + '">';
+        html += '  <div class="detail-header" onclick="toggleCard(\'' + type + '\')">';
+        html += '    <div class="detail-title">';
+        html += '      <span class="status-icon ' + type + '">' + checkIcons[type] + '</span>';
+        html += '      <span class="detail-title-text">' + esc(checkLabels[type]) + '</span>';
+        html += '      <span class="status-value ' + status + '">' + esc(status) + '</span>';
+        html += '    </div>';
+        html += '    <span class="detail-chevron">&#8250;</span>';
+        html += '  </div>';
+        html += '  <div class="detail-body">';
+        html += '    <div class="detail-summary">' + esc(check.summary || "No results available") + '</div>';
+
+        var findings = check.findings || [];
+        if (findings.length > 0) {
+          html += '    <div class="detail-findings">';
+          for (var j = 0; j < findings.length; j++) {
+            var f = findings[j];
+            var sev = f.severity || "info";
+            var fixKey = type + "-" + j;
+            var fixSession = fixSessions[fixKey];
+
+            html += '      <div class="finding-item">';
+            html += '        <span class="finding-icon ' + sev + '">' + (severityIcons[sev] || severityIcons.info) + '</span>';
+            html += '        <div class="finding-content">';
+            html += '          <div class="finding-message">' + esc(f.message) + '</div>';
+            if (f.details && Array.isArray(f.details) && f.details.length > 0) {
+              var detailStr = f.details.slice(0, 3).map(function(d) {
+                return typeof d === "string" ? d : (d.name || d.file || d.function || JSON.stringify(d).slice(0, 40));
+              }).join(", ");
+              if (f.details.length > 3) detailStr += " +" + (f.details.length - 3) + " more";
+              html += '          <div class="finding-details">' + esc(detailStr) + '</div>';
+            }
+            html += '          <div class="finding-action" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+            if (f.action && f.action.command) {
+              html += '            <button class="finding-action-btn" onclick="copyCommand(\'' + esc(f.action.command).replace(/'/g, "\\'") + '\')">Copy command</button>';
+            }
+            // Session spawn button or status
+            if (fixSession) {
+              if (fixSession.status === "fixed") {
+                html += '            <span style="font-size:11px;color:#2e7d32;background:#e8f5e9;padding:3px 8px;border-radius:6px;">&#10003; Fixed</span>';
+              } else if (fixSession.status === "failed") {
+                html += '            <span style="font-size:11px;color:#c62828;background:#ffebee;padding:3px 8px;border-radius:6px;">&#10007; Failed</span>';
+              } else {
+                html += '            <span style="font-size:11px;color:#1565c0;background:#e3f2fd;padding:3px 8px;border-radius:6px;">Session started</span>';
+              }
+            } else if (sev !== "ok") {
+              html += '            <button class="finding-action-btn" style="color:#fff;background:linear-gradient(135deg,#34c759,#30d158);padding:4px 10px;border-radius:6px;" onclick="spawnFixSession(\'' + type + '\', ' + j + ', this)">Start Fix Session</button>';
+            }
+            html += '          </div>';
+            html += '        </div>';
+            html += '      </div>';
+          }
+          html += '    </div>';
+        }
+
+        html += '    <div class="detail-footer">';
+        html += '      <span class="detail-time">Last run: ' + timeAgo(check.last_run) + '</span>';
+        html += '      <button class="detail-run-btn" onclick="runCheck(\'' + type + '\', this)">Run Now</button>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '</div>';
+      }
+
+      el.innerHTML = html;
+    }
+
+    function renderHistory(history) {
+      var el = document.getElementById("history-section");
+      if (!history || history.length === 0) {
+        el.innerHTML = "";
+        return;
+      }
+
+      var html = '<div class="section-header">Recent Checks</div>';
+      for (var i = 0; i < Math.min(history.length, 10); i++) {
+        var h = history[i];
+        var status = h.status || "ok";
+        var label = checkLabels[h.check_type] || h.check_type;
+
+        html += '<div class="history-item">';
+        html += '  <span class="history-icon ' + status + '">' + (severityIcons[status] || severityIcons.info) + '</span>';
+        html += '  <div class="history-body">';
+        html += '    <div class="history-title">' + esc(label) + '</div>';
+        html += '    <div class="history-meta">' + esc(h.summary || status) + ' &bull; ' + timeAgo(h.created_at) + '</div>';
+        html += '  </div>';
+        html += '</div>';
+      }
+      el.innerHTML = html;
+    }
+
+    function renderSettings() {
+      var el = document.getElementById("settings-section");
+
+      var html = '<div class="section-header">Settings</div>';
+      html += '<div class="setting-card">';
+
+      for (var i = 0; i < checkTypes.length; i++) {
+        var type = checkTypes[i];
+        var t = thresholds[type] || { enabled: true };
+        var isOn = t.enabled !== false;
+
+        html += '  <div class="setting-row">';
+        html += '    <span class="setting-label">' + esc(checkLabels[type]) + '</span>';
+        html += '    <button class="setting-toggle' + (isOn ? ' on' : '') + '" onclick="toggleCheck(\'' + type + '\', this)"></button>';
+        html += '  </div>';
+      }
+
+      html += '</div>';
+      el.innerHTML = html;
+    }
+
+    function toggleCard(type) {
+      expandedCards[type] = !expandedCards[type];
+      var card = document.getElementById("card-" + type);
+      if (card) {
+        card.classList.toggle("expanded", expandedCards[type]);
+      }
+    }
+
+    async function runCheck(type, btn) {
+      btn.disabled = true;
+      btn.textContent = "Running...";
+      try {
+        await fetch("/api/maintenance/run/" + type, { method: "POST" });
+        setTimeout(loadData, 1000);
+      } catch (_) {}
+      setTimeout(function() {
+        btn.disabled = false;
+        btn.textContent = "Run Now";
+      }, 3000);
+    }
+
+    async function runAll(btn) {
+      btn.disabled = true;
+      btn.textContent = "Running...";
+      try {
+        await fetch("/api/maintenance/run/all", { method: "POST" });
+        setTimeout(loadData, 2000);
+      } catch (_) {}
+      setTimeout(function() {
+        btn.disabled = false;
+        btn.textContent = "Run All Checks";
+      }, 5000);
+    }
+
+    async function toggleCheck(type, btn) {
+      var wasOn = btn.classList.contains("on");
+      btn.classList.toggle("on", !wasOn);
+      try {
+        await fetch("/api/maintenance/thresholds/" + type, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: !wasOn })
+        });
+      } catch (_) {
+        // Revert on error
+        btn.classList.toggle("on", wasOn);
+      }
+    }
+
+    function copyCommand(cmd) {
+      navigator.clipboard.writeText(cmd).then(function() {
+        alert("Copied to clipboard");
+      });
+    }
+
+    async function spawnFixSession(checkType, findingIndex, btn) {
+      btn.disabled = true;
+      btn.textContent = "Starting...";
+
+      // Get the finding from maintenanceData
+      var checks = maintenanceData.checks || {};
+      var check = checks[checkType] || {};
+      var findings = check.findings || [];
+      var finding = findings[findingIndex];
+
+      if (!finding) {
+        btn.textContent = "Error";
+        return;
+      }
+
+      try {
+        var resp = await fetch("/api/maintenance/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            check_type: checkType,
+            finding_index: findingIndex,
+            finding: finding
+          })
+        });
+        var result = await resp.json();
+        if (result.ok) {
+          btn.textContent = "Session started";
+          btn.style.background = "#e3f2fd";
+          btn.style.color = "#1565c0";
+          // Reload to update status
+          setTimeout(loadData, 1000);
+        } else {
+          btn.textContent = "Error";
+          btn.disabled = false;
+        }
+      } catch (_) {
+        btn.textContent = "Error";
+        btn.disabled = false;
+      }
+    }
+
+    // Initial load
+    loadData();
+
+    // Refresh on visibility
+    document.addEventListener("visibilitychange", function() {
+      if (document.visibilityState === "visible") loadData();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>System - Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { overflow-x: hidden; max-width: 100vw; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header a {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 22px;
+      padding: 4px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .header .title {
+      font-size: 17px;
+      font-weight: 600;
+      flex: 1;
+      color: #fff;
+    }
+
+    .section { padding: 0 16px; }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 20px 4px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .section-count {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    /* File Locks */
+    .lock-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .lock-info { flex: 1; min-width: 0; }
+    .lock-file {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1c1c1e;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lock-meta {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 2px;
+    }
+    .lock-release-btn {
+      background: #ff3b30;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      margin-left: 12px;
+    }
+    .lock-release-btn:active { opacity: 0.7; }
+
+    /* Activity timeline */
+    .timeline-item {
+      display: flex;
+      gap: 10px;
+      padding: 10px 16px;
+      background: #fff;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+      font-size: 13px;
+    }
+    .timeline-item:first-child { border-radius: 12px 12px 0 0; }
+    .timeline-item:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
+    .timeline-item:only-child { border-radius: 12px; }
+    .timeline-icon {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; flex-shrink: 0;
+    }
+    .timeline-icon.allow { background: #e8f5e9; color: #2e7d32; }
+    .timeline-icon.deny { background: #ffebee; color: #c62828; }
+    .timeline-icon.auto { background: #e3f2fd; color: #1565c0; }
+    .timeline-icon.info { background: #f3e5f5; color: #6a1b9a; }
+    .timeline-body { flex: 1; min-width: 0; }
+    .timeline-text { color: #1c1c1e; line-height: 1.4; }
+    .timeline-time { color: #8e8e93; font-size: 11px; margin-top: 2px; }
+
+    /* Idle sessions */
+    .session-card {
+      background: #fff;
+      display: flex;
+      align-items: center;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      -webkit-tap-highlight-color: transparent;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .session-card:active { background: #f2f2f7; }
+    .card-group .session-card:first-child { border-radius: 12px 12px 0 0; }
+    .card-group .session-card:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
+    .card-group .session-card:only-child { border-radius: 12px; }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      margin-right: 14px;
+      flex-shrink: 0;
+      background: #d1d1d6;
+    }
+    .card-body { flex: 1; min-width: 0; }
+    .card-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: #1c1c1e;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .card-meta {
+      font-size: 13px;
+      color: #8e8e93;
+      margin-top: 2px;
+    }
+    .card-chevron {
+      color: #c7c7cc;
+      font-size: 16px;
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 40px 16px;
+      color: #8e8e93;
+      font-size: 15px;
+    }
+
+    /* Maintenance */
+    .maint-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .maint-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .maint-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+    .maint-status {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+    }
+    .maint-status.ok { background: #e8f5e9; color: #2e7d32; }
+    .maint-status.warning { background: #fff3e0; color: #e65100; }
+    .maint-status.critical { background: #ffebee; color: #c62828; }
+    .maint-status.skipped { background: #f2f2f7; color: #8e8e93; }
+    .maint-summary {
+      font-size: 13px;
+      color: #48484a;
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+    .maint-findings {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-bottom: 10px;
+    }
+    .maint-finding {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 4px 0;
+    }
+    .maint-finding-icon { flex-shrink: 0; }
+    .maint-finding-icon.ok { color: #34c759; }
+    .maint-finding-icon.warning { color: #ff9500; }
+    .maint-finding-icon.critical { color: #ff3b30; }
+    .maint-finding-icon.info { color: #007aff; }
+    .maint-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .maint-time {
+      font-size: 11px;
+      color: #8e8e93;
+    }
+    .maint-run-btn {
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .maint-run-btn:active { opacity: 0.7; }
+    .maint-run-btn:disabled { opacity: 0.5; }
+    .maint-run-all-btn {
+      display: block;
+      width: 100%;
+      background: linear-gradient(135deg, #34c759, #30d158);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 12px;
+    }
+    .maint-run-all-btn:active { opacity: 0.85; }
+    .maint-run-all-btn:disabled { opacity: 0.5; }
+    .maint-next-run {
+      text-align: center;
+      font-size: 12px;
+      color: #8e8e93;
+      padding: 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="#" onclick="history.back(); return false;">&larr;</a>
+    <div class="title">System</div>
+  </div>
+
+  <div id="maintenance-section" class="section"></div>
+  <div id="locks-section" class="section"></div>
+  <div id="idle-section" class="section"></div>
+  <div id="timeline-section" class="section"></div>
+
+  <script>
+    function timeAgo(iso) {
+      if (!iso) return "";
+      const diff = Date.now() - new Date(iso).getTime();
+      const s = Math.floor(diff / 1000);
+      if (s < 10) return "just now";
+      if (s < 60) return s + "s ago";
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    // Maintenance
+    var lastMaintenanceData = null;
+
+    async function refreshMaintenance() {
+      try {
+        var resp = await fetch("/api/maintenance/status");
+        var data = await resp.json();
+        lastMaintenanceData = data;
+        renderMaintenance(data);
+      } catch (_) {
+        var el = document.getElementById("maintenance-section");
+        el.innerHTML = "";
+      }
+    }
+
+    function renderMaintenance(data) {
+      var el = document.getElementById("maintenance-section");
+      var checks = data.checks || {};
+      var nextRun = data.next_run;
+
+      var checkTypes = ["db_health", "security", "docs_drift", "code_cleanup"];
+      var checkLabels = {
+        db_health: "Database Health",
+        security: "Security Scan",
+        docs_drift: "Documentation Drift",
+        code_cleanup: "Code Cleanup"
+      };
+      var severityIcons = {
+        ok: "&#10003;",
+        warning: "&#9888;",
+        critical: "&#10007;",
+        info: "&#9432;"
+      };
+
+      var html = '<div class="section-header">';
+      html += '  Maintenance';
+      html += '  <span style="flex:1;"></span>';
+      html += '  <a href="/maintenance" style="font-size:12px;color:#007aff;text-decoration:none;">Full Details</a>';
+      html += '</div>';
+
+      // Run All button
+      html += '<button class="maint-run-all-btn" onclick="runAllChecks(this)">Run All Checks Now</button>';
+
+      // Next scheduled run
+      if (nextRun) {
+        var nextDate = new Date(nextRun);
+        var nextStr = nextDate.toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" });
+        html += '<div class="maint-next-run">Next scheduled run: ' + esc(nextStr) + '</div>';
+      }
+
+      // Individual check cards
+      for (var i = 0; i < checkTypes.length; i++) {
+        var type = checkTypes[i];
+        var check = checks[type] || { status: "skipped", summary: "Not run yet" };
+        var status = check.status || "skipped";
+        var summary = check.summary || "No results";
+        var findings = check.findings || [];
+        var lastRun = check.last_run;
+
+        html += '<div class="maint-card">';
+        html += '<div class="maint-header">';
+        html += '  <div class="maint-title">' + esc(checkLabels[type]) + '</div>';
+        html += '  <span class="maint-status ' + status + '">' + esc(status) + '</span>';
+        html += '</div>';
+        html += '<div class="maint-summary">' + esc(summary) + '</div>';
+
+        // Show up to 3 findings
+        if (findings.length > 0) {
+          html += '<div class="maint-findings">';
+          var shown = findings.slice(0, 3);
+          for (var j = 0; j < shown.length; j++) {
+            var f = shown[j];
+            var sev = f.severity || "info";
+            html += '<div class="maint-finding">';
+            html += '  <span class="maint-finding-icon ' + sev + '">' + (severityIcons[sev] || severityIcons.info) + '</span>';
+            html += '  <span>' + esc(f.message) + '</span>';
+            html += '</div>';
+          }
+          if (findings.length > 3) {
+            html += '<div style="color:#007aff;font-size:11px;padding-top:4px;">+' + (findings.length - 3) + ' more</div>';
+          }
+          html += '</div>';
+        }
+
+        html += '<div class="maint-footer">';
+        html += '  <span class="maint-time">' + (lastRun ? timeAgo(lastRun) : "Never") + '</span>';
+        html += '  <button class="maint-run-btn" onclick="runCheck(\'' + type + '\', this)">Run</button>';
+        html += '</div>';
+        html += '</div>';
+      }
+
+      el.innerHTML = html;
+    }
+
+    async function runCheck(checkType, btn) {
+      btn.disabled = true;
+      btn.textContent = "Running...";
+      try {
+        await fetch("/api/maintenance/run/" + checkType, { method: "POST" });
+        setTimeout(refreshMaintenance, 500);
+      } catch (_) {}
+      setTimeout(function() {
+        btn.disabled = false;
+        btn.textContent = "Run";
+      }, 2000);
+    }
+
+    async function runAllChecks(btn) {
+      btn.disabled = true;
+      btn.textContent = "Running all checks...";
+      try {
+        await fetch("/api/maintenance/run/all", { method: "POST" });
+        setTimeout(refreshMaintenance, 1000);
+      } catch (_) {}
+      setTimeout(function() {
+        btn.disabled = false;
+        btn.textContent = "Run All Checks Now";
+      }, 5000);
+    }
+
+    // File locks
+    async function refreshLocks() {
+      try {
+        var resp = await fetch("/api/locks");
+        var locks = await resp.json();
+        var el = document.getElementById("locks-section");
+        if (!locks || locks.length === 0) {
+          el.innerHTML = "";
+          return;
+        }
+        var html = '<div class="section-header">';
+        html += '  File Locks';
+        html += '  <span class="section-count" style="background:#fce4ec;color:#c62828;">' + locks.length + '</span>';
+        html += '</div>';
+        for (var i = 0; i < locks.length; i++) {
+          var lock = locks[i];
+          var basename = lock.file_path.split("/").pop();
+          var title = lock.session_title || lock.session_id.slice(0, 8);
+          html += '<div class="lock-card">';
+          html += '<div class="lock-info">';
+          html += '<div class="lock-file" title="' + esc(lock.file_path) + '">' + esc(basename) + '</div>';
+          html += '<div class="lock-meta">' + esc(title) + ' &bull; ' + timeAgo(lock.acquired_at) + '</div>';
+          html += '</div>';
+          html += '<button class="lock-release-btn" onclick="releaseLock(\'' + esc(lock.id) + '\')">Release</button>';
+          html += '</div>';
+        }
+        el.innerHTML = html;
+      } catch (_) {}
+    }
+
+    async function releaseLock(lockId) {
+      try {
+        await fetch("/api/locks/force-release/" + lockId, { method: "POST" });
+        refreshLocks();
+      } catch (_) {}
+    }
+
+    // Idle sessions
+    async function refreshIdle() {
+      try {
+        var resp = await fetch("/api/dashboard");
+        var sessions = await resp.json();
+        var idle = sessions.filter(function(s) { return s.status === "idle"; });
+        var el = document.getElementById("idle-section");
+
+        if (!idle || idle.length === 0) {
+          el.innerHTML = "";
+          return;
+        }
+
+        var html = '<div class="section-header">';
+        html += '  Idle Sessions';
+        html += '  <span class="section-count" style="background:#e8e8ed;color:#8e8e93;">' + idle.length + '</span>';
+        html += '</div>';
+        html += '<div class="card-group">';
+        for (var i = 0; i < idle.length; i++) {
+          var s = idle[i];
+          html += '<a href="/chat/' + s.session_id + '" class="session-card">';
+          html += '  <div class="status-dot"></div>';
+          html += '  <div class="card-body">';
+          html += '    <div class="card-title">' + esc(s.title) + '</div>';
+          html += '    <div class="card-meta">' + timeAgo(s.last_activity) + '</div>';
+          html += '  </div>';
+          html += '  <div class="card-chevron">&#8250;</div>';
+          html += '</a>';
+        }
+        html += '</div>';
+        el.innerHTML = html;
+      } catch (_) {}
+    }
+
+    // Activity timeline
+    async function refreshTimeline() {
+      try {
+        const resp = await fetch("/api/events/recent");
+        const events = await resp.json();
+        const el = document.getElementById("timeline-section");
+        if (!events.length) { el.innerHTML = ""; return; }
+
+        let html = '<div class="section-header">Recent Activity</div>';
+        const shown = events.slice(0, 30);
+        for (const e of shown) {
+          var icon = "info", symbol = "i", text = e.type;
+
+          if (e.type === "permission_resolved") {
+            var decision = e.data.decision || "allow";
+            icon = decision === "allow" ? (e.data.source === "auto" ? "auto" : "allow") : "deny";
+            symbol = decision === "allow" ? "\u2713" : "\u2717";
+            var src = e.data.source === "auto" ? "Auto-approved" : (e.data.source === "blocked_pattern" ? "Blocked" : (decision === "allow" ? "Approved" : "Denied"));
+            text = src + ": <strong>" + esc(e.data.tool || "") + "</strong>";
+          } else if (e.type === "permission_timeout") {
+            icon = "deny"; symbol = "\u23f1";
+            text = "Timed out: <strong>" + esc(e.data.tool || "") + "</strong>";
+          } else if (e.type === "session_archived") {
+            icon = "info"; symbol = "\ud83d\udce6";
+            text = "Session archived";
+          } else if (e.type === "handoff_triggered") {
+            icon = "info"; symbol = "\u27a1";
+            text = "Handoff to new session";
+          } else if (e.type === "memory_updated") {
+            icon = "auto"; symbol = "\ud83d\udcbe";
+            text = "Memory updated: " + esc(e.data.file || "");
+          } else if (e.type === "mailbox_message") {
+            icon = "info"; symbol = "\u2709";
+            text = "Message: " + esc(e.data.subject || "");
+          }
+
+          html += '<div class="timeline-item">';
+          html += '  <div class="timeline-icon ' + icon + '">' + symbol + '</div>';
+          html += '  <div class="timeline-body">';
+          html += '    <div class="timeline-text">' + text + '</div>';
+          html += '    <div class="timeline-time">' + timeAgo(e.ts) + (e.session_id ? ' &bull; ' + esc((e.session_id || "").slice(0, 12)) : '') + '</div>';
+          html += '  </div>';
+          html += '</div>';
+        }
+        el.innerHTML = html;
+      } catch (_) {}
+    }
+
+    // Initial load
+    refreshMaintenance();
+    refreshLocks();
+    refreshIdle();
+    refreshTimeline();
+
+    // Poll every 5 seconds (maintenance less frequently)
+    setInterval(function() { refreshLocks(); refreshIdle(); refreshTimeline(); }, 5000);
+    setInterval(refreshMaintenance, 30000);
+
+    // Refresh on tab visibility
+    document.addEventListener("visibilitychange", function() {
+      if (document.visibilityState === "visible") { refreshMaintenance(); refreshLocks(); refreshIdle(); refreshTimeline(); }
+    });
+  </script>
+</body>
+</html>

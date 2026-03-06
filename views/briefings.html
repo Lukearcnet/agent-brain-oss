@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>AI Briefings - Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { overflow-x: hidden; max-width: 100vw; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 20px 16px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .header p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+    .header-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .content { padding: 0 16px 32px; }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 20px 4px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .briefing-card {
+      background: #fff;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+
+    .briefing-card-header {
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .briefing-type {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 3px 10px;
+      border-radius: 8px;
+    }
+    .briefing-type.morning { background: #fff8e1; color: #f57f17; }
+    .briefing-type.evening { background: #e8eaf6; color: #283593; }
+    .briefing-meta {
+      font-size: 12px;
+      color: #8e8e93;
+    }
+
+    /* Expandable items */
+    .b-item {
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .b-item:last-child { border-bottom: none; }
+    .b-item-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 14px 16px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .b-item-header:active { background: #f8f8fa; }
+    .b-score {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .b-score.useful { background: #e8f5e9; color: #2e7d32; }
+    .b-score.watching { background: #e3f2fd; color: #1565c0; }
+    .b-item-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1c1c1e;
+      line-height: 1.35;
+      flex: 1;
+    }
+    .b-chevron {
+      color: #c7c7cc;
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-top: 2px;
+      transition: transform 0.2s;
+    }
+    .b-item.expanded .b-chevron { transform: rotate(90deg); }
+    .b-detail {
+      display: none;
+      padding: 0 16px 14px;
+    }
+    .b-item.expanded .b-detail { display: block; }
+    .b-summary {
+      font-size: 14px;
+      color: #48484a;
+      line-height: 1.5;
+    }
+    .b-link {
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 13px;
+      color: #007aff;
+      text-decoration: none;
+      word-break: break-all;
+    }
+    .b-link:active { opacity: 0.6; }
+    .b-source-tag {
+      display: inline-block;
+      font-size: 11px;
+      color: #8e8e93;
+      background: #f2f2f7;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+    .b-priority-tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 8px;
+      margin-left: 4px;
+    }
+    .b-priority-tag.cross-session-safety { background: #fce4ec; color: #c62828; }
+    .b-priority-tag.cost-efficiency { background: #fff3e0; color: #e65100; }
+    .b-priority-tag.automated-validation { background: #e8eaf6; color: #283593; }
+    .b-priority-tag.interoperability { background: #e0f2f1; color: #00695c; }
+    .b-priority-tag.product-launches { background: #e1f5fe; color: #0277bd; }
+    .b-priority-tag.capability { background: #f3e5f5; color: #6a1b9a; }
+    .b-explore-btn {
+      display: block;
+      width: 100%;
+      margin-top: 12px;
+      padding: 10px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .b-explore-btn:active { opacity: 0.85; transform: scale(0.98); }
+    .b-explore-btn:disabled { opacity: 0.5; }
+
+    .briefing-footer {
+      padding: 10px 16px 14px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      border-top: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .source-chip {
+      font-size: 11px;
+      font-weight: 500;
+      color: #8e8e93;
+      background: #f2f2f7;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 80px 16px;
+      color: #8e8e93;
+    }
+    .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.3; }
+
+    .load-more {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 500;
+      color: #007aff;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .load-more:active { background: #f2f2f7; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>AI Briefings</h1>
+      <p>Filtered developments from 6 sources</p>
+    </div>
+    <a href="/" class="header-btn">Dashboard</a>
+  </div>
+
+  <div class="content">
+    <div id="briefings-list"></div>
+  </div>
+
+  <script>
+    var allBriefings = [];
+    var _allItems = {}; // keyed by briefing_id+index for explore
+    var displayCount = 10;
+
+    function timeAgo(iso) {
+      if (!iso) return "";
+      var diff = Date.now() - new Date(iso).getTime();
+      var s = Math.floor(diff / 1000);
+      if (s < 60) return "just now";
+      var m = Math.floor(s / 60);
+      if (m < 60) return m + "m ago";
+      var h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      var d = Math.floor(h / 24);
+      if (d === 1) return "yesterday";
+      return d + "d ago";
+    }
+
+    function formatDate(iso) {
+      return new Date(iso).toLocaleDateString("en-US", {
+        weekday: "short", month: "short", day: "numeric"
+      });
+    }
+
+    function esc(s) {
+      var d = document.createElement("div");
+      d.textContent = s || "";
+      return d.innerHTML;
+    }
+
+    function toggleItem(el) {
+      el.closest(".b-item").classList.toggle("expanded");
+    }
+
+    async function exploreFinding(btn, key) {
+      var item = _allItems[key];
+      if (!item) return;
+      btn.disabled = true;
+      btn.textContent = "Starting session...";
+      try {
+        await fetch("/api/briefings/explore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item)
+        });
+        btn.textContent = "Session started";
+        btn.style.background = "#34c759";
+      } catch (_) {
+        btn.disabled = false;
+        btn.textContent = "Start Session";
+      }
+    }
+
+    function renderBriefings() {
+      var el = document.getElementById("briefings-list");
+      if (allBriefings.length === 0) {
+        el.innerHTML =
+          '<div class="empty">' +
+          '<div class="empty-icon">&#x1F4E1;</div>' +
+          '<p>No briefings yet</p>' +
+          '<p style="margin-top:8px;font-size:13px;">Run the AI monitor to generate your first briefing</p>' +
+          '</div>';
+        return;
+      }
+
+      // Group by date
+      var groups = {};
+      var groupOrder = [];
+      var shown = allBriefings.slice(0, displayCount);
+      for (var bi = 0; bi < shown.length; bi++) {
+        var b = shown[bi];
+        var dateKey = formatDate(b.created_at);
+        if (!groups[dateKey]) { groups[dateKey] = []; groupOrder.push(dateKey); }
+        groups[dateKey].push(b);
+      }
+
+      var html = "";
+      for (var gi = 0; gi < groupOrder.length; gi++) {
+        var date = groupOrder[gi];
+        var briefings = groups[date];
+        html += '<div class="section-header">' + date + '</div>';
+
+        for (var bj = 0; bj < briefings.length; bj++) {
+          var b = briefings[bj];
+          var items = b.filtered_items || [];
+          var typeClass = b.run_type === "morning" ? "morning" : "evening";
+          var sources = b.sources_summary || {};
+          var totalRaw = b.raw_item_count || 0;
+
+          html += '<div class="briefing-card">';
+          html += '<div class="briefing-card-header">';
+          html += '<span class="briefing-type ' + typeClass + '">' + esc(b.run_type) + '</span>';
+          html += '<span class="briefing-meta">' + totalRaw + ' scanned &bull; ' + timeAgo(b.created_at) + '</span>';
+          html += '</div>';
+
+          for (var ii = 0; ii < items.length; ii++) {
+            var item = items[ii];
+            var key = b.id + "_" + ii;
+            _allItems[key] = item;
+
+            var scoreClass = item.score === "directly useful" ? "useful" : "watching";
+            var scoreLabel = item.score === "directly useful" ? "Useful" : "Watching";
+
+            html += '<div class="b-item">';
+            html += '<div class="b-item-header" onclick="toggleItem(this)">';
+            html += '<span class="b-score ' + scoreClass + '">' + scoreLabel + '</span>';
+            html += '<span class="b-item-title">' + esc(item.title) + '</span>';
+            html += '<span class="b-chevron">&#8250;</span>';
+            html += '</div>';
+
+            html += '<div class="b-detail">';
+            html += '<div class="b-summary">' + esc(item.summary) + '</div>';
+            if (item.link) {
+              html += '<a href="' + esc(item.link) + '" class="b-link" target="_blank">' + esc(item.link.length > 55 ? item.link.slice(0, 55) + "..." : item.link) + '</a>';
+            }
+            var btags = '';
+            if (item.source) {
+              btags += '<span class="b-source-tag">' + esc(item.source) + '</span>';
+            }
+            if (item.priority) {
+              var pLabel = item.priority.replace(/-/g, ' ');
+              btags += '<span class="b-priority-tag ' + esc(item.priority) + '">' + esc(pLabel) + '</span>';
+            }
+            if (btags) html += '<br>' + btags;
+            html += '<button class="b-explore-btn" onclick="event.stopPropagation(); exploreFinding(this, \'' + key + '\')">Start Session</button>';
+            html += '</div>';
+            html += '</div>';
+          }
+
+          // Source chips footer
+          var sourceEntries = Object.entries(sources).filter(function(e) { return e[1] > 0; });
+          if (sourceEntries.length > 0) {
+            html += '<div class="briefing-footer">';
+            for (var si = 0; si < sourceEntries.length; si++) {
+              html += '<span class="source-chip">' + esc(sourceEntries[si][0]) + ': ' + sourceEntries[si][1] + '</span>';
+            }
+            html += '</div>';
+          }
+
+          html += '</div>';
+        }
+      }
+
+      if (displayCount < allBriefings.length) {
+        html += '<button class="load-more" onclick="loadMore()">Load More</button>';
+      }
+
+      el.innerHTML = html;
+    }
+
+    function loadMore() {
+      displayCount += 10;
+      renderBriefings();
+    }
+
+    async function loadBriefings() {
+      try {
+        var resp = await fetch("/api/briefings?limit=50");
+        allBriefings = await resp.json();
+        renderBriefings();
+      } catch (e) {
+        console.error("Failed to load briefings:", e);
+      }
+    }
+
+    loadBriefings();
+  </script>
+</body>
+</html>

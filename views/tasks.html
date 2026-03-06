@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>Tasks - Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      overflow-x: hidden;
+      max-width: 100vw;
+    }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 20px 16px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .header-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .content { padding: 16px; padding-bottom: 100px; }
+
+    /* Project filter pills */
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 4px 0 16px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .filter-pill {
+      flex-shrink: 0;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      color: #333;
+      cursor: pointer;
+    }
+    .filter-pill.active {
+      background: #007aff;
+      border-color: #007aff;
+      color: #fff;
+    }
+
+    /* Task groups */
+    .task-group {
+      margin-bottom: 20px;
+    }
+    .task-group-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 4px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .task-group-count {
+      background: #e0e0e0;
+      color: #666;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    /* Task card */
+    .task-card {
+      background: #fff;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .task-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .task-item:last-child { border-bottom: none; }
+    .task-item.subtask {
+      padding-left: 44px;
+      background: #fafafa;
+    }
+
+    .task-checkbox {
+      width: 22px;
+      height: 22px;
+      border: 2px solid #c7c7cc;
+      border-radius: 50%;
+      flex-shrink: 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1px;
+    }
+    .task-checkbox.checked {
+      background: #34c759;
+      border-color: #34c759;
+    }
+    .task-checkbox.checked::after {
+      content: "";
+      width: 6px;
+      height: 10px;
+      border: solid #fff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+      margin-bottom: 2px;
+    }
+
+    .task-content {
+      flex: 1;
+      min-width: 0;
+    }
+    .task-text {
+      font-size: 15px;
+      color: #1c1c1e;
+      line-height: 1.4;
+    }
+    .task-text.completed {
+      text-decoration: line-through;
+      color: #8e8e93;
+    }
+    .task-project {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 6px;
+    }
+    /* Project colors */
+    .project-agent-brain { background: #e8f5e9; color: #2e7d32; }
+    .project-email-synthesizer { background: #e3f2fd; color: #1565c0; }
+    .project-ai-cron-monitor { background: #fff3e0; color: #e65100; }
+    .project-news-dashboard { background: #f3e5f5; color: #7b1fa2; }
+    .project-insiders-mvp { background: #e0f2f1; color: #00695c; }
+    .project-arc-social { background: #fce4ec; color: #c2185b; }
+
+    /* Add task input */
+    .add-task-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #fff;
+      border-top: 1px solid #e0e0e0;
+      padding: 12px 16px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+      display: flex;
+      gap: 10px;
+    }
+    .add-task-input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 15px;
+      outline: none;
+    }
+    .add-task-input:focus { border-color: #007aff; }
+    .add-task-select {
+      padding: 10px 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 13px;
+      background: #fff;
+      max-width: 120px;
+      flex-shrink: 0;
+    }
+    .add-task-btn {
+      background: #007aff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 18px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      cursor: pointer;
+    }
+    .add-task-btn:disabled {
+      background: #c7c7cc;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #8e8e93;
+    }
+    .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.4; }
+
+    /* Delete button on swipe/long-press */
+    .task-delete {
+      background: #ff3b30;
+      color: #fff;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: none;
+    }
+    .task-item:hover .task-delete,
+    .task-item.editing .task-delete {
+      display: block;
+    }
+
+    /* Add subtask button */
+    .task-add-subtask {
+      background: #e8f5e9;
+      color: #2e7d32;
+      border: none;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: none;
+      margin-left: auto;
+    }
+    .task-item:hover .task-add-subtask {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Subtask input row */
+    .subtask-input-row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 16px 10px 44px;
+      background: #fafafa;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .subtask-input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+    .subtask-input:focus { border-color: #007aff; }
+    .subtask-add-btn {
+      background: #34c759;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .subtask-cancel-btn {
+      background: #e0e0e0;
+      color: #333;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Tasks</h1>
+    </div>
+    <a href="/" class="header-btn">Dashboard</a>
+  </div>
+
+  <div class="content">
+    <div class="filter-row" id="filters">
+      <div class="filter-pill active" data-project="all">All</div>
+    </div>
+
+    <div id="task-list"></div>
+  </div>
+
+  <div class="add-task-bar">
+    <input type="text" class="add-task-input" id="new-task-input" placeholder="Add a task...">
+    <select class="add-task-select" id="new-task-project">
+      <option value="">No project</option>
+    </select>
+    <button class="add-task-btn" id="add-task-btn">Add</button>
+  </div>
+
+  <script>
+    let tasks = [];
+    let projects = [];
+    let activeFilter = 'all';
+
+    async function loadProjects() {
+      const res = await fetch('/api/tasks/projects');
+      projects = await res.json();
+
+      // Populate filter pills
+      const filtersEl = document.getElementById('filters');
+      projects.forEach(p => {
+        const pill = document.createElement('div');
+        pill.className = 'filter-pill';
+        pill.dataset.project = p;
+        pill.textContent = p;
+        pill.onclick = () => setFilter(p);
+        filtersEl.appendChild(pill);
+      });
+
+      // Populate project select
+      const selectEl = document.getElementById('new-task-project');
+      projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        selectEl.appendChild(opt);
+      });
+    }
+
+    function setFilter(project) {
+      activeFilter = project;
+      document.querySelectorAll('.filter-pill').forEach(p => {
+        p.classList.toggle('active', p.dataset.project === project);
+      });
+      render();
+    }
+
+    async function loadTasks() {
+      const res = await fetch('/api/tasks');
+      tasks = await res.json();
+      render();
+    }
+
+    function projectClass(project) {
+      if (!project) return '';
+      return 'project-' + project.toLowerCase().replace(/\s+/g, '-');
+    }
+
+    function render() {
+      const container = document.getElementById('task-list');
+
+      // Filter tasks
+      let filtered = tasks;
+      if (activeFilter !== 'all') {
+        filtered = tasks.filter(t => t.project === activeFilter);
+      }
+
+      // Group by project
+      const grouped = {};
+      const noProject = [];
+
+      filtered.forEach(t => {
+        if (t.parent_id) return; // Handle subtasks later
+        if (t.project) {
+          if (!grouped[t.project]) grouped[t.project] = [];
+          grouped[t.project].push(t);
+        } else {
+          noProject.push(t);
+        }
+      });
+
+      // Build HTML
+      let html = '';
+
+      // Projects with tasks
+      Object.entries(grouped).forEach(([project, projectTasks]) => {
+        const incomplete = projectTasks.filter(t => !t.completed).length;
+        html += `
+          <div class="task-group">
+            <div class="task-group-header">
+              ${project}
+              <span class="task-group-count">${incomplete} remaining</span>
+            </div>
+            <div class="task-card">
+              ${projectTasks.map(t => renderTask(t)).join('')}
+            </div>
+          </div>
+        `;
+      });
+
+      // Tasks without project
+      if (noProject.length > 0) {
+        html += `
+          <div class="task-group">
+            <div class="task-group-header">Uncategorized</div>
+            <div class="task-card">
+              ${noProject.map(t => renderTask(t)).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      if (filtered.length === 0) {
+        html = `
+          <div class="empty-state">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+            <p>No tasks yet</p>
+          </div>
+        `;
+      }
+
+      container.innerHTML = html;
+
+      // Add subtasks
+      filtered.forEach(t => {
+        if (!t.parent_id) return;
+        const parentEl = document.querySelector(`[data-task-id="${t.parent_id}"]`);
+        if (parentEl) {
+          parentEl.insertAdjacentHTML('afterend', renderTask(t, true));
+        }
+      });
+    }
+
+    function renderTask(task, isSubtask = false) {
+      const completedClass = task.completed ? 'completed' : '';
+      const checkedClass = task.completed ? 'checked' : '';
+      const subtaskClass = isSubtask ? 'subtask' : '';
+      const projectTag = task.project && !isSubtask ?
+        `<span class="task-project ${projectClass(task.project)}">${task.project}</span>` : '';
+      // Only show add subtask button for parent tasks (not subtasks)
+      const addSubtaskBtn = !isSubtask ?
+        `<button class="task-add-subtask" onclick="event.stopPropagation(); showSubtaskInput('${task.id}')" title="Add subtask">+</button>` : '';
+
+      return `
+        <div class="task-item ${subtaskClass}" data-task-id="${task.id}">
+          <div class="task-checkbox ${checkedClass}" onclick="toggleTask('${task.id}')"></div>
+          <div class="task-content">
+            <div class="task-text ${completedClass}">${escapeHtml(task.content)}</div>
+            ${projectTag}
+          </div>
+          ${addSubtaskBtn}
+          <button class="task-delete" onclick="deleteTask('${task.id}')">Delete</button>
+        </div>
+      `;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function toggleTask(id) {
+      const task = tasks.find(t => t.id === id);
+      if (!task) return;
+
+      await fetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: !task.completed })
+      });
+
+      task.completed = !task.completed;
+      render();
+    }
+
+    async function deleteTask(id) {
+      if (!confirm('Delete this task?')) return;
+
+      await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+      tasks = tasks.filter(t => t.id !== id && t.parent_id !== id);
+      render();
+    }
+
+    function showSubtaskInput(parentId) {
+      // Remove any existing subtask input rows
+      document.querySelectorAll('.subtask-input-row').forEach(el => el.remove());
+
+      const parentEl = document.querySelector(`[data-task-id="${parentId}"]`);
+      if (!parentEl) return;
+
+      const inputRow = document.createElement('div');
+      inputRow.className = 'subtask-input-row';
+      inputRow.innerHTML = `
+        <input type="text" class="subtask-input" placeholder="Add subtask..." autofocus>
+        <button class="subtask-add-btn" onclick="addSubtask('${parentId}')">Add</button>
+        <button class="subtask-cancel-btn" onclick="this.closest('.subtask-input-row').remove()">Cancel</button>
+      `;
+      parentEl.insertAdjacentElement('afterend', inputRow);
+
+      const input = inputRow.querySelector('input');
+      input.focus();
+      input.onkeypress = (e) => {
+        if (e.key === 'Enter') addSubtask(parentId);
+      };
+    }
+
+    async function addSubtask(parentId) {
+      const inputRow = document.querySelector('.subtask-input-row');
+      if (!inputRow) return;
+
+      const input = inputRow.querySelector('input');
+      const content = input.value.trim();
+      if (!content) { input.focus(); return; }
+
+      // Get parent task to inherit project
+      const parentTask = tasks.find(t => t.id === parentId);
+      const project = parentTask ? parentTask.project : null;
+
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content,
+          project,
+          parentId: parentId,
+          sortOrder: tasks.filter(t => t.parent_id === parentId).length
+        })
+      });
+
+      const task = await res.json();
+      tasks.push(task);
+      inputRow.remove();
+      render();
+    }
+
+    async function addTask() {
+      const input = document.getElementById('new-task-input');
+      const select = document.getElementById('new-task-project');
+      const content = input.value.trim();
+      if (!content) return;
+
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content,
+          project: select.value || null,
+          sortOrder: tasks.length
+        })
+      });
+
+      const task = await res.json();
+      tasks.push(task);
+      input.value = '';
+      render();
+    }
+
+    // Event listeners
+    document.getElementById('add-task-btn').onclick = addTask;
+    document.getElementById('new-task-input').onkeypress = (e) => {
+      if (e.key === 'Enter') addTask();
+    };
+    document.querySelector('.filter-pill[data-project="all"]').onclick = () => setFilter('all');
+
+    // Initial load
+    loadProjects();
+    loadTasks();
+  </script>
+</body>
+</html>

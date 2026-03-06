@@ -3,7 +3,9 @@ require("dotenv").config();
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
 const { createSDKTask, loadSDK } = require("./lib/sdk-adapter");
-const { ensureRepo, createTaskBranch, commitAndPush } = require("./lib/git-ops");
+const { ensureRepo, createTaskBranch, commitAndPush, getDiff } = require("./lib/git-ops");
+const { execSync } = require("child_process");
+const OpenAI = require("openai");
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -33,6 +35,119 @@ async function sendPush({ title, message, priority }) {
     });
     if (!res.ok) console.warn("[ntfy] Push failed:", res.status);
   } catch (e) { console.warn("[ntfy] Push error:", e.message); }
+}
+
+// ── Mechanical validation (pre-LLM checks) ───────────────────────────────────
+
+/**
+ * Run mechanical validation on changed files before LLM review.
+ * Catches objective issues (syntax errors) that don't require LLM judgment.
+ * Returns { passed: boolean, issues: string[] }
+ */
+function mechanicalValidation(repoDir, diffStat) {
+  const issues = [];
+
+  // Extract changed JS files from diff stat
+  const jsFiles = (diffStat || "")
+    .split("\n")
+    .map(line => line.trim().split("|")[0]?.trim())
+    .filter(f => f && f.endsWith(".js"));
+
+  if (jsFiles.length === 0) {
+    return { passed: true, issues: [], skipped: "No JS files changed" };
+  }
+
+  for (const file of jsFiles) {
+    const fullPath = `${repoDir}/${file}`;
+    try {
+      execSync(`node -c "${fullPath}"`, { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      // Extract the error message
+      const errorMsg = e.stderr || e.message || "Syntax error";
+      issues.push(`${file}: ${errorMsg.split("\n")[0]}`);
+    }
+  }
+
+  return {
+    passed: issues.length === 0,
+    issues
+  };
+}
+
+// ── OpenAI client for cross-family review ────────────────────────────────────
+
+let openaiClient = null;
+function getOpenAI() {
+  if (!openaiClient && process.env.OPENAI_API_KEY) {
+    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openaiClient;
+}
+
+// ── Fact extraction from task output ─────────────────────────────────────────
+
+/**
+ * Extract facts JSON from task output.
+ * Looks for {"facts": [...]} pattern anywhere in the output.
+ */
+function extractFacts(output) {
+  try {
+    // Look for JSON with "facts" array
+    const match = output.match(/\{"facts"\s*:\s*\[[\s\S]*?\]\s*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (Array.isArray(parsed.facts)) {
+        return parsed.facts.filter(f => f.category && f.fact);
+      }
+    }
+  } catch (_) {}
+  return [];
+}
+
+/**
+ * Write extracted facts to Supabase.
+ */
+async function saveFacts(projectDir, facts, taskId) {
+  if (!facts.length || !projectDir) return { added: 0, confirmed: 0 };
+
+  const added = [];
+  const confirmed = [];
+
+  for (const fact of facts) {
+    // Check for existing similar fact
+    const { data: existing } = await supabase
+      .from("memory_facts")
+      .select("id, fact, confidence")
+      .eq("project_dir", projectDir)
+      .eq("category", fact.category)
+      .is("superseded_by", null)
+      .ilike("fact", `%${fact.fact.slice(0, 50)}%`);
+
+    if (existing && existing.length > 0) {
+      // Bump confidence on existing
+      const match = existing[0];
+      const newConfidence = Math.min(1.0, match.confidence + 0.1);
+      await supabase.from("memory_facts").update({
+        confidence: newConfidence,
+        last_confirmed_at: new Date().toISOString()
+      }).eq("id", match.id);
+      confirmed.push(match.id);
+    } else {
+      // Insert new fact
+      const { error } = await supabase.from("memory_facts").insert({
+        project_dir: projectDir,
+        category: fact.category,
+        fact: fact.fact,
+        source_task_id: taskId,
+        confidence: fact.confidence || 1.0,
+        last_confirmed_at: new Date().toISOString()
+      });
+      if (!error) added.push(fact);
+    }
+  }
+
+  console.log(`[facts] Task ${taskId}: ${added.length} added, ${confirmed.length} confirmed`);
+  return { added: added.length, confirmed: confirmed.length };
 }
 
 // ── Auto-approval check ──────────────────────────────────────────────────────
@@ -123,10 +238,158 @@ async function waitForPermission(permId, timeoutMs = 90000) {
   });
 }
 
+// ── Self-Review (Phase 8) ────────────────────────────────────────────────────
+// After task completes, run a quick review of the diff to catch obvious issues.
+// Uses a smaller/faster model for cost efficiency.
+
+async function selfReview({ taskId, projectName, taskDescription, repoDir, defaultBranch, outputBuffer }) {
+  if (!repoDir) return { passed: true, reason: "No repo — skipping review" };
+
+  const diffResult = await getDiff(repoDir, defaultBranch || "main");
+  if (!diffResult.diff || diffResult.fullLength === 0) {
+    return { passed: true, reason: "No changes to review" };
+  }
+
+  console.log(`[review] Starting self-review for ${taskId} (${diffResult.fullLength} chars diff)`);
+
+  await supabase.from("orchestrator_messages").insert({
+    role: "system",
+    content: `Running self-review on ${projectName} changes...`,
+    task_id: taskId,
+    project_name: projectName,
+    update_type: "review_start",
+    ts: new Date().toISOString()
+  });
+
+  // ── Phase 1: Mechanical validation (syntax checks) ──
+  const mechanicalResult = mechanicalValidation(repoDir, diffResult.stat);
+  if (!mechanicalResult.passed) {
+    console.log(`[review] ${taskId}: Mechanical validation FAILED: ${mechanicalResult.issues.join(", ")}`);
+
+    await supabase.from("orchestrator_messages").insert({
+      role: "system",
+      content: `Self-review: **FAIL** — Syntax errors detected\n- ${mechanicalResult.issues.join("\n- ")}`,
+      task_id: taskId,
+      project_name: projectName,
+      update_type: "review_result",
+      ts: new Date().toISOString()
+    });
+
+    return {
+      passed: false,
+      verdict: "fail",
+      issues: mechanicalResult.issues,
+      summary: "Mechanical validation failed (syntax errors)"
+    };
+  }
+  console.log(`[review] ${taskId}: Mechanical validation passed`);
+
+  // ── Phase 2: Cross-family LLM review (GPT-4o-mini) ──
+  // Uses a different model family to avoid self-attribution bias
+  // See: SELF-ATTRIBUTION-BIAS-ANALYSIS.md
+  const openai = getOpenAI();
+  if (!openai) {
+    console.warn(`[review] ${taskId}: No OpenAI key — skipping LLM review`);
+    return { passed: true, reason: "No OpenAI key configured, mechanical checks passed" };
+  }
+
+  const reviewPrompt = `You are a code reviewer. An AI coding agent just completed a task. Review the diff below and determine if the changes are correct and complete.
+
+## Original Task
+${(taskDescription || "").slice(0, 1500)}
+
+## Git Diff (stat)
+${diffResult.stat}
+
+## Git Diff
+${diffResult.diff}
+
+## Agent's Summary
+${(outputBuffer || "").slice(-2000)}
+
+## Your Review
+Evaluate:
+1. Does the diff address the original task?
+2. Are there any obvious bugs or broken imports?
+3. Are there any files that were changed but shouldn't have been?
+4. Is anything obviously missing?
+
+Respond with EXACTLY this JSON format:
+{"verdict": "pass" | "warn" | "fail", "issues": ["issue1", "issue2"], "summary": "one line summary"}
+
+- "pass" = looks good, ship it
+- "warn" = minor concerns but acceptable (list them in issues)
+- "fail" = something is clearly wrong (list in issues)
+
+Be pragmatic. Only fail for actual bugs or task mismatches, not style preferences.`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: reviewPrompt }],
+      max_tokens: 500,
+      temperature: 0.2
+    });
+
+    const reviewOutput = response.choices?.[0]?.message?.content || "";
+
+    // Parse the verdict
+    const verdictMatch = reviewOutput.match(/\{"verdict"\s*:[\s\S]*?\}/);
+    if (verdictMatch) {
+      try {
+        const result = JSON.parse(verdictMatch[0]);
+        console.log(`[review] ${taskId}: GPT-4o-mini verdict=${result.verdict}, issues=${(result.issues || []).length}`);
+
+        await supabase.from("orchestrator_messages").insert({
+          role: "system",
+          content: `Self-review (GPT-4o-mini): **${result.verdict.toUpperCase()}** — ${result.summary || ""}${result.issues?.length ? "\n- " + result.issues.join("\n- ") : ""}`,
+          task_id: taskId,
+          project_name: projectName,
+          update_type: "review_result",
+          ts: new Date().toISOString()
+        });
+
+        return {
+          passed: result.verdict !== "fail",
+          verdict: result.verdict,
+          issues: result.issues || [],
+          summary: result.summary || ""
+        };
+      } catch (_) {}
+    }
+
+    // Couldn't parse — treat as pass with warning
+    console.warn(`[review] ${taskId}: Could not parse GPT review output, treating as pass`);
+    return { passed: true, reason: "Review output unparseable", rawOutput: reviewOutput.slice(0, 500) };
+
+  } catch (e) {
+    console.warn(`[review] ${taskId}: GPT review failed — ${e.message}`);
+    // Mechanical checks passed, so allow through with warning
+    return { passed: true, reason: `LLM review error (mechanical passed): ${e.message}` };
+  }
+}
+
 // ── Task execution ───────────────────────────────────────────────────────────
 
+// ── Tool restrictions by source (Security hardening) ──────────────────────
+// External sources (github webhooks, etc) get restricted tool access to prevent
+// prompt injection attacks. See: SECURITY-HARDENING-PLAN.md
+
+const TOOLS_BY_SOURCE = {
+  trusted: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+  github_webhook: ["Read", "Edit", "Glob", "Grep"], // No Bash, Write, WebSearch, WebFetch
+  external: ["Read", "Edit", "Glob", "Grep"],       // Same as github_webhook
+};
+
+function getAllowedTools(source) {
+  if (source && TOOLS_BY_SOURCE[source]) {
+    return TOOLS_BY_SOURCE[source];
+  }
+  return TOOLS_BY_SOURCE.trusted;
+}
+
 async function runTask(taskData) {
-  const { task_id, prompt, repo_url, default_branch, project_name, model, settings } = taskData;
+  const { task_id, prompt, repo_url, default_branch, project_name, model, settings, source } = taskData;
 
   let repoDir = null;
   let branchName = null;
@@ -218,6 +481,20 @@ async function runTask(taskData) {
     return result;
   }
 
+  // Security: Restrict tools based on task source
+  const allowedTools = getAllowedTools(source);
+  if (source && source !== "trusted") {
+    console.log(`[task] Source "${source}" → restricted tools: ${allowedTools.join(", ")}`);
+    await supabase.from("orchestrator_messages").insert({
+      role: "system",
+      content: `Security: External task source "${source}" — tools restricted to: ${allowedTools.join(", ")}`,
+      task_id,
+      project_name,
+      update_type: "security",
+      ts: new Date().toISOString()
+    });
+  }
+
   // Create SDK task
   const sdkTask = createSDKTask({
     prompt,
@@ -225,7 +502,7 @@ async function runTask(taskData) {
     model: model || "sonnet",
     maxTurns: 50,
     permissionMode: "default",
-    allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+    allowedTools,
     canUseTool,
   });
 
@@ -273,27 +550,70 @@ async function runTask(taskData) {
       }
     }
 
+    // Extract and save facts from output
+    const projectDir = taskData.project_dir;
+    if (projectDir) {
+      try {
+        const facts = extractFacts(outputBuffer);
+        if (facts.length > 0) {
+          await saveFacts(projectDir, facts, task_id);
+        }
+      } catch (e) {
+        console.warn(`[facts] Extraction failed:`, e.message);
+      }
+    }
+
+    // Self-review: quick automated check of changes before marking complete
+    let reviewResult = { passed: true };
+    if (gitResult?.hasChanges && repoDir) {
+      try {
+        reviewResult = await selfReview({
+          taskId: task_id,
+          projectName: project_name,
+          taskDescription: prompt,
+          repoDir,
+          defaultBranch: default_branch || "main",
+          outputBuffer
+        });
+      } catch (e) {
+        console.warn(`[review] Review error for ${task_id}:`, e.message);
+      }
+    }
+
+    // Determine final status based on review
+    const finalStatus = reviewResult.passed ? "completed" : "needs_review";
+
     await supabase.from("orchestrator_tasks").update({
-      status: "completed",
+      status: finalStatus,
       output: outputBuffer.slice(-8000),
-      git_branch: gitResult?.branch || null,
+      git_branch: branchName || gitResult?.branch || null,
       completed_at: new Date().toISOString()
     }).eq("id", task_id);
 
-    const completedMsg = gitResult?.hasChanges
-      ? `${project_name} task completed. Changes pushed to branch \`${gitResult.branch}\`.`
-      : `${project_name} task completed.`;
+    const statusEmoji = finalStatus === "completed" ? "" : " ⚠️";
+    const completedMsg = branchName
+      ? `${project_name} task ${finalStatus}.${statusEmoji} Changes on branch \`${branchName}\`.`
+      : `${project_name} task ${finalStatus}.${statusEmoji}`;
 
     await supabase.from("orchestrator_messages").insert({
       role: "system",
-      content: completedMsg,
+      content: completedMsg + (reviewResult.summary ? `\nReview: ${reviewResult.summary}` : ""),
       task_id,
       project_name,
-      update_type: "task_completed",
+      update_type: finalStatus === "completed" ? "task_completed" : "task_needs_review",
       ts: new Date().toISOString()
     });
 
-    console.log(`[task] ${task_id} completed`);
+    // Send push notification if review flagged issues
+    if (!reviewResult.passed) {
+      sendPush({
+        title: `Review: ${project_name}`,
+        message: `Task needs review: ${reviewResult.summary || "Issues found"}\n${(reviewResult.issues || []).join(", ")}`,
+        priority: 4
+      });
+    }
+
+    console.log(`[task] ${task_id} ${finalStatus}${reviewResult.issues?.length ? ` (${reviewResult.issues.length} issues)` : ""}`);
   });
 
   sdkTask.events.on("cancelled", async () => {
@@ -381,12 +701,34 @@ app.get("/tasks", (_req, res) => {
   res.json(tasks);
 });
 
+// ── gcloud + Neo4j setup ─────────────────────────────────────────────────────
+
+const { execFileSync } = require("child_process");
+const fs = require("fs");
+
+function setupGcloud() {
+  const key = process.env.GCLOUD_SERVICE_KEY;
+  if (!key) { console.warn("[gcloud] No GCLOUD_SERVICE_KEY — gcloud commands will fail"); return; }
+  try {
+    const keyPath = "/root/.config/gcloud/sa-key.json";
+    fs.writeFileSync(keyPath, Buffer.from(key, "base64").toString("utf8"));
+    execFileSync("gcloud", ["auth", "activate-service-account", "--key-file", keyPath], { stdio: "pipe" });
+    if (process.env.GCLOUD_PROJECT) {
+      execFileSync("gcloud", ["config", "set", "project", process.env.GCLOUD_PROJECT], { stdio: "pipe" });
+    }
+    console.log("[gcloud] Service account activated" + (process.env.GCLOUD_PROJECT ? `, project: ${process.env.GCLOUD_PROJECT}` : ""));
+  } catch (e) { console.error("[gcloud] Setup failed:", e.message); }
+}
+
 // ── Startup ──────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
   console.log(`Fly Agent Runner listening on port ${PORT}`);
+
+  // Set up gcloud authentication
+  setupGcloud();
 
   // Verify SDK is loadable
   loadSDK()
@@ -399,4 +741,8 @@ app.listen(PORT, () => {
       if (error) console.warn("[supabase] Connection test failed:", error.message);
       else console.log("[supabase] Connected");
     });
+
+  // Log Neo4j availability
+  if (process.env.NEO4J_URI) console.log(`[neo4j] Configured: ${process.env.NEO4J_URI}`);
+  else console.warn("[neo4j] No NEO4J_URI set — neo4j queries unavailable");
 });

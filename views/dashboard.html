@@ -11,6 +11,10 @@
   <title>Agent Brain</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      overflow-x: hidden;
+      max-width: 100vw;
+    }
     body {
       font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
       background: #f2f2f7;
@@ -269,6 +273,115 @@
       margin-left: 4px;
     }
 
+    /* Briefing section */
+    .briefing-item-card {
+      background: #fff;
+      border-radius: 12px;
+      margin-bottom: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .briefing-item-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 14px 16px;
+      cursor: pointer;
+    }
+    .briefing-item-header:active { background: #f8f8fa; }
+    .briefing-score {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .briefing-score.useful { background: #e8f5e9; color: #2e7d32; }
+    .briefing-score.watching { background: #e3f2fd; color: #1565c0; }
+    .briefing-item-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1c1c1e;
+      line-height: 1.35;
+      flex: 1;
+    }
+    .briefing-chevron {
+      color: #c7c7cc;
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-top: 2px;
+      transition: transform 0.2s;
+    }
+    .briefing-item-card.expanded .briefing-chevron { transform: rotate(90deg); }
+    .briefing-detail {
+      display: none;
+      padding: 0 16px 14px;
+      border-top: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .briefing-item-card.expanded .briefing-detail { display: block; }
+    .briefing-summary {
+      font-size: 14px;
+      color: #48484a;
+      line-height: 1.5;
+      padding-top: 12px;
+    }
+    .briefing-link {
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 13px;
+      color: #007aff;
+      text-decoration: none;
+      word-break: break-all;
+    }
+    .briefing-link:active { opacity: 0.6; }
+    .briefing-explore-btn {
+      display: block;
+      width: 100%;
+      margin-top: 12px;
+      padding: 10px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .briefing-explore-btn:active { opacity: 0.85; transform: scale(0.98); }
+    .briefing-explore-btn:disabled { opacity: 0.5; }
+    .briefing-source-tag {
+      display: inline-block;
+      font-size: 11px;
+      color: #8e8e93;
+      background: #f2f2f7;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+    .briefing-priority-tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 8px;
+      margin-left: 4px;
+    }
+    .briefing-priority-tag.cross-session-safety { background: #fce4ec; color: #c62828; }
+    .briefing-priority-tag.cost-efficiency { background: #fff3e0; color: #e65100; }
+    .briefing-priority-tag.automated-validation { background: #e8eaf6; color: #283593; }
+    .briefing-priority-tag.interoperability { background: #e0f2f1; color: #00695c; }
+    .briefing-priority-tag.product-launches { background: #e1f5fe; color: #0277bd; }
+    .briefing-priority-tag.capability { background: #f3e5f5; color: #6a1b9a; }
+
     /* Pulse animation for attention dot */
     @keyframes pulse-attention {
       0%, 100% { box-shadow: 0 0 0 0 rgba(255,149,0,0.4); }
@@ -281,6 +394,274 @@
       background: #ff9500;
       animation: pulse-attention 2s ease-in-out infinite;
     }
+
+    /* File Locks */
+    .lock-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .lock-info { flex: 1; min-width: 0; }
+    .lock-file {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1c1c1e;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lock-meta {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 2px;
+    }
+    .lock-release-btn {
+      background: #ff3b30;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      margin-left: 12px;
+    }
+    .lock-release-btn:active { opacity: 0.7; }
+
+    /* Maintenance Widget */
+    .maintenance-widget {
+      background: #fff;
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .maintenance-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .maintenance-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+    .maintenance-status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .maintenance-status-dot.ok { background: #34c759; }
+    .maintenance-status-dot.warning { background: #ff9500; }
+    .maintenance-status-dot.critical { background: #ff3b30; }
+    .maintenance-checks {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+    .maintenance-check-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #48484a;
+      padding: 6px 10px;
+      background: #f8f8fa;
+      border-radius: 8px;
+    }
+    .maintenance-check-icon {
+      font-size: 11px;
+    }
+    .maintenance-check-icon.ok { color: #34c759; }
+    .maintenance-check-icon.warning { color: #ff9500; }
+    .maintenance-check-icon.critical { color: #ff3b30; }
+    .maintenance-check-icon.skipped { color: #8e8e93; }
+    .maintenance-link {
+      font-size: 12px;
+      color: #007aff;
+      text-decoration: none;
+    }
+
+    /* Morning Refresh */
+    .refresh-card {
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(251,191,36,0.2);
+    }
+    .refresh-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .refresh-icon {
+      font-size: 24px;
+    }
+    .refresh-title {
+      font-size: 17px;
+      font-weight: 600;
+      color: #92400e;
+    }
+    .refresh-subtitle {
+      font-size: 13px;
+      color: #b45309;
+      margin-top: 2px;
+    }
+    .refresh-projects {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .refresh-project-btn {
+      background: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #92400e;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .refresh-project-btn:active { transform: scale(0.97); }
+    .refresh-project-btn:disabled { opacity: 0.5; }
+    .refresh-project-btn.spawned { background: #d1fae5; color: #065f46; }
+    .refresh-dismiss-all {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: rgba(146, 64, 14, 0.15);
+      border-radius: 50%;
+      font-size: 16px;
+      color: #92400e;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .refresh-dismiss-all:active { background: rgba(146, 64, 14, 0.25); }
+    .refresh-project-wrap {
+      position: relative;
+      display: inline-flex;
+    }
+    .refresh-project-dismiss {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 20px;
+      height: 20px;
+      border: none;
+      background: #92400e;
+      border-radius: 50%;
+      font-size: 12px;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .refresh-project-dismiss:active { background: #78350f; }
+
+    /* Terminal Management */
+    .terminal-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .terminal-card:active { background: #f8f8fa; }
+    .terminal-icon {
+      width: 32px;
+      height: 32px;
+      background: #1c1c1e;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .terminal-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .terminal-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1c1c1e;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .terminal-status {
+      font-size: 12px;
+      color: #8e8e93;
+    }
+    .terminal-protected {
+      font-size: 10px;
+      background: #e8f5e9;
+      color: #2e7d32;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+    }
+    .terminal-close-btn {
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: #f2f2f7;
+      border-radius: 50%;
+      font-size: 16px;
+      color: #8e8e93;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .terminal-close-btn:active { background: #e5e5ea; color: #ff3b30; }
+    .terminal-close-btn:disabled { opacity: 0.3; }
+    .terminals-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .terminals-close-all {
+      font-size: 12px;
+      color: #ff3b30;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+    .terminals-close-all:disabled { opacity: 0.4; }
   </style>
 </head>
 <body>
@@ -297,15 +678,23 @@
 
   <div class="nav-pills">
     <a href="/orchestrator" class="nav-pill" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600;">Orchestrator</a>
-    <a href="/memory" class="nav-pill">Memory</a>
-    <a href="/mailbox" class="nav-pill">Mailbox <span id="mailbox-badge" class="badge" style="display:none;">0</span></a>
+    <a href="/briefings" class="nav-pill">AI Brief</a>
+    <a href="/email-triage" class="nav-pill">Email</a>
+    <a href="/calendar" class="nav-pill">Calendar</a>
+    <a href="/tasks" class="nav-pill">Tasks</a>
     <a href="/chat" class="nav-pill">Sessions</a>
-    <a href="/settings" class="nav-pill">Settings</a>
+    <a href="/system" class="nav-pill">System</a>
   </div>
+
+  <div id="morning-refresh-section" style="padding:0 16px;"></div>
 
   <div id="dashboard"></div>
 
-  <div id="timeline-section" style="padding:0 16px;"></div>
+  <div id="maintenance-widget-section" style="padding:0 16px;"></div>
+
+  <div id="terminals-section" style="padding:0 16px;"></div>
+
+  <div id="briefing-card" style="padding:0 16px;"></div>
 
   <div class="footer">
     <a href="/chat">Browse All Sessions &rarr;</a>
@@ -363,6 +752,283 @@
         card.style.opacity = "0";
         card.style.transform = "translateX(-20px)";
         setTimeout(refresh, 350);
+      } catch (_) {
+        buttons.forEach(b => { b.disabled = false; });
+      }
+    }
+
+    // Checkpoint handling
+    let lastCheckpointIds = [];
+    let checkpointTextareaValues = {}; // Preserve user input during re-renders
+    let expandedQuestions = {}; // Track which questions are expanded
+
+    // Load persisted checkpoint text from localStorage
+    try {
+      const saved = localStorage.getItem("checkpointTextValues");
+      if (saved) checkpointTextareaValues = JSON.parse(saved);
+    } catch (_) {}
+
+    function saveCheckpointTextToStorage() {
+      try {
+        localStorage.setItem("checkpointTextValues", JSON.stringify(checkpointTextareaValues));
+      } catch (_) {}
+    }
+
+    async function refreshCheckpoints() {
+      try {
+        const resp = await fetch("/api/checkpoints");
+        const checkpoints = await resp.json();
+
+        // Save all textarea values before potential re-render
+        document.querySelectorAll('[id^="ckpt-input-"]').forEach(ta => {
+          if (ta.value.trim()) {
+            checkpointTextareaValues[ta.id] = ta.value;
+            saveCheckpointTextToStorage();
+          }
+        });
+
+        // Don't re-render if user is actively typing (has focus on any checkpoint textarea)
+        const activeEl = document.activeElement;
+        if (activeEl && activeEl.id && activeEl.id.startsWith("ckpt-input-")) {
+          // Still save the value but don't re-render
+          return;
+        }
+
+        // Don't re-render if the checkpoint list hasn't changed
+        const newIds = checkpoints.map(c => c.id).join(",");
+        if (newIds === lastCheckpointIds.join(",")) return;
+        lastCheckpointIds = checkpoints.map(c => c.id);
+
+        renderCheckpoints(checkpoints);
+      } catch (_) {}
+    }
+
+    function renderCheckpoints(checkpoints) {
+      let el = document.getElementById("checkpoints-section");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "checkpoints-section";
+        const dashboard = document.getElementById("dashboard");
+        dashboard.parentNode.insertBefore(el, dashboard);
+      }
+
+      if (!checkpoints || checkpoints.length === 0) {
+        el.innerHTML = "";
+        return;
+      }
+
+      let html = '<div class="section">';
+      html += '<div class="section-header">';
+      html += '  <span class="attention-pulse"></span>';
+      html += '  Waiting for Input';
+      html += '  <span class="section-count attention">' + checkpoints.length + '</span>';
+      html += '</div>';
+
+      for (const cp of checkpoints) {
+        // Use stored project_name if available, fallback to parsing project_dir
+        const projectLabel = cp.project_name || cp.project_dir.split("-").slice(-1)[0] || "Unknown";
+        const isLongQuestion = cp.question.length > 400;
+        const isQuestionExpanded = expandedQuestions[cp.id];
+        const questionText = (isLongQuestion && !isQuestionExpanded) ? cp.question.slice(0, 400) + "..." : cp.question;
+        const opts = cp.options || [];
+
+        html += '<div class="attention-card" data-checkpoint-id="' + cp.id + '" style="border-left-color:#6366f1;">';
+        html += '  <div class="attention-card-inner">';
+        // Labels row - just show project name (session title was unreliable)
+        html += '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
+        html += '      <span style="font-size:12px;font-weight:600;color:#fff;background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:3px 10px;border-radius:6px;">' + esc(projectLabel) + '</span>';
+        html += '    </div>';
+
+        // Question text with expand option
+        html += '    <div id="ckpt-question-' + cp.id + '" style="font-size:14px;color:#1c1c1e;line-height:1.5;white-space:pre-wrap;max-height:' + (isQuestionExpanded ? 'none' : '300px') + ';overflow-y:auto;">' + esc(questionText) + '</div>';
+        if (isLongQuestion) {
+          html += '    <button onclick="toggleQuestionExpand(\'' + cp.id + '\')" style="background:none;border:none;color:#007aff;font-size:13px;padding:4px 0;cursor:pointer;">' + (isQuestionExpanded ? 'Show Less' : 'Show Full Message') + '</button>';
+        }
+        html += '    <div class="attention-detail" style="max-height:none;">' + timeAgo(cp.created_at) + '</div>';
+        html += '  </div>';
+
+        // Quick-reply options
+        if (opts.length > 0) {
+          html += '  <div class="attention-actions" style="flex-wrap:wrap;">';
+          for (const opt of opts) {
+            html += '    <button class="btn-allow" style="flex:none;padding:10px 18px;font-size:14px;" onclick="respondCheckpoint(\'' + cp.id + '\', \'' + esc(opt).replace(/'/g, "\\'") + '\', this)">' + esc(opt) + '</button>';
+          }
+          html += '  </div>';
+        }
+
+        // Free-text response with paste image support - restore saved value if exists
+        const savedValue = checkpointTextareaValues['ckpt-input-' + cp.id] || '';
+        html += '  <div class="attention-actions" style="flex-direction:column;gap:8px;">';
+        html += '    <textarea id="ckpt-input-' + cp.id + '" placeholder="Type a response (paste images supported)..." style="width:100%;border:1px solid #e5e5ea;border-radius:10px;padding:10px 14px;font-size:15px;font-family:inherit;resize:vertical;min-height:44px;outline:none;box-sizing:border-box;">' + esc(savedValue) + '</textarea>';
+        // Image preview (hidden until paste)
+        html += '    <div id="ckpt-img-preview-' + cp.id + '" style="display:flex;flex-wrap:wrap;gap:8px;"></div>';
+        html += '    <div style="display:flex;gap:8px;">';
+        html += '      <button class="btn-allow" style="flex:1;background:linear-gradient(135deg,#6366f1,#8b5cf6);" onclick="respondCheckpointFreetext(\'' + cp.id + '\', this)">Send Response</button>';
+        html += '      <button class="btn-deny" style="flex:none;padding:10px 14px;" onclick="dismissCheckpoint(\'' + cp.id + '\', this)">Dismiss</button>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '</div>';
+      }
+      html += '</div>';
+      el.innerHTML = html;
+      // Set up paste handlers for image paste support
+      setupCheckpointPasteHandlers();
+    }
+
+    function setupCheckpointPasteHandlers() {
+      document.querySelectorAll('[id^="ckpt-input-"]').forEach(textarea => {
+        // Only add handler once
+        if (textarea.dataset.pasteHandler) return;
+        textarea.dataset.pasteHandler = "true";
+
+        // Save text as user types (for persistence across page navigations)
+        textarea.addEventListener("input", () => {
+          if (textarea.value.trim()) {
+            checkpointTextareaValues[textarea.id] = textarea.value;
+          } else {
+            delete checkpointTextareaValues[textarea.id];
+          }
+          saveCheckpointTextToStorage();
+        });
+
+        textarea.addEventListener("paste", async (e) => {
+          const items = e.clipboardData?.items;
+          if (!items) return;
+
+          for (const item of items) {
+            if (item.type.startsWith("image/")) {
+              e.preventDefault();
+              const file = item.getAsFile();
+              if (!file) continue;
+
+              // Get checkpoint ID from textarea
+              const checkpointId = textarea.id.replace("ckpt-input-", "");
+
+              // Upload the image
+              const imageUrl = await uploadCheckpointImage(checkpointId, file);
+              if (!imageUrl) continue;
+
+              // Add preview
+              const previewDiv = document.getElementById("ckpt-img-preview-" + checkpointId);
+              if (previewDiv) {
+                const imgIndex = (checkpointImageUrls[checkpointId] || []).length - 1;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  const wrapper = document.createElement("div");
+                  wrapper.style.cssText = "position:relative;display:inline-block;";
+                  wrapper.dataset.imgIndex = imgIndex;
+                  wrapper.innerHTML = '<img src="' + ev.target.result + '" style="max-width:120px;max-height:100px;border-radius:8px;object-fit:cover;"><button onclick="clearCheckpointImage(\'' + checkpointId + '\', ' + imgIndex + ')" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:12px;line-height:1;">×</button>';
+                  previewDiv.appendChild(wrapper);
+                };
+                reader.readAsDataURL(file);
+              }
+            }
+          }
+        });
+      });
+    }
+
+    function toggleQuestionExpand(checkpointId) {
+      expandedQuestions[checkpointId] = !expandedQuestions[checkpointId];
+      // Force re-render by clearing cached IDs
+      lastCheckpointIds = [];
+      refreshCheckpoints();
+    }
+
+    async function respondCheckpoint(checkpointId, response, btn) {
+      const card = btn.closest(".attention-card");
+      const buttons = card.querySelectorAll("button");
+      buttons.forEach(b => { b.disabled = true; });
+
+      try {
+        await fetch("/api/checkpoints/" + encodeURIComponent(checkpointId) + "/respond", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ response })
+        });
+        // Clear saved text for this checkpoint
+        delete checkpointTextareaValues["ckpt-input-" + checkpointId];
+        saveCheckpointTextToStorage();
+        card.style.transition = "opacity 0.3s, transform 0.3s";
+        card.style.opacity = "0";
+        card.style.transform = "translateX(-20px)";
+        setTimeout(() => { refreshCheckpoints(); refresh(); }, 350);
+      } catch (_) {
+        buttons.forEach(b => { b.disabled = false; });
+      }
+    }
+
+    // Store uploaded image URLs per checkpoint (array of URLs)
+    var checkpointImageUrls = {};
+
+    function clearCheckpointImage(checkpointId, imgIndex) {
+      const previewDiv = document.getElementById("ckpt-img-preview-" + checkpointId);
+      if (previewDiv) {
+        // Find and remove the specific preview wrapper
+        const wrapper = previewDiv.querySelector('[data-img-index="' + imgIndex + '"]');
+        if (wrapper) wrapper.remove();
+      }
+      // Mark the URL as null (preserve indices)
+      if (checkpointImageUrls[checkpointId]) {
+        checkpointImageUrls[checkpointId][imgIndex] = null;
+      }
+    }
+
+    function clearAllCheckpointImages(checkpointId) {
+      const previewDiv = document.getElementById("ckpt-img-preview-" + checkpointId);
+      if (previewDiv) previewDiv.innerHTML = "";
+      delete checkpointImageUrls[checkpointId];
+    }
+
+    async function uploadCheckpointImage(checkpointId, file) {
+      const formData = new FormData();
+      formData.append("image", file);
+      try {
+        const resp = await fetch("/api/uploads", { method: "POST", body: formData });
+        const data = await resp.json();
+        if (data.ok && data.url) {
+          if (!checkpointImageUrls[checkpointId]) checkpointImageUrls[checkpointId] = [];
+          checkpointImageUrls[checkpointId].push(data.url);
+          return data.url;
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    async function respondCheckpointFreetext(checkpointId, btn) {
+      const textarea = document.getElementById("ckpt-input-" + checkpointId);
+      let response = textarea.value.trim();
+      // Append all uploaded image URLs
+      const imgUrls = checkpointImageUrls[checkpointId];
+      if (imgUrls && imgUrls.length > 0) {
+        const validUrls = imgUrls.filter(u => u); // filter out nulls from cleared images
+        if (validUrls.length > 0) {
+          const imageRefs = validUrls.map(u => "[Image: " + window.location.origin + u + "]").join("\n");
+          response = (response ? response + "\n\n" : "") + imageRefs;
+        }
+        delete checkpointImageUrls[checkpointId];
+      }
+      if (!response) { textarea.focus(); return; }
+      respondCheckpoint(checkpointId, response, btn);
+    }
+
+    async function dismissCheckpoint(checkpointId, btn) {
+      const card = btn.closest(".attention-card");
+      const buttons = card.querySelectorAll("button");
+      buttons.forEach(b => { b.disabled = true; });
+
+      try {
+        await fetch("/api/checkpoints/" + encodeURIComponent(checkpointId) + "/dismiss", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        });
+        // Clear saved text for this checkpoint
+        delete checkpointTextareaValues["ckpt-input-" + checkpointId];
+        saveCheckpointTextToStorage();
+        card.style.transition = "opacity 0.3s, transform 0.3s";
+        card.style.opacity = "0";
+        card.style.transform = "translateX(-20px)";
+        setTimeout(() => { refreshCheckpoints(); refresh(); }, 350);
       } catch (_) {
         buttons.forEach(b => { b.disabled = false; });
       }
@@ -477,28 +1143,6 @@
         html += '</div>';
       }
 
-      // Idle
-      if (idle.length > 0) {
-        html += '<div class="section">';
-        html += '<div class="section-header">';
-        html += '  Idle';
-        html += '  <span class="section-count idle">' + idle.length + '</span>';
-        html += '</div>';
-        html += '<div class="card-group">';
-        for (const s of idle) {
-          html += '<a href="/chat/' + s.session_id + '" class="session-card">';
-          html += '  <div class="status-dot idle"></div>';
-          html += '  <div class="card-body">';
-          html += '    <div class="card-title">' + esc(s.title) + '</div>';
-          html += '    <div class="card-meta">' + timeAgo(s.last_activity) + '</div>';
-          html += '  </div>';
-          html += '  <div class="card-chevron">&#8250;</div>';
-          html += '</a>';
-        }
-        html += '</div>';
-        html += '</div>';
-      }
-
       // All quiet message when no attention needed
       if (attention.length === 0 && sessions.length > 0) {
         html = '<div class="all-quiet">All sessions running smoothly</div>' + html;
@@ -556,11 +1200,11 @@
     }
 
     // Poll every 3 seconds
-    setInterval(function() { refresh(); refreshTimeline(); refreshMailboxBadge(); }, 3000);
+    setInterval(function() { refresh(); refreshCheckpoints(); }, 3000);
 
     // Immediate refresh on tab visibility
     document.addEventListener("visibilitychange", function() {
-      if (document.visibilityState === "visible") { refresh(); refreshTimeline(); refreshMailboxBadge(); }
+      if (document.visibilityState === "visible") { refresh(); refreshCheckpoints(); }
     });
 
     // Mailbox badge
@@ -578,10 +1222,388 @@
       } catch (_) {}
     }
 
+    // Latest AI briefing — top-level section
+    let briefingLoaded = false;
+
+    function toggleBriefingItem(el) {
+      el.closest(".briefing-item-card").classList.toggle("expanded");
+    }
+
+    async function exploreFinding(btn, item) {
+      btn.disabled = true;
+      btn.textContent = "Starting session...";
+      try {
+        await fetch("/api/briefings/explore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item)
+        });
+        btn.textContent = "Session started";
+        btn.style.background = "#34c759";
+      } catch (_) {
+        btn.disabled = false;
+        btn.textContent = "Start Session";
+      }
+    }
+
+    // Store items globally so onclick can reference them
+    var _briefingItems = [];
+
+    async function refreshBriefing() {
+      try {
+        const resp = await fetch("/api/briefings/latest");
+        const b = await resp.json();
+        const el = document.getElementById("briefing-card");
+        if (!b || !b.filtered_items || b.filtered_items.length === 0) {
+          el.innerHTML = "";
+          return;
+        }
+
+        // Don't re-render if already loaded (avoid collapsing expanded items)
+        if (briefingLoaded) return;
+        briefingLoaded = true;
+
+        const items = b.filtered_items;
+        _briefingItems = items;
+        const age = timeAgo(b.created_at);
+
+        let html = '<div class="section">';
+        html += '<div class="section-header">';
+        html += '  AI Briefing';
+        html += '  <span class="section-count" style="background:#e8f5e9;color:#2e7d32;">' + items.length + '</span>';
+        html += '  <span style="flex:1;"></span>';
+        html += '  <a href="/briefings" style="font-size:12px;color:#007aff;text-decoration:none;text-transform:none;letter-spacing:0;font-weight:500;">History</a>';
+        html += '</div>';
+
+        html += '<div style="font-size:12px;color:#8e8e93;padding:0 4px 8px;">' + esc(b.run_type) + ' &bull; ' + age + ' &bull; ' + (b.raw_item_count || 0) + ' items scanned</div>';
+
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          var scoreClass = item.score === "directly useful" ? "useful" : "watching";
+          var scoreLabel = item.score === "directly useful" ? "Useful" : "Watching";
+
+          html += '<div class="briefing-item-card" id="briefing-item-' + i + '">';
+
+          // Clickable header
+          html += '<div class="briefing-item-header" onclick="toggleBriefingItem(this)">';
+          html += '<span class="briefing-score ' + scoreClass + '">' + scoreLabel + '</span>';
+          html += '<span class="briefing-item-title">' + esc(item.title) + '</span>';
+          html += '<span class="briefing-chevron">&#8250;</span>';
+          html += '</div>';
+
+          // Expandable detail
+          html += '<div class="briefing-detail">';
+          html += '<div class="briefing-summary">' + esc(item.summary) + '</div>';
+          if (item.link) {
+            html += '<a href="' + esc(item.link) + '" class="briefing-link" target="_blank">' + esc(item.link.length > 55 ? item.link.slice(0, 55) + "..." : item.link) + '</a>';
+          }
+          var tags = '';
+          if (item.source) {
+            tags += '<span class="briefing-source-tag">' + esc(item.source) + '</span>';
+          }
+          if (item.priority) {
+            var pLabel = item.priority.replace(/-/g, ' ');
+            tags += '<span class="briefing-priority-tag ' + esc(item.priority) + '">' + esc(pLabel) + '</span>';
+          }
+          if (tags) html += '<br>' + tags;
+          html += '<button class="briefing-explore-btn" onclick="event.stopPropagation(); exploreFinding(this, _briefingItems[' + i + '])">Start Session</button>';
+          html += '</div>';
+
+          html += '</div>';
+        }
+
+        html += '</div>';
+        el.innerHTML = html;
+      } catch (_) {}
+    }
+
+    // File locks (only renders if locks-section exists)
+    async function refreshLocks() {
+      try {
+        var el = document.getElementById("locks-section");
+        if (!el) return; // Element not in this page
+        var resp = await fetch("/api/locks");
+        var locks = await resp.json();
+        if (!locks || locks.length === 0) {
+          el.innerHTML = "";
+          return;
+        }
+        var html = '<div class="section">';
+        html += '<div class="section-header">';
+        html += '  File Locks';
+        html += '  <span class="section-count" style="background:#fce4ec;color:#c62828;">' + locks.length + '</span>';
+        html += '</div>';
+        for (var i = 0; i < locks.length; i++) {
+          var lock = locks[i];
+          var basename = lock.file_path.split("/").pop();
+          var title = lock.session_title || lock.session_id.slice(0, 8);
+          html += '<div class="lock-card">';
+          html += '<div class="lock-info">';
+          html += '<div class="lock-file" title="' + esc(lock.file_path) + '">' + esc(basename) + '</div>';
+          html += '<div class="lock-meta">' + esc(title) + ' &bull; ' + timeAgo(lock.acquired_at) + '</div>';
+          html += '</div>';
+          html += '<button class="lock-release-btn" onclick="releaseLock(\'' + esc(lock.id) + '\')">Release</button>';
+          html += '</div>';
+        }
+        html += '</div>';
+        el.innerHTML = html;
+      } catch (_) {}
+    }
+
+    async function releaseLock(lockId) {
+      try {
+        await fetch("/api/locks/force-release/" + lockId, { method: "POST" });
+        refreshLocks();
+      } catch (_) {}
+    }
+
+    // Maintenance status (section style like AI Briefing)
+    async function refreshMaintenance() {
+      try {
+        var resp = await fetch("/api/maintenance/status");
+        var data = await resp.json();
+        var el = document.getElementById("maintenance-widget-section");
+
+        var checks = data.checks || {};
+        var checkTypes = ["db_health", "security", "docs_drift", "code_cleanup"];
+        var checkLabels = {
+          db_health: "Database",
+          security: "Security",
+          docs_drift: "Docs",
+          code_cleanup: "Code"
+        };
+        var statusIcons = {
+          ok: "&#10003;",
+          warning: "&#9888;",
+          critical: "&#10007;",
+          skipped: "&#8212;",
+          error: "&#10007;"
+        };
+        var statusColors = {
+          ok: "background:#e8f5e9;color:#2e7d32;",
+          warning: "background:#fff3e0;color:#e65100;",
+          critical: "background:#ffebee;color:#c62828;",
+          skipped: "background:#f2f2f7;color:#8e8e93;",
+          error: "background:#ffebee;color:#c62828;"
+        };
+
+        // Count issues
+        var warningCount = Object.values(checks).filter(c => c.status === "warning" || c.status === "critical").length;
+        var countStyle = warningCount > 0 ? "background:#fff3e0;color:#e65100;" : "background:#e8f5e9;color:#2e7d32;";
+        var countLabel = warningCount > 0 ? warningCount + " issue" + (warningCount > 1 ? "s" : "") : "All OK";
+
+        var html = '<div class="section">';
+        html += '<div class="section-header">';
+        html += '  System Health';
+        html += '  <span class="section-count" style="' + countStyle + '">' + countLabel + '</span>';
+        html += '  <span style="flex:1;"></span>';
+        html += '  <a href="/maintenance" style="font-size:12px;color:#007aff;text-decoration:none;text-transform:none;letter-spacing:0;font-weight:500;">Details</a>';
+        html += '</div>';
+
+        // Check cards in a responsive grid (1 column on small screens, 2 on larger)
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;">';
+        for (var i = 0; i < checkTypes.length; i++) {
+          var type = checkTypes[i];
+          var check = checks[type] || { status: "skipped" };
+          var status = check.status || "skipped";
+          var summary = check.summary || "";
+
+          html += '<div style="background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,0.06);">';
+          html += '  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">';
+          html += '    <span style="font-size:12px;' + (statusColors[status] || statusColors.skipped) + 'padding:2px 6px;border-radius:4px;">' + (statusIcons[status] || statusIcons.skipped) + '</span>';
+          html += '    <span style="font-size:13px;font-weight:600;color:#1c1c1e;">' + esc(checkLabels[type]) + '</span>';
+          html += '  </div>';
+          if (summary) {
+            html += '  <div style="font-size:11px;color:#8e8e93;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(summary.slice(0, 35)) + '</div>';
+          }
+          html += '</div>';
+        }
+        html += '</div>';
+
+        html += '</div>';
+        el.innerHTML = html;
+      } catch (_) {
+        var el = document.getElementById("maintenance-widget-section");
+        el.innerHTML = "";
+      }
+    }
+
+    // Morning refresh
+    var _morningRefreshes = [];
+
+    async function refreshMorningRefresh() {
+      try {
+        var resp = await fetch("/api/morning-refresh");
+        var refreshes = await resp.json();
+        var el = document.getElementById("morning-refresh-section");
+
+        if (!refreshes || refreshes.length === 0) {
+          el.innerHTML = "";
+          return;
+        }
+
+        _morningRefreshes = refreshes;
+
+        var html = '<div class="refresh-card" style="position:relative;">';
+        html += '<button class="refresh-dismiss-all" onclick="dismissAllMorningRefresh(this)" title="Dismiss all">&times;</button>';
+        html += '<div class="refresh-header">';
+        html += '  <span class="refresh-icon">&#x2600;&#xFE0F;</span>';
+        html += '  <div>';
+        html += '    <div class="refresh-title">Morning Refresh Ready</div>';
+        html += '    <div class="refresh-subtitle">' + refreshes.length + ' project(s) with fresh sessions waiting</div>';
+        html += '  </div>';
+        html += '</div>';
+        html += '<div class="refresh-projects">';
+        for (var i = 0; i < refreshes.length; i++) {
+          var r = refreshes[i];
+          var status = r.status === "spawned" ? "spawned" : "";
+          var label = r.status === "spawned" ? "Started" : (r.project_name || r.project_dir.split("-").pop());
+          html += '<div class="refresh-project-wrap">';
+          html += '<button class="refresh-project-btn ' + status + '" onclick="spawnMorningRefresh(\'' + esc(r.id) + '\', this)" ' + (r.status === "spawned" ? "disabled" : "") + '>' + esc(label) + '</button>';
+          if (r.status !== "spawned") {
+            html += '<button class="refresh-project-dismiss" onclick="dismissMorningRefresh(\'' + esc(r.id) + '\', this)" title="Dismiss">&times;</button>';
+          }
+          html += '</div>';
+        }
+        html += '</div>';
+        html += '</div>';
+        el.innerHTML = html;
+      } catch (_) {}
+    }
+
+    async function dismissMorningRefresh(id, btn) {
+      btn.disabled = true;
+      try {
+        await fetch("/api/morning-refresh/" + id + "/dismiss", { method: "POST" });
+        refreshMorningRefresh();
+      } catch (_) {
+        btn.disabled = false;
+      }
+    }
+
+    async function dismissAllMorningRefresh(btn) {
+      btn.disabled = true;
+      try {
+        await fetch("/api/morning-refresh/dismiss-all", { method: "POST" });
+        var el = document.getElementById("morning-refresh-section");
+        var card = el.querySelector(".refresh-card");
+        if (card) {
+          card.style.transition = "opacity 0.3s, transform 0.3s";
+          card.style.opacity = "0";
+          card.style.transform = "translateY(-10px)";
+          setTimeout(refreshMorningRefresh, 300);
+        } else {
+          refreshMorningRefresh();
+        }
+      } catch (_) {
+        btn.disabled = false;
+      }
+    }
+
+    async function spawnMorningRefresh(id, btn) {
+      btn.disabled = true;
+      btn.textContent = "Starting...";
+      try {
+        var resp = await fetch("/api/morning-refresh/" + id + "/spawn", { method: "POST" });
+        var result = await resp.json();
+        if (result.ok) {
+          btn.textContent = "Started";
+          btn.classList.add("spawned");
+        } else {
+          btn.textContent = "Error";
+          btn.disabled = false;
+        }
+      } catch (_) {
+        btn.textContent = "Error";
+        btn.disabled = false;
+      }
+    }
+
+    // Terminal management
+    async function refreshTerminals() {
+      try {
+        var resp = await fetch("/api/terminals");
+        var data = await resp.json();
+        var el = document.getElementById("terminals-section");
+
+        if (!data.windows || data.windows.length === 0) {
+          el.innerHTML = "";
+          return;
+        }
+
+        var windows = data.windows;
+        var closeableCount = windows.filter(function(w) { return !w.protected; }).length;
+
+        var html = '<div class="section">';
+        html += '<div class="terminals-header">';
+        html += '  <div class="section-header" style="margin:0;">Terminals <span class="section-count">' + windows.length + '</span></div>';
+        if (closeableCount > 0) {
+          html += '  <button class="terminals-close-all" onclick="closeAllTerminals(this)">Close ' + closeableCount + ' stale</button>';
+        }
+        html += '</div>';
+
+        for (var i = 0; i < windows.length; i++) {
+          var w = windows[i];
+          html += '<div class="terminal-card" onclick="focusTerminal(' + w.index + ')">';
+          html += '  <div class="terminal-icon">&#x1F4BB;</div>';
+          html += '  <div class="terminal-info">';
+          html += '    <div class="terminal-name">' + esc(w.sessionName || w.name) + '</div>';
+          html += '    <div class="terminal-status">Window ' + w.index;
+          if (w.frontmost) html += ' &bull; Active';
+          html += '</div>';
+          html += '  </div>';
+          if (w.protected) {
+            html += '  <span class="terminal-protected">Protected</span>';
+          } else {
+            html += '  <button class="terminal-close-btn" onclick="event.stopPropagation(); closeTerminal(' + w.index + ', this)" title="Close">&times;</button>';
+          }
+          html += '</div>';
+        }
+
+        html += '</div>';
+        el.innerHTML = html;
+      } catch (_) {}
+    }
+
+    async function focusTerminal(index) {
+      try {
+        await fetch("/api/terminals/" + index + "/focus", { method: "POST" });
+      } catch (_) {}
+    }
+
+    async function closeTerminal(index, btn) {
+      btn.disabled = true;
+      try {
+        await fetch("/api/terminals/" + index + "/close", { method: "POST" });
+        setTimeout(refreshTerminals, 300);
+      } catch (_) {
+        btn.disabled = false;
+      }
+    }
+
+    async function closeAllTerminals(btn) {
+      btn.disabled = true;
+      btn.textContent = "Closing...";
+      try {
+        var resp = await fetch("/api/terminals/close-all", { method: "POST" });
+        var result = await resp.json();
+        btn.textContent = "Closed " + result.closed;
+        setTimeout(refreshTerminals, 500);
+      } catch (_) {
+        btn.textContent = "Error";
+        btn.disabled = false;
+      }
+    }
+
     // Initial load
     refresh();
-    refreshTimeline();
-    refreshMailboxBadge();
+    refreshCheckpoints();
+    refreshBriefing();
+    refreshMorningRefresh();
+    refreshMaintenance();
+    refreshTerminals();
+    setInterval(refreshMaintenance, 60000); // Refresh maintenance every minute
+    setInterval(refreshTerminals, 10000); // Refresh terminals every 10 seconds
 
     // Register service worker for PWA
     if ("serviceWorker" in navigator) {
