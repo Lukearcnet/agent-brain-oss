@@ -7,3 +7,6 @@ logs/
 .DS_Store
 sessions/
 fly-agent-runner/node_modules/
+# User uploads (screenshots, etc)
+public/uploads/*
+!public/uploads/.gitkeep
