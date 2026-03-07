@@ -164,6 +164,7 @@
       flex-shrink: 0;
     }
     .status-dot.active { background: #34c759; box-shadow: 0 0 6px rgba(52,199,89,0.4); }
+    .status-dot.recent { background: #5ac8fa; } /* Blue for recently active */
     .status-dot.idle { background: #d1d1d6; }
     .card-body { flex: 1; min-width: 0; }
     .card-title {
@@ -1433,7 +1434,7 @@
         const inCooldown = cooldowns[s.session_id] && now < cooldowns[s.session_id];
         if (s.status === "needs_attention" && !inCooldown) {
           attention.push(s);
-        } else if (s.status === "active" || (s.status === "needs_attention" && inCooldown)) {
+        } else if (s.status === "active" || s.status === "recent" || (s.status === "needs_attention" && inCooldown)) {
           active.push(s);
         } else {
           idle.push(s);
@@ -1507,11 +1508,13 @@
         html += '</div>';
         html += '<div class="card-group">';
         for (const s of active) {
-          const toolLabel = s.current_tool ? "Running " + s.current_tool : "Working";
+          const isRecent = s.status === "recent";
+          const toolLabel = s.current_tool ? "Running " + s.current_tool : (isRecent ? "Idle" : "Working");
           const ago = timeAgo(s.last_activity);
+          const dotClass = isRecent ? "recent" : "active";
           var href = s.linked ? '/chat/' + s.session_id : '#';
           html += '<a href="' + href + '" class="session-card"' + (s.linked ? '' : ' style="cursor:default"') + '>';
-          html += '  <div class="status-dot active"></div>';
+          html += '  <div class="status-dot ' + dotClass + '"></div>';
           html += '  <div class="card-body">';
           html += '    <div class="card-title">' + esc(s.title) + '</div>';
           html += '    <div class="card-meta">' + toolLabel + (ago ? ' &bull; ' + ago : '') + '</div>';

@@ -599,6 +599,11 @@ function getSessionState(projectDir, sessionId) {
     return { status: "active", permission: null, current_tool: currentTool, last_activity: lastActivity };
   }
 
+  // Recently active (within 6 hours) - show on dashboard but with different status
+  if (ageMs < 21600000) {
+    return { status: "recent", permission: null, current_tool: null, last_activity: lastActivity };
+  }
+
   return { status: "idle", permission: null, current_tool: null, last_activity: lastActivity };
 }
 
