@@ -148,6 +148,96 @@
     .loading-row { display: flex; align-items: center; justify-content: center; padding: 20px; gap: 8px; color: #70757a; font-size: 13px; }
 
     .hide { display: none !important; }
+
+    /* ── AI Chat FAB and Panel ─────────────────────────────────────────── */
+    .ai-fab {
+      position: fixed;
+      bottom: max(90px, calc(env(safe-area-inset-bottom) + 70px));
+      right: 20px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+      z-index: 49;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .ai-chat-panel {
+      position: fixed;
+      bottom: 0;
+      right: 0;
+      width: 100%;
+      max-width: 420px;
+      height: 55vh;
+      max-height: 450px;
+      background: #fff;
+      border-radius: 16px 16px 0 0;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+      z-index: 300;
+      display: none;
+      flex-direction: column;
+    }
+    .ai-chat-panel.open { display: flex; }
+    .ai-chat-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #e8e8ed; }
+    .ai-chat-header h3 { font-size: 16px; font-weight: 600; color: #202124; margin: 0; }
+    .ai-chat-close { background: none; border: none; font-size: 22px; color: #5f6368; cursor: pointer; }
+    .ai-chat-messages { flex: 1; overflow-y: auto; padding: 14px 18px; }
+    .ai-chat-msg { margin-bottom: 10px; padding: 10px 12px; border-radius: 12px; max-width: 85%; font-size: 13px; line-height: 1.4; }
+    .ai-chat-msg.user { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; margin-left: auto; }
+    .ai-chat-msg.assistant { background: #f1f3f4; color: #202124; }
+    .ai-chat-msg.error { background: #fce8e6; color: #c5221f; }
+    .ai-chat-msg.success { background: #e6f4ea; color: #137333; }
+    .ai-chat-input-area { display: flex; gap: 8px; padding: 10px 14px; padding-bottom: max(10px, env(safe-area-inset-bottom)); border-top: 1px solid #e8eaed; background: #fafafa; }
+    .ai-chat-input { flex: 1; border: 1px solid #dadce0; border-radius: 20px; padding: 8px 14px; font-size: 14px; font-family: inherit; outline: none; resize: none; }
+    .ai-chat-input:focus { border-color: #667eea; }
+    .ai-chat-send { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; font-size: 16px; cursor: pointer; }
+    .ai-chat-send:disabled { opacity: 0.5; }
+    .ai-chat-from-select { padding: 6px 10px; margin: 0 18px 6px; border: 1px solid #dadce0; border-radius: 6px; font-size: 12px; background: #fff; }
+
+    /* ── AI Outbox Section ─────────────────────────────────────────────── */
+    .outbox-section { padding: 12px; background: #f8f9fa; border-bottom: 1px solid #e8eaed; }
+    .outbox-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .outbox-section-title { font-size: 13px; font-weight: 600; color: #5f6368; }
+    .outbox-section-count { font-size: 11px; background: #1a73e8; color: #fff; padding: 2px 8px; border-radius: 10px; margin-left: 6px; }
+    .outbox-card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .outbox-item { padding: 10px 12px; border-bottom: 1px solid #f1f3f4; cursor: pointer; }
+    .outbox-item:last-child { border-bottom: none; }
+    .outbox-item:active { background: #f8f9fa; }
+    .outbox-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .outbox-type { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+    .outbox-type.email { background: #e8f0fe; color: #1a73e8; }
+    .outbox-type.event { background: #e6f4ea; color: #137333; }
+    .outbox-subject { font-size: 13px; font-weight: 500; color: #202124; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .outbox-preview { font-size: 12px; color: #5f6368; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .outbox-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .outbox-btn { padding: 6px 12px; border-radius: 6px; border: none; font-size: 12px; font-weight: 500; cursor: pointer; }
+    .outbox-btn.approve { background: #1a73e8; color: #fff; }
+    .outbox-btn.reject { background: #f1f3f4; color: #5f6368; }
+    .outbox-btn:disabled { opacity: 0.5; }
+
+    /* ── Outbox Modal ──────────────────────────────────────────────────── */
+    .outbox-modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 600; display: none; align-items: center; justify-content: center; padding: 16px; }
+    .outbox-modal-bg.open { display: flex; }
+    .outbox-modal { background: #fff; border-radius: 12px; width: 100%; max-width: 500px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+    .outbox-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #e8eaed; }
+    .outbox-modal-header h3 { font-size: 16px; font-weight: 600; color: #202124; margin: 0; }
+    .outbox-modal-close { background: none; border: none; font-size: 22px; color: #5f6368; cursor: pointer; }
+    .outbox-modal-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+    .outbox-modal-field { margin-bottom: 12px; }
+    .outbox-modal-label { font-size: 11px; color: #5f6368; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+    .outbox-modal-value { font-size: 14px; color: #202124; line-height: 1.4; }
+    .outbox-modal-body-content { background: #f8f9fa; border-radius: 6px; padding: 10px; font-size: 13px; line-height: 1.5; max-height: 180px; overflow-y: auto; }
+    .outbox-modal-footer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid #e8eaed; }
+    .outbox-modal-btn { flex: 1; padding: 10px; border-radius: 8px; border: none; font-size: 14px; font-weight: 500; cursor: pointer; }
+    .outbox-modal-btn.approve { background: #1a73e8; color: #fff; }
+    .outbox-modal-btn.reject { background: #f1f3f4; color: #5f6368; }
+    .outbox-modal-btn:disabled { opacity: 0.5; }
   </style>
 </head>
 <body>
@@ -173,6 +263,9 @@
   </div>
   <div class="chips" id="chips"></div>
 </div>
+
+<!-- ── AI Outbox Section ───────────────────────────────────────────────────── -->
+<div id="outbox-section" class="outbox-section" style="display:none"></div>
 
 <!-- ── Email List ──────────────────────────────────────────────────────────── -->
 <div id="email-list" class="email-list"></div>
@@ -239,6 +332,45 @@
 <button class="fab" id="fab" onclick="openCompose()">
   <span class="fab-icon">&#9998;</span> Compose
 </button>
+
+<!-- AI Chat FAB -->
+<button class="ai-fab" onclick="toggleAIChat()" title="AI Assistant">✨</button>
+
+<!-- AI Chat Panel -->
+<div class="ai-chat-panel" id="ai-chat-panel">
+  <div class="ai-chat-header">
+    <h3>AI Assistant</h3>
+    <button class="ai-chat-close" onclick="toggleAIChat()">&times;</button>
+  </div>
+  <select class="ai-chat-from-select" id="ai-chat-from">
+    <option value="">Select sending account...</option>
+  </select>
+  <div class="ai-chat-messages" id="ai-chat-messages">
+    <div class="ai-chat-msg assistant">
+      Hi! I can help you draft emails. Try:<br><br>
+      "Send an email to john@example.com about the project update"
+    </div>
+  </div>
+  <div class="ai-chat-input-area">
+    <textarea class="ai-chat-input" id="ai-chat-input" placeholder="Draft an email..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIChat()}"></textarea>
+    <button class="ai-chat-send" onclick="sendAIChat()" id="ai-chat-send">↑</button>
+  </div>
+</div>
+
+<!-- Outbox Preview Modal -->
+<div class="outbox-modal-bg" id="outbox-modal-bg" onclick="if(event.target===this)closeOutboxModal()">
+  <div class="outbox-modal">
+    <div class="outbox-modal-header">
+      <h3 id="outbox-modal-title">Email Preview</h3>
+      <button class="outbox-modal-close" onclick="closeOutboxModal()">&times;</button>
+    </div>
+    <div class="outbox-modal-body" id="outbox-modal-body"></div>
+    <div class="outbox-modal-footer">
+      <button class="outbox-modal-btn reject" onclick="rejectFromModal()">Reject</button>
+      <button class="outbox-modal-btn approve" onclick="approveFromModal()">Approve & Send</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // ═════════════════════════════════════════════════════════════════════════════
@@ -911,6 +1043,215 @@ async function pollNow() {
 })();
 
 setInterval(loadAndRender, 90000);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── AI Chat ──────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function toggleAIChat() {
+  const panel = document.getElementById("ai-chat-panel");
+  panel.classList.toggle("open");
+  if (panel.classList.contains("open")) {
+    loadAIChatAccounts();
+    document.getElementById("ai-chat-input").focus();
+  }
+}
+
+async function loadAIChatAccounts() {
+  try {
+    const select = document.getElementById("ai-chat-from");
+    select.innerHTML = '<option value="">Select sending account...</option>' +
+      accounts.map(a => `<option value="${esc(a.email)}">${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`).join("");
+    if (accounts.length === 1) {
+      select.value = accounts[0].email;
+    }
+  } catch (e) {
+    console.error("Load accounts:", e);
+  }
+}
+
+function addAIChatMessage(text, type) {
+  const msgs = document.getElementById("ai-chat-messages");
+  const div = document.createElement("div");
+  div.className = "ai-chat-msg " + type;
+  div.innerHTML = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function sendAIChat() {
+  const input = document.getElementById("ai-chat-input");
+  const btn = document.getElementById("ai-chat-send");
+  const fromSelect = document.getElementById("ai-chat-from");
+  const prompt = input.value.trim();
+
+  if (!prompt) return;
+  if (!fromSelect.value) {
+    addAIChatMessage("Please select a sending account first.", "error");
+    return;
+  }
+
+  addAIChatMessage(esc(prompt), "user");
+  input.value = "";
+  btn.disabled = true;
+
+  try {
+    const resp = await fetch("/api/ai-assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        from_account: fromSelect.value,
+        source_project: "email-page",
+        source_session: null
+      })
+    });
+    const data = await resp.json();
+
+    if (data.ok && data.item) {
+      const item = data.item;
+      let msg = "";
+      if (item.type === "email") {
+        msg = `<strong>✓ Email drafted</strong><br>To: ${esc((item.email_to || []).join(", "))}<br>Subject: ${esc(item.email_subject || "")}<br><br><em>${esc(data.ai_reasoning || "")}</em><br><br>Check the dashboard AI Outbox to approve.`;
+      } else {
+        msg = `<strong>✓ Event drafted</strong><br>Title: ${esc(item.event_title || "")}<br><br>Check the dashboard AI Outbox to approve.`;
+      }
+      addAIChatMessage(msg, "success");
+    } else {
+      addAIChatMessage("Error: " + (data.error || "Unknown error"), "error");
+    }
+  } catch (e) {
+    addAIChatMessage("Error: " + e.message, "error");
+  }
+
+  btn.disabled = false;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── AI Outbox ────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+let outboxItems = [];
+let currentOutboxId = null;
+
+async function refreshOutbox() {
+  try {
+    const resp = await fetch("/api/outbox?status=pending");
+    outboxItems = await resp.json();
+    const el = document.getElementById("outbox-section");
+
+    // Filter to only show emails
+    const emailItems = outboxItems.filter(i => i.type === "email");
+
+    if (emailItems.length === 0) {
+      el.style.display = "none";
+      return;
+    }
+
+    el.style.display = "block";
+    let html = '<div class="outbox-section-header">';
+    html += '  <span class="outbox-section-title">AI Outbox<span class="outbox-section-count">' + emailItems.length + '</span></span>';
+    html += '</div>';
+    html += '<div class="outbox-card">';
+
+    for (const item of emailItems) {
+      html += '<div class="outbox-item" onclick="openOutboxModal(\'' + item.id + '\')">';
+      html += '  <div class="outbox-item-header">';
+      html += '    <span class="outbox-type email">email</span>';
+      html += '  </div>';
+      html += '  <div class="outbox-subject">' + esc(item.email_subject || "No subject") + '</div>';
+      html += '  <div class="outbox-preview">To: ' + esc((item.email_to || []).join(", ")) + '</div>';
+      html += '  <div class="outbox-actions" onclick="event.stopPropagation()">';
+      html += '    <button class="outbox-btn approve" onclick="approveOutbox(\'' + item.id + '\', this)">Send</button>';
+      html += '    <button class="outbox-btn reject" onclick="rejectOutbox(\'' + item.id + '\', this)">Reject</button>';
+      html += '  </div>';
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    console.error("Outbox refresh error:", e);
+  }
+}
+
+async function approveOutbox(id, btn) {
+  btn.disabled = true;
+  btn.textContent = "Sending...";
+  try {
+    await fetch("/api/outbox/" + id + "/approve", { method: "POST" });
+    setTimeout(refreshOutbox, 300);
+  } catch (_) {
+    btn.disabled = false;
+    btn.textContent = "Error";
+  }
+}
+
+async function rejectOutbox(id, btn) {
+  btn.disabled = true;
+  try {
+    await fetch("/api/outbox/" + id + "/reject", { method: "POST" });
+    setTimeout(refreshOutbox, 300);
+  } catch (_) {
+    btn.disabled = false;
+  }
+}
+
+function openOutboxModal(id) {
+  const item = outboxItems.find(i => i.id === id);
+  if (!item) return;
+
+  currentOutboxId = id;
+  document.getElementById("outbox-modal-title").textContent = "Email Preview";
+
+  let body = '';
+  body += '<div class="outbox-modal-field"><div class="outbox-modal-label">From</div><div class="outbox-modal-value">' + esc(item.from_account) + '</div></div>';
+  body += '<div class="outbox-modal-field"><div class="outbox-modal-label">To</div><div class="outbox-modal-value">' + esc((item.email_to || []).join(", ")) + '</div></div>';
+  if (item.email_cc && item.email_cc.length) {
+    body += '<div class="outbox-modal-field"><div class="outbox-modal-label">CC</div><div class="outbox-modal-value">' + esc(item.email_cc.join(", ")) + '</div></div>';
+  }
+  body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Subject</div><div class="outbox-modal-value">' + esc(item.email_subject || "No subject") + '</div></div>';
+  body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Body</div><div class="outbox-modal-body-content">' + (item.email_body_html || esc(item.email_body_text || "")) + '</div></div>';
+  if (item.ai_reasoning) {
+    body += '<div class="outbox-modal-field"><div class="outbox-modal-label">AI Notes</div><div class="outbox-modal-value" style="font-style:italic;color:#5f6368">' + esc(item.ai_reasoning) + '</div></div>';
+  }
+
+  document.getElementById("outbox-modal-body").innerHTML = body;
+  document.getElementById("outbox-modal-bg").classList.add("open");
+}
+
+function closeOutboxModal() {
+  document.getElementById("outbox-modal-bg").classList.remove("open");
+  currentOutboxId = null;
+}
+
+async function approveFromModal() {
+  if (!currentOutboxId) return;
+  const btns = document.querySelectorAll(".outbox-modal-btn");
+  btns.forEach(b => b.disabled = true);
+  try {
+    await fetch("/api/outbox/" + currentOutboxId + "/approve", { method: "POST" });
+    closeOutboxModal();
+    setTimeout(refreshOutbox, 300);
+  } catch (_) {
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+async function rejectFromModal() {
+  if (!currentOutboxId) return;
+  const btns = document.querySelectorAll(".outbox-modal-btn");
+  btns.forEach(b => b.disabled = true);
+  try {
+    await fetch("/api/outbox/" + currentOutboxId + "/reject", { method: "POST" });
+    closeOutboxModal();
+    setTimeout(refreshOutbox, 300);
+  } catch (_) {
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+// Load outbox on page load
+refreshOutbox();
+setInterval(refreshOutbox, 15000);
 </script>
 
 </body>

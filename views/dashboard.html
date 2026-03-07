@@ -185,6 +185,27 @@
       margin-left: 8px;
       flex-shrink: 0;
     }
+    /* Terminal focus button on session cards */
+    .session-terminal-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: none;
+      background: #f2f2f7;
+      color: #8e8e93;
+      font-size: 14px;
+      cursor: pointer;
+      margin-right: 8px;
+      flex-shrink: 0;
+      transition: all 0.15s;
+    }
+    .session-terminal-btn:hover {
+      background: #007aff;
+      color: #fff;
+    }
+    .session-terminal-btn:active {
+      transform: scale(0.95);
+    }
 
     /* Empty state */
     .empty {
@@ -662,6 +683,319 @@
       padding: 4px 8px;
     }
     .terminals-close-all:disabled { opacity: 0.4; }
+
+    /* AI Outbox */
+    .outbox-card {
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      margin-bottom: 8px;
+    }
+    .outbox-item {
+      padding: 14px 16px;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .outbox-item:last-child { border-bottom: none; }
+    .outbox-item-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .outbox-type {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+      text-transform: uppercase;
+    }
+    .outbox-type.email { background: #e8f5e9; color: #2e7d32; }
+    .outbox-type.event { background: #e3f2fd; color: #1565c0; }
+    .outbox-from {
+      font-size: 12px;
+      color: #8e8e93;
+    }
+    .outbox-subject {
+      font-size: 15px;
+      font-weight: 500;
+      color: #1c1c1e;
+      margin-bottom: 4px;
+    }
+    .outbox-preview {
+      font-size: 13px;
+      color: #8e8e93;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .outbox-recipients {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+    .outbox-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .outbox-btn {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .outbox-btn.approve { background: #34c759; color: #fff; }
+    .outbox-btn.reject { background: #f2f2f7; color: #8e8e93; }
+    .outbox-btn:disabled { opacity: 0.5; }
+    .outbox-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .outbox-approve-all {
+      font-size: 12px;
+      color: #34c759;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+
+    /* AI Chat FAB and Panel */
+    .ai-fab {
+      position: fixed;
+      bottom: max(24px, env(safe-area-inset-bottom));
+      right: 20px;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .ai-fab:hover { transform: scale(1.05); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5); }
+    .ai-fab:active { transform: scale(0.95); }
+
+    .ai-chat-panel {
+      position: fixed;
+      bottom: 0;
+      right: 0;
+      width: 100%;
+      max-width: 420px;
+      height: 60vh;
+      max-height: 500px;
+      background: #fff;
+      border-radius: 16px 16px 0 0;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+      z-index: 200;
+      display: none;
+      flex-direction: column;
+    }
+    .ai-chat-panel.open { display: flex; }
+
+    .ai-chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid #e8e8ed;
+      flex-shrink: 0;
+    }
+    .ai-chat-header h3 {
+      font-size: 17px;
+      font-weight: 600;
+      color: #1c1c1e;
+      margin: 0;
+    }
+    .ai-chat-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      color: #8e8e93;
+      cursor: pointer;
+      padding: 4px;
+    }
+
+    .ai-chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+    }
+    .ai-chat-msg {
+      margin-bottom: 12px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      max-width: 85%;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .ai-chat-msg.user {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      margin-left: auto;
+    }
+    .ai-chat-msg.assistant {
+      background: #f2f2f7;
+      color: #1c1c1e;
+    }
+    .ai-chat-msg.error {
+      background: #fee;
+      color: #c00;
+    }
+    .ai-chat-msg.success {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .ai-chat-input-area {
+      display: flex;
+      gap: 10px;
+      padding: 12px 16px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+      border-top: 1px solid #e8e8ed;
+      flex-shrink: 0;
+      background: #fafafa;
+    }
+    .ai-chat-input {
+      flex: 1;
+      border: 1px solid #d1d1d6;
+      border-radius: 20px;
+      padding: 10px 16px;
+      font-size: 15px;
+      font-family: inherit;
+      outline: none;
+      resize: none;
+      min-height: 40px;
+      max-height: 100px;
+    }
+    .ai-chat-input:focus { border-color: #667eea; }
+    .ai-chat-send {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border: none;
+      font-size: 18px;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .ai-chat-send:disabled { opacity: 0.5; cursor: default; }
+
+    .ai-chat-from-select {
+      padding: 8px 12px;
+      margin: 0 20px 8px;
+      border: 1px solid #d1d1d6;
+      border-radius: 8px;
+      font-size: 13px;
+      background: #fff;
+    }
+
+    /* Outbox Preview Modal */
+    .outbox-modal-bg {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 300;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .outbox-modal-bg.open { display: flex; }
+    .outbox-modal {
+      background: #fff;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 500px;
+      max-height: 80vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .outbox-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid #e8e8ed;
+    }
+    .outbox-modal-header h3 {
+      font-size: 17px;
+      font-weight: 600;
+      color: #1c1c1e;
+      margin: 0;
+    }
+    .outbox-modal-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      color: #8e8e93;
+      cursor: pointer;
+    }
+    .outbox-modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+    }
+    .outbox-modal-field {
+      margin-bottom: 14px;
+    }
+    .outbox-modal-label {
+      font-size: 12px;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .outbox-modal-value {
+      font-size: 15px;
+      color: #1c1c1e;
+      line-height: 1.4;
+    }
+    .outbox-modal-body-content {
+      background: #f8f8f8;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .outbox-modal-footer {
+      display: flex;
+      gap: 10px;
+      padding: 16px 20px;
+      border-top: 1px solid #e8e8ed;
+    }
+    .outbox-modal-btn {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .outbox-modal-btn.approve { background: #34c759; color: #fff; }
+    .outbox-modal-btn.reject { background: #f2f2f7; color: #8e8e93; }
+    .outbox-modal-btn:disabled { opacity: 0.5; }
   </style>
 </head>
 <body>
@@ -672,18 +1006,18 @@
     </div>
     <div style="display:flex;gap:8px;">
       <a href="/settings" class="header-btn">Settings</a>
-      <a href="/chat" class="header-btn">Sessions</a>
+      <a href="/system" class="header-btn">System</a>
     </div>
   </div>
 
   <div class="nav-pills">
-    <a href="/orchestrator" class="nav-pill" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600;">Orchestrator</a>
-    <a href="/briefings" class="nav-pill">AI Brief</a>
+    <a href="/" class="nav-pill" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600;">Dashboard</a>
+    <a href="/chat" class="nav-pill">Sessions</a>
+    <a href="/tasks" class="nav-pill">Tasks</a>
     <a href="/email-triage" class="nav-pill">Email</a>
     <a href="/calendar" class="nav-pill">Calendar</a>
-    <a href="/tasks" class="nav-pill">Tasks</a>
-    <a href="/chat" class="nav-pill">Sessions</a>
-    <a href="/system" class="nav-pill">System</a>
+    <a href="/briefings" class="nav-pill">AI Brief</a>
+    <a href="/orchestrator" class="nav-pill">Orchestrator</a>
   </div>
 
   <div id="morning-refresh-section" style="padding:0 16px;"></div>
@@ -696,8 +1030,54 @@
 
   <div id="briefing-card" style="padding:0 16px;"></div>
 
+  <div id="ai-outbox-section" style="padding:0 16px;"></div>
+
   <div class="footer">
     <a href="/chat">Browse All Sessions &rarr;</a>
+  </div>
+
+  <!-- AI Chat FAB -->
+  <button class="ai-fab" onclick="toggleAIChat()" title="AI Assistant">✨</button>
+
+  <!-- AI Chat Panel -->
+  <div class="ai-chat-panel" id="ai-chat-panel">
+    <div class="ai-chat-header">
+      <h3>AI Assistant</h3>
+      <button class="ai-chat-close" onclick="toggleAIChat()">&times;</button>
+    </div>
+    <select class="ai-chat-from-select" id="ai-chat-from">
+      <option value="">Select sending account...</option>
+    </select>
+    <div class="ai-chat-messages" id="ai-chat-messages">
+      <div class="ai-chat-msg assistant">
+        Hi! I can help you draft emails and calendar events. Try:
+        <br><br>
+        "Send an email to john@example.com asking about the project status"
+        <br><br>
+        "Schedule a meeting with Alice tomorrow at 2pm about the launch"
+      </div>
+    </div>
+    <div class="ai-chat-input-area">
+      <textarea class="ai-chat-input" id="ai-chat-input" placeholder="Draft an email or event..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIChat()}"></textarea>
+      <button class="ai-chat-send" onclick="sendAIChat()" id="ai-chat-send">↑</button>
+    </div>
+  </div>
+
+  <!-- Outbox Preview Modal -->
+  <div class="outbox-modal-bg" id="outbox-modal-bg" onclick="if(event.target===this)closeOutboxModal()">
+    <div class="outbox-modal">
+      <div class="outbox-modal-header">
+        <h3 id="outbox-modal-title">Email Preview</h3>
+        <button class="outbox-modal-close" onclick="closeOutboxModal()">&times;</button>
+      </div>
+      <div class="outbox-modal-body" id="outbox-modal-body">
+        <!-- Filled dynamically -->
+      </div>
+      <div class="outbox-modal-footer">
+        <button class="outbox-modal-btn reject" onclick="rejectFromModal()">Reject</button>
+        <button class="outbox-modal-btn approve" onclick="approveFromModal()">Approve & Send</button>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -1136,6 +1516,7 @@
           html += '    <div class="card-title">' + esc(s.title) + '</div>';
           html += '    <div class="card-meta">' + toolLabel + (ago ? ' &bull; ' + ago : '') + '</div>';
           html += '  </div>';
+          html += '  <button class="session-terminal-btn" onclick="event.preventDefault(); event.stopPropagation(); focusSessionTerminal(\'' + esc(s.title) + '\')" title="Focus terminal">&#x1F4BB;</button>';
           if (s.linked) html += '  <div class="card-chevron">&#8250;</div>';
           html += '</a>';
         }
@@ -1571,6 +1952,20 @@
       } catch (_) {}
     }
 
+    async function focusSessionTerminal(title) {
+      try {
+        const resp = await fetch("/api/terminals/focus-by-title", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title })
+        });
+        const result = await resp.json();
+        if (!result.ok) {
+          console.log("No terminal found for session:", title);
+        }
+      } catch (_) {}
+    }
+
     async function closeTerminal(index, btn) {
       btn.disabled = true;
       try {
@@ -1595,8 +1990,272 @@
       }
     }
 
+    // AI Outbox
+    async function refreshOutbox() {
+      try {
+        const resp = await fetch("/api/outbox?status=pending");
+        const items = await resp.json();
+        const el = document.getElementById("ai-outbox-section");
+
+        if (items.length === 0) {
+          el.innerHTML = "";
+          return;
+        }
+
+        let html = '<div class="section-header">';
+        html += '  AI Outbox';
+        html += '  <span class="section-count">' + items.length + '</span>';
+        html += '</div>';
+        html += '<div class="outbox-header">';
+        html += '  <span style="font-size:12px;color:#8e8e93;">Pending approval</span>';
+        if (items.length > 1) {
+          html += '  <button class="outbox-approve-all" onclick="approveAllOutbox(this)">Approve All</button>';
+        }
+        html += '</div>';
+        html += '<div class="outbox-card">';
+
+        // Store items globally for modal access
+        window.outboxItems = items;
+
+        for (const item of items) {
+          const isEmail = item.type === "email";
+          html += '<div class="outbox-item" onclick="openOutboxModal(\'' + item.id + '\')" style="cursor:pointer">';
+          html += '  <div class="outbox-item-header">';
+          html += '    <span class="outbox-type ' + item.type + '">' + item.type + '</span>';
+          html += '    <span class="outbox-from">' + esc(item.from_account) + '</span>';
+          html += '  </div>';
+
+          if (isEmail) {
+            html += '  <div class="outbox-subject">' + esc(item.email_subject || "No subject") + '</div>';
+            const preview = (item.email_body_text || item.email_body_html || "").slice(0, 100);
+            html += '  <div class="outbox-preview">' + esc(preview) + (preview.length >= 100 ? "..." : "") + '</div>';
+            html += '  <div class="outbox-recipients">To: ' + esc((item.email_to || []).join(", ")) + '</div>';
+          } else {
+            html += '  <div class="outbox-subject">' + esc(item.event_title || "Untitled event") + '</div>';
+            const start = item.event_start ? new Date(item.event_start).toLocaleString() : "";
+            html += '  <div class="outbox-preview">' + esc(start) + '</div>';
+            html += '  <div class="outbox-recipients">Attendees: ' + esc((item.event_attendees || []).join(", ")) + '</div>';
+          }
+
+          html += '  <div class="outbox-actions" onclick="event.stopPropagation()">';
+          html += '    <button class="outbox-btn approve" onclick="approveOutbox(\'' + item.id + '\', this)">Approve & Send</button>';
+          html += '    <button class="outbox-btn reject" onclick="rejectOutbox(\'' + item.id + '\', this)">Reject</button>';
+          html += '  </div>';
+          html += '</div>';
+        }
+
+        html += '</div>';
+        el.innerHTML = html;
+      } catch (e) {
+        console.error("Outbox refresh error:", e);
+      }
+    }
+
+    async function approveOutbox(id, btn) {
+      btn.disabled = true;
+      btn.textContent = "Sending...";
+      try {
+        await fetch("/api/outbox/" + id + "/approve", { method: "POST" });
+        setTimeout(refreshOutbox, 300);
+      } catch (_) {
+        btn.disabled = false;
+        btn.textContent = "Error";
+      }
+    }
+
+    async function rejectOutbox(id, btn) {
+      btn.disabled = true;
+      try {
+        await fetch("/api/outbox/" + id + "/reject", { method: "POST" });
+        setTimeout(refreshOutbox, 300);
+      } catch (_) {
+        btn.disabled = false;
+      }
+    }
+
+    async function approveAllOutbox(btn) {
+      btn.disabled = true;
+      btn.textContent = "Approving...";
+      try {
+        const resp = await fetch("/api/outbox/approve-all", { method: "POST" });
+        const result = await resp.json();
+        btn.textContent = "Approved " + result.approved;
+        setTimeout(refreshOutbox, 500);
+      } catch (_) {
+        btn.textContent = "Error";
+      }
+    }
+
+    // Outbox Preview Modal
+    let currentOutboxId = null;
+
+    function openOutboxModal(id) {
+      const items = window.outboxItems || [];
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+
+      currentOutboxId = id;
+      const isEmail = item.type === "email";
+      document.getElementById("outbox-modal-title").textContent = isEmail ? "Email Preview" : "Event Preview";
+
+      let body = "";
+      if (isEmail) {
+        body += '<div class="outbox-modal-field"><div class="outbox-modal-label">From</div><div class="outbox-modal-value">' + esc(item.from_account) + '</div></div>';
+        body += '<div class="outbox-modal-field"><div class="outbox-modal-label">To</div><div class="outbox-modal-value">' + esc((item.email_to || []).join(", ")) + '</div></div>';
+        if (item.email_cc && item.email_cc.length) {
+          body += '<div class="outbox-modal-field"><div class="outbox-modal-label">CC</div><div class="outbox-modal-value">' + esc(item.email_cc.join(", ")) + '</div></div>';
+        }
+        body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Subject</div><div class="outbox-modal-value">' + esc(item.email_subject || "No subject") + '</div></div>';
+        body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Body</div><div class="outbox-modal-body-content">' + (item.email_body_html || esc(item.email_body_text || "")) + '</div></div>';
+      } else {
+        body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Title</div><div class="outbox-modal-value">' + esc(item.event_title || "Untitled") + '</div></div>';
+        body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Calendar</div><div class="outbox-modal-value">' + esc(item.from_account) + '</div></div>';
+        if (item.event_start) {
+          body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Start</div><div class="outbox-modal-value">' + new Date(item.event_start).toLocaleString() + '</div></div>';
+        }
+        if (item.event_end) {
+          body += '<div class="outbox-modal-field"><div class="outbox-modal-label">End</div><div class="outbox-modal-value">' + new Date(item.event_end).toLocaleString() + '</div></div>';
+        }
+        if (item.event_location) {
+          body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Location</div><div class="outbox-modal-value">' + esc(item.event_location) + '</div></div>';
+        }
+        if (item.event_attendees && item.event_attendees.length) {
+          body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Attendees</div><div class="outbox-modal-value">' + esc(item.event_attendees.join(", ")) + '</div></div>';
+        }
+        if (item.event_description) {
+          body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Description</div><div class="outbox-modal-body-content">' + esc(item.event_description) + '</div></div>';
+        }
+      }
+
+      if (item.ai_reasoning) {
+        body += '<div class="outbox-modal-field"><div class="outbox-modal-label">AI Notes</div><div class="outbox-modal-value" style="font-style:italic;color:#666">' + esc(item.ai_reasoning) + '</div></div>';
+      }
+
+      document.getElementById("outbox-modal-body").innerHTML = body;
+      document.getElementById("outbox-modal-bg").classList.add("open");
+    }
+
+    function closeOutboxModal() {
+      document.getElementById("outbox-modal-bg").classList.remove("open");
+      currentOutboxId = null;
+    }
+
+    async function approveFromModal() {
+      if (!currentOutboxId) return;
+      const btns = document.querySelectorAll(".outbox-modal-btn");
+      btns.forEach(b => b.disabled = true);
+      try {
+        await fetch("/api/outbox/" + currentOutboxId + "/approve", { method: "POST" });
+        closeOutboxModal();
+        setTimeout(refreshOutbox, 300);
+      } catch (_) {
+        btns.forEach(b => b.disabled = false);
+      }
+    }
+
+    async function rejectFromModal() {
+      if (!currentOutboxId) return;
+      const btns = document.querySelectorAll(".outbox-modal-btn");
+      btns.forEach(b => b.disabled = true);
+      try {
+        await fetch("/api/outbox/" + currentOutboxId + "/reject", { method: "POST" });
+        closeOutboxModal();
+        setTimeout(refreshOutbox, 300);
+      } catch (_) {
+        btns.forEach(b => b.disabled = false);
+      }
+    }
+
+    // AI Chat
+    let aiChatAccounts = [];
+
+    function toggleAIChat() {
+      const panel = document.getElementById("ai-chat-panel");
+      panel.classList.toggle("open");
+      if (panel.classList.contains("open")) {
+        loadAIChatAccounts();
+        document.getElementById("ai-chat-input").focus();
+      }
+    }
+
+    async function loadAIChatAccounts() {
+      try {
+        const resp = await fetch("/api/email/accounts");
+        aiChatAccounts = await resp.json();
+        const select = document.getElementById("ai-chat-from");
+        select.innerHTML = '<option value="">Select sending account...</option>' +
+          aiChatAccounts.map(a => `<option value="${esc(a.email)}">${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`).join("");
+        if (aiChatAccounts.length === 1) {
+          select.value = aiChatAccounts[0].email;
+        }
+      } catch (e) {
+        console.error("Load accounts:", e);
+      }
+    }
+
+    function addAIChatMessage(text, type) {
+      const msgs = document.getElementById("ai-chat-messages");
+      const div = document.createElement("div");
+      div.className = "ai-chat-msg " + type;
+      div.innerHTML = text;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    async function sendAIChat() {
+      const input = document.getElementById("ai-chat-input");
+      const btn = document.getElementById("ai-chat-send");
+      const fromSelect = document.getElementById("ai-chat-from");
+      const prompt = input.value.trim();
+
+      if (!prompt) return;
+      if (!fromSelect.value) {
+        addAIChatMessage("Please select a sending account first.", "error");
+        return;
+      }
+
+      // Add user message
+      addAIChatMessage(esc(prompt), "user");
+      input.value = "";
+      input.style.height = "auto";
+      btn.disabled = true;
+
+      try {
+        const resp = await fetch("/api/ai-assistant", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            from_account: fromSelect.value,
+            source_project: "dashboard",
+            source_session: null
+          })
+        });
+        const data = await resp.json();
+
+        if (data.ok && data.item) {
+          const item = data.item;
+          let msg = "";
+          if (item.type === "email") {
+            msg = `<strong>✓ Email drafted</strong><br>To: ${esc((item.email_to || []).join(", "))}<br>Subject: ${esc(item.email_subject || "")}<br><br><em>${esc(data.ai_reasoning || "")}</em><br><br>Check the AI Outbox to approve and send.`;
+          } else {
+            msg = `<strong>✓ Event drafted</strong><br>Title: ${esc(item.event_title || "")}<br>When: ${item.event_start ? new Date(item.event_start).toLocaleString() : "TBD"}<br><br><em>${esc(data.ai_reasoning || "")}</em><br><br>Check the AI Outbox to approve.`;
+          }
+          addAIChatMessage(msg, "success");
+          setTimeout(refreshOutbox, 500);
+        } else {
+          addAIChatMessage("Error: " + (data.error || "Unknown error"), "error");
+        }
+      } catch (e) {
+        addAIChatMessage("Error: " + e.message, "error");
+      }
+
+      btn.disabled = false;
+    }
+
     // Initial load
     refresh();
+    refreshOutbox();
     refreshCheckpoints();
     refreshBriefing();
     refreshMorningRefresh();
@@ -1604,6 +2263,7 @@
     refreshTerminals();
     setInterval(refreshMaintenance, 60000); // Refresh maintenance every minute
     setInterval(refreshTerminals, 10000); // Refresh terminals every 10 seconds
+    setInterval(refreshOutbox, 15000); // Refresh outbox every 15 seconds
 
     // Register service worker for PWA
     if ("serviceWorker" in navigator) {

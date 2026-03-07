@@ -256,3 +256,34 @@ CREATE TABLE user_tasks (
 CREATE INDEX idx_user_tasks_project ON user_tasks (project);
 CREATE INDEX idx_user_tasks_parent ON user_tasks (parent_id);
 CREATE INDEX idx_user_tasks_sort ON user_tasks (sort_order);
+
+-- AI Outbox: Pending emails and calendar events awaiting approval
+CREATE TABLE IF NOT EXISTS ai_outbox (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  type TEXT NOT NULL CHECK (type IN ('email', 'event')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'sent', 'failed')),
+  from_account TEXT NOT NULL,
+  source_project TEXT,
+  source_session TEXT,
+  email_to TEXT[],
+  email_cc TEXT[],
+  email_bcc TEXT[],
+  email_subject TEXT,
+  email_body_html TEXT,
+  email_body_text TEXT,
+  event_title TEXT,
+  event_description TEXT,
+  event_start TIMESTAMPTZ,
+  event_end TIMESTAMPTZ,
+  event_location TEXT,
+  event_attendees TEXT[],
+  event_all_day BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  approved_at TIMESTAMPTZ,
+  sent_at TIMESTAMPTZ,
+  error_message TEXT,
+  original_prompt TEXT,
+  ai_reasoning TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_status ON ai_outbox(status);
+CREATE INDEX IF NOT EXISTS idx_outbox_created ON ai_outbox(created_at DESC);

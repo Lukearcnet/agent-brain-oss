@@ -349,7 +349,43 @@
         opt.textContent = p;
         selectEl.appendChild(opt);
       });
+
+      // Add "+ New Project..." option
+      const newOpt = document.createElement('option');
+      newOpt.value = '__new__';
+      newOpt.textContent = '+ New Project...';
+      newOpt.style.fontStyle = 'italic';
+      newOpt.style.color = '#007aff';
+      selectEl.appendChild(newOpt);
     }
+
+    // Handle project select change
+    document.getElementById('new-task-project').addEventListener('change', function(e) {
+      if (e.target.value === '__new__') {
+        const projectName = prompt('Enter new project name:');
+        if (projectName && projectName.trim()) {
+          // Add new option and select it
+          const opt = document.createElement('option');
+          opt.value = projectName.trim();
+          opt.textContent = projectName.trim();
+          // Insert before the "+ New Project..." option
+          const newOpt = e.target.querySelector('[value="__new__"]');
+          e.target.insertBefore(opt, newOpt);
+          e.target.value = projectName.trim();
+
+          // Also add to filter pills
+          const pill = document.createElement('div');
+          pill.className = 'filter-pill';
+          pill.dataset.project = projectName.trim();
+          pill.textContent = projectName.trim();
+          pill.onclick = () => setFilter(projectName.trim());
+          document.getElementById('filters').insertBefore(pill, document.querySelector('.filter-pill[data-project="__new__"]'));
+        } else {
+          // Reset to "No project" if cancelled
+          e.target.value = '';
+        }
+      }
+    });
 
     function setFilter(project) {
       activeFilter = project;

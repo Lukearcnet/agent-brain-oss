@@ -47,6 +47,8 @@ function getAnthropicClient() {
 const { AuthBroker } = require("./lib/auth-broker");
 const handoff = require("./lib/handoff");
 const emailSynth = require("./lib/email-synth");
+const gmailClient = require("./lib/email-synth/gmail-client");
+const gcalClient = require("./lib/calendar/gcal-client");
 const calendar = require("./lib/calendar");
 const maintenance = require("./lib/maintenance");
 const app = express();
@@ -2217,6 +2219,33 @@ app.post("/api/terminals/close-all", (_req, res) => {
   }
 });
 
+// Focus terminal by session title (fuzzy match)
+app.post("/api/terminals/focus-by-title", (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title) {
+      return res.status(400).json({ error: "title required" });
+    }
+
+    const windows = terminalManager.listWindows();
+    // Find window where name contains the session title (case-insensitive)
+    const match = windows.find(w => {
+      const name = w.name.toLowerCase();
+      const search = title.toLowerCase();
+      return name.includes(search) || (w.sessionName && w.sessionName.toLowerCase().includes(search));
+    });
+
+    if (!match) {
+      return res.json({ ok: false, error: "No matching terminal found" });
+    }
+
+    const success = terminalManager.focusWindow(match.index);
+    res.json({ ok: success, index: match.index, name: match.sessionName || match.name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Morning Refresh ─────────────────────────────────────────────────────────
 
 // Get pending morning refreshes
@@ -2658,6 +2687,414 @@ curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \\
   }
 });
 
+// ── AI Outbox (pending emails + calendar events) ──────────────────────────────
+
+// Create a new outbox item (email or event draft)
+app.post("/api/outbox", async (req, res) => {
+  try {
+    const item = req.body;
+    if (!item.type || !["email", "event"].includes(item.type)) {
+      return res.status(400).json({ error: "type must be 'email' or 'event'" });
+    }
+    if (!item.from_account) {
+      return res.status(400).json({ error: "from_account required" });
+    }
+
+    // Set defaults
+    item.status = "pending";
+
+    const created = await db.createOutboxItem(item);
+    if (!created) return res.status(500).json({ error: "Failed to create outbox item" });
+
+    // Notify via ntfy
+    const label = item.type === "email" ?
+      `Email to ${(item.email_to || []).join(", ")}` :
+      `Event: ${item.event_title || "Untitled"}`;
+    sendPushNotification({ title: `AI Outbox: ${label}`, message: `From: ${item.from_account}\nApproval needed`, priority: 3 });
+
+    res.json(created);
+  } catch (err) {
+    console.error("[outbox] Create error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List outbox items (optionally filter by status)
+app.get("/api/outbox", async (req, res) => {
+  try {
+    const status = req.query.status || null;
+    const items = await db.getOutboxItems(status);
+    res.json(items);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get single outbox item
+app.get("/api/outbox/:id", async (req, res) => {
+  try {
+    const item = await db.getOutboxItem(req.params.id);
+    if (!item) return res.status(404).json({ error: "Not found" });
+    res.json(item);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update outbox item (edit before approving)
+app.put("/api/outbox/:id", async (req, res) => {
+  try {
+    const ok = await db.updateOutboxItem(req.params.id, req.body);
+    if (!ok) return res.status(500).json({ error: "Update failed" });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Approve an outbox item (sends email or creates calendar event)
+app.post("/api/outbox/:id/approve", async (req, res) => {
+  try {
+    const item = await db.getOutboxItem(req.params.id);
+    if (!item) return res.status(404).json({ error: "Not found" });
+
+    // Mark as approved first
+    await db.updateOutboxItem(req.params.id, {
+      status: "approved",
+      approved_at: new Date().toISOString()
+    });
+
+    if (item.type === "email") {
+      // Send email via Gmail API
+      try {
+        // Find account by email address
+        const { data: account, error: acctErr } = await db.supabase
+          .from("email_accounts")
+          .select("*")
+          .eq("email", item.from_account)
+          .single();
+
+        if (acctErr || !account) {
+          await db.updateOutboxItem(req.params.id, {
+            status: "failed",
+            error_message: "Email account not found: " + item.from_account
+          });
+          return res.json({ ok: true, status: "failed", error: "Email account not found" });
+        }
+
+        // Set up token refresh callback
+        const onTokenRefresh = async (newTokens) => {
+          await db.supabase.from("email_accounts").update({
+            tokens_encrypted: gmailClient.encrypt(JSON.stringify(newTokens)),
+            updated_at: new Date().toISOString()
+          }).eq("id", account.id);
+        };
+
+        // Create Gmail client and send
+        const { gmail } = gmailClient.createGmailClient(account, onTokenRefresh);
+        const result = await gmailClient.sendMessage(gmail, {
+          from: account.email,
+          to: (item.email_to || []).join(", "),
+          cc: item.email_cc ? item.email_cc.join(", ") : undefined,
+          bcc: item.email_bcc ? item.email_bcc.join(", ") : undefined,
+          subject: item.email_subject || "",
+          body: item.email_body_html || item.email_body_text || ""
+        });
+
+        await db.updateOutboxItem(req.params.id, {
+          status: "sent",
+          sent_at: new Date().toISOString()
+        });
+
+        console.log("[outbox] Email sent:", item.email_subject, "→", item.email_to);
+        res.json({ ok: true, status: "sent", messageId: result.id });
+      } catch (sendErr) {
+        console.error("[outbox] Email send failed:", sendErr.message);
+        await db.updateOutboxItem(req.params.id, {
+          status: "failed",
+          error_message: sendErr.message
+        });
+        res.json({ ok: true, status: "failed", error: sendErr.message });
+      }
+    } else if (item.type === "event") {
+      // Create calendar event via Google Calendar API
+      try {
+        // Find account by email address
+        const { data: account, error: acctErr } = await db.supabase
+          .from("email_accounts")
+          .select("*")
+          .eq("email", item.from_account)
+          .single();
+
+        if (acctErr || !account) {
+          await db.updateOutboxItem(req.params.id, {
+            status: "failed",
+            error_message: "Calendar account not found: " + item.from_account
+          });
+          return res.json({ ok: true, status: "failed", error: "Calendar account not found" });
+        }
+
+        // Set up token refresh callback
+        const onTokenRefresh = async (newTokens) => {
+          await db.supabase.from("email_accounts").update({
+            tokens_encrypted: gcalClient.encrypt(JSON.stringify(newTokens)),
+            updated_at: new Date().toISOString()
+          }).eq("id", account.id);
+        };
+
+        // Create Calendar client
+        const { cal } = gcalClient.createCalendarClient(account, onTokenRefresh);
+
+        // Create the event
+        const eventData = {
+          title: item.event_title || "Untitled Event",
+          description: item.event_description || "",
+          location: item.event_location || "",
+          start: item.event_start,
+          end: item.event_end,
+          allDay: item.event_all_day || false,
+          attendees: item.event_attendees || [],
+          addMeet: true // Auto-add Google Meet link
+        };
+
+        const result = await gcalClient.createEvent(cal, "primary", eventData);
+
+        await db.updateOutboxItem(req.params.id, {
+          status: "sent",
+          sent_at: new Date().toISOString()
+        });
+
+        console.log("[outbox] Calendar event created:", item.event_title);
+        res.json({ ok: true, status: "sent", eventId: result.id });
+      } catch (calErr) {
+        console.error("[outbox] Calendar event failed:", calErr.message);
+        await db.updateOutboxItem(req.params.id, {
+          status: "failed",
+          error_message: calErr.message
+        });
+        res.json({ ok: true, status: "failed", error: calErr.message });
+      }
+    } else {
+      res.json({ ok: true, status: "approved" });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reject an outbox item
+app.post("/api/outbox/:id/reject", async (req, res) => {
+  try {
+    await db.updateOutboxItem(req.params.id, { status: "rejected" });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bulk approve all pending items (sends emails immediately)
+app.post("/api/outbox/approve-all", async (req, res) => {
+  try {
+    const pending = await db.getOutboxItems("pending");
+    let approved = 0;
+    let sent = 0;
+    let failed = 0;
+
+    for (const item of pending) {
+      try {
+        // Mark as approved
+        await db.updateOutboxItem(item.id, {
+          status: "approved",
+          approved_at: new Date().toISOString()
+        });
+        approved++;
+
+        if (item.type === "email") {
+          // Send email via Gmail API
+          const { data: account } = await db.supabase
+            .from("email_accounts")
+            .select("*")
+            .eq("email", item.from_account)
+            .single();
+
+          if (account) {
+            const onTokenRefresh = async (newTokens) => {
+              await db.supabase.from("email_accounts").update({
+                tokens_encrypted: gmailClient.encrypt(JSON.stringify(newTokens)),
+                updated_at: new Date().toISOString()
+              }).eq("id", account.id);
+            };
+
+            const { gmail } = gmailClient.createGmailClient(account, onTokenRefresh);
+            await gmailClient.sendMessage(gmail, {
+              from: account.email,
+              to: (item.email_to || []).join(", "),
+              cc: item.email_cc ? item.email_cc.join(", ") : undefined,
+              bcc: item.email_bcc ? item.email_bcc.join(", ") : undefined,
+              subject: item.email_subject || "",
+              body: item.email_body_html || item.email_body_text || ""
+            });
+
+            await db.updateOutboxItem(item.id, {
+              status: "sent",
+              sent_at: new Date().toISOString()
+            });
+            sent++;
+          } else {
+            await db.updateOutboxItem(item.id, {
+              status: "failed",
+              error_message: "Account not found: " + item.from_account
+            });
+            failed++;
+          }
+        }
+      } catch (e) {
+        console.error("[outbox] Approve-all item failed:", e.message);
+        await db.updateOutboxItem(item.id, {
+          status: "failed",
+          error_message: e.message
+        });
+        failed++;
+      }
+    }
+
+    res.json({ ok: true, approved, sent, failed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete an outbox item
+app.delete("/api/outbox/:id", async (req, res) => {
+  try {
+    const ok = await db.deleteOutboxItem(req.params.id);
+    if (!ok) return res.status(500).json({ error: "Delete failed" });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── AI Assistant (natural language → outbox) ─────────────────────────────────
+
+app.post("/api/ai-assistant", async (req, res) => {
+  try {
+    const { prompt, from_account, source_project, source_session } = req.body;
+    if (!prompt) return res.status(400).json({ error: "prompt required" });
+    if (!from_account) return res.status(400).json({ error: "from_account required (email address to send from)" });
+
+    const client = getAnthropicClient();
+    if (!client) return res.status(500).json({ error: "Anthropic API key not configured" });
+
+    // Get current time for context
+    const now = new Date();
+    const timeContext = `Current time: ${now.toLocaleString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })}`;
+
+    const systemPrompt = `You are an AI assistant that helps draft emails and calendar events. Parse the user's natural language request and output structured JSON.
+
+${timeContext}
+
+Output ONLY valid JSON matching one of these schemas:
+
+For EMAIL:
+{
+  "type": "email",
+  "email_to": ["recipient@example.com"],
+  "email_cc": ["optional@example.com"],
+  "email_subject": "Subject line",
+  "email_body_html": "<p>HTML body with formatting</p>",
+  "email_body_text": "Plain text fallback",
+  "ai_reasoning": "Brief explanation of what you drafted and why"
+}
+
+For CALENDAR EVENT:
+{
+  "type": "event",
+  "event_title": "Meeting title",
+  "event_description": "Optional description",
+  "event_start": "2026-03-08T10:00:00Z",
+  "event_end": "2026-03-08T11:00:00Z",
+  "event_location": "Optional location",
+  "event_attendees": ["attendee@example.com"],
+  "event_all_day": false,
+  "ai_reasoning": "Brief explanation"
+}
+
+Guidelines:
+- For emails, use professional formatting with proper HTML (<p>, <strong>, <br>, etc.)
+- Infer reasonable defaults (e.g., 1-hour meetings, formal email tone)
+- If the request is ambiguous, make reasonable assumptions and explain in ai_reasoning
+- Always include ai_reasoning explaining your interpretation`;
+
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1500,
+      system: systemPrompt,
+      messages: [{ role: "user", content: prompt }]
+    });
+
+    const text = response.content[0]?.text || "";
+
+    // Extract JSON from response (handle markdown code blocks)
+    let jsonStr = text;
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1];
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr.trim());
+    } catch (e) {
+      return res.status(400).json({ error: "Failed to parse AI response", raw: text });
+    }
+
+    // Validate and create outbox item
+    if (!parsed.type || !["email", "event"].includes(parsed.type)) {
+      return res.status(400).json({ error: "Invalid type in AI response", parsed });
+    }
+
+    const outboxItem = {
+      type: parsed.type,
+      from_account,
+      source_project: source_project || null,
+      source_session: source_session || null,
+      original_prompt: prompt,
+      ai_reasoning: parsed.ai_reasoning || null
+    };
+
+    if (parsed.type === "email") {
+      outboxItem.email_to = parsed.email_to || [];
+      outboxItem.email_cc = parsed.email_cc || null;
+      outboxItem.email_bcc = parsed.email_bcc || null;
+      outboxItem.email_subject = parsed.email_subject || "";
+      outboxItem.email_body_html = parsed.email_body_html || "";
+      outboxItem.email_body_text = parsed.email_body_text || "";
+    } else {
+      outboxItem.event_title = parsed.event_title || "";
+      outboxItem.event_description = parsed.event_description || null;
+      outboxItem.event_start = parsed.event_start || null;
+      outboxItem.event_end = parsed.event_end || null;
+      outboxItem.event_location = parsed.event_location || null;
+      outboxItem.event_attendees = parsed.event_attendees || [];
+      outboxItem.event_all_day = parsed.event_all_day || false;
+    }
+
+    const created = await db.createOutboxItem(outboxItem);
+    if (!created) return res.status(500).json({ error: "Failed to create outbox item" });
+
+    // Send notification
+    const label = parsed.type === "email"
+      ? `Email to ${(outboxItem.email_to || []).join(", ")}`
+      : `Event: ${outboxItem.event_title || "Untitled"}`;
+    sendPushNotification({ title: `AI Drafted: ${label}`, message: `From: ${from_account}\nApproval needed`, priority: 3 });
+
+    res.json({ ok: true, item: created, ai_reasoning: parsed.ai_reasoning });
+
+  } catch (err) {
+    console.error("[ai-assistant] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Maintenance Session Spawning ──────────────────────────────────────────────
 
 app.post("/api/maintenance/spawn", async (req, res) => {
@@ -2867,9 +3304,9 @@ app.post("/api/tasks/reorder", async (req, res) => {
 });
 
 // Get available projects for tagging
-app.get("/api/tasks/projects", (_req, res) => {
-  // Return a simple list of known projects plus some extras
-  const projects = [
+app.get("/api/tasks/projects", async (_req, res) => {
+  // Default projects
+  const defaults = [
     "Agent Brain",
     "Email Synthesizer",
     "AI Cron Monitor",
@@ -2877,7 +3314,18 @@ app.get("/api/tasks/projects", (_req, res) => {
     "Insiders MVP",
     "Arc Social"
   ];
-  res.json(projects);
+
+  // Query unique projects from existing tasks
+  try {
+    const tasks = await db.getUserTasks();
+    const taskProjects = [...new Set(tasks.map(t => t.project).filter(Boolean))];
+    // Merge and dedupe
+    const all = [...new Set([...defaults, ...taskProjects])].sort();
+    res.json(all);
+  } catch (err) {
+    console.error("[tasks/projects] Error:", err.message);
+    res.json(defaults);
+  }
 });
 
 // ── File Lock Registry ────────────────────────────────────────────────────────
