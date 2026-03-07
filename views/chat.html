@@ -160,6 +160,9 @@
       color: #636366;
     }
     .tool-block.expanded .tool-output { display: block; }
+    /* Embed mode: hide header when loaded in iframe, keep functional elements */
+    body.embed-mode .header { display: none; }
+    body.embed-mode .messages { padding-top: 8px; }
   </style>
 </head>
 <body>
@@ -240,6 +243,10 @@
     const SESSION_ID = "{{SESSION_ID}}";
     const messagesEl = document.getElementById("messages");
     let allFolders = [];
+
+    // Detect embed mode (?embed=1) for iframe preview
+    const embedMode = new URLSearchParams(window.location.search).get("embed") === "1";
+    if (embedMode) document.body.classList.add("embed-mode");
 
     // ── Action menu ──
     function openActionMenu() {
