@@ -96,6 +96,24 @@ echo "$RESPONSE"
 
 **Important:** Always use `--max-time 14410` (4 hours + 10s buffer) for checkpoint curls.
 
+## Session-to-Folder Assignment
+Sessions are automatically assigned to project folders based on `projects.json`:
+- When a Claude Code session starts in a directory defined in `projects.json`, Agent Brain auto-creates an Agent Brain session and assigns it to the matching project folder
+- Handoffs inherit the source session's folder, or fall back to the project folder if source was unassigned
+- Morning refreshes and AI Cron sessions also auto-assign to their respective project folders
+- If a project folder doesn't exist, it's auto-created
+
+To add a new project, add an entry to `projects.json` with:
+```json
+"project-key": {
+  "dir": "-path-to-directory",
+  "name": "Human Readable Name",
+  "cwd": "/actual/filesystem/path",
+  "repo_url": "https://github.com/...",
+  "default_branch": "main"
+}
+```
+
 ## Project Context
 - Node.js/Express server on port 3030
 - Supabase for all persistent data (sessions, memory, events, orchestrator, checkpoints, messages)

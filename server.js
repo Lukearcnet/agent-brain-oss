@@ -1232,6 +1232,23 @@ app.post("/api/hooks/permission-request", async (req, res) => {
       newSession.messages = [];
       await autoNameSession(newSession);
       await saveSession(newSession);
+
+      // Auto-assign to project folder based on PROJECT_KEYWORDS
+      const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.dir === projectDir);
+      if (projectConfig && projectConfig.name) {
+        const folders = await db.loadFolders();
+        let targetFolder = folders.find(f => f.name === projectConfig.name);
+        if (!targetFolder) {
+          // Create folder for this project
+          const { data, error } = await db.supabase.from("session_folders").insert({ name: projectConfig.name }).select().single();
+          if (!error && data) targetFolder = data;
+        }
+        if (targetFolder) {
+          await moveToFolder(newSession.session_id, targetFolder.id);
+          console.log(`[hook] Assigned session to folder "${targetFolder.name}"`);
+        }
+      }
+
       console.log(`[hook] Auto-adopted CC session ${sessionId.slice(0, 12)}... as "${newSession.title}" (${newSession.session_id})`);
       logEvent("session_adopted", newSession.session_id, { cc_session_id: sessionId, project_dir: projectDir, title: newSession.title });
     }
@@ -2080,9 +2097,20 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
     newSession.handoff_from = record.from_session_title || null;
     await saveSession(newSession);
 
-    // Assign to the same folder as the source session
-    if (record.source_folder_id) {
-      await moveToFolder(newSession.session_id, record.source_folder_id);
+    // Assign to the same folder as the source session, or look up project folder
+    let targetFolderId = record.source_folder_id;
+    if (!targetFolderId && projectConfig.name) {
+      const folders = await db.loadFolders();
+      const projectFolder = folders.find(f => f.name === projectConfig.name);
+      if (projectFolder) targetFolderId = projectFolder.id;
+      else {
+        // Create folder for this project
+        const { data, error } = await db.supabase.from("session_folders").insert({ name: projectConfig.name }).select().single();
+        if (!error && data) targetFolderId = data.id;
+      }
+    }
+    if (targetFolderId) {
+      await moveToFolder(newSession.session_id, targetFolderId);
     }
 
     // Spawn the terminal session
@@ -2401,9 +2429,19 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
     newSession.handoff_from = "Morning Refresh";
     await saveSession(newSession);
 
-    // Assign to the same folder as the source
-    if (record.source_folder_id) {
-      await moveToFolder(newSession.session_id, record.source_folder_id);
+    // Assign to the same folder as the source, or look up project folder
+    let targetFolderId = record.source_folder_id;
+    if (!targetFolderId && projectConfig.name) {
+      const folders = await db.loadFolders();
+      const projectFolder = folders.find(f => f.name === projectConfig.name);
+      if (projectFolder) targetFolderId = projectFolder.id;
+      else {
+        const { data, error } = await db.supabase.from("session_folders").insert({ name: projectConfig.name }).select().single();
+        if (!error && data) targetFolderId = data.id;
+      }
+    }
+    if (targetFolderId) {
+      await moveToFolder(newSession.session_id, targetFolderId);
     }
 
     // Spawn the terminal session (append last reply section if available)
