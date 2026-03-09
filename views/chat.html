@@ -167,7 +167,7 @@
 </head>
 <body>
   <div class="header">
-    <a href="#" onclick="history.back(); return false;">&larr;</a>
+    <a href="#" onclick="goBack(); return false;">&larr;</a>
     <div class="title" id="chat-title">Chat</div>
     <button class="copy-btn" onclick="copyChat(this)">Copy</button>
     <button class="copy-btn" onclick="openActionMenu()" style="font-size:16px; padding:6px 10px;">&middot;&middot;&middot;</button>
@@ -257,6 +257,21 @@
       document.getElementById("main-actions").style.display = "";
       document.getElementById("folder-picker").style.display = "none";
       document.getElementById("action-modal").style.display = "flex";
+    }
+
+    function goBack() {
+      // When chat is rendered inside the sessions preview iframe on mobile,
+      // route the back action to the parent so it can restore the session list.
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "agent-brain-sessions-back" }, window.location.origin);
+        return;
+      }
+
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        window.location.href = "/";
+      }
     }
 
     function closeActionMenu(e) {
