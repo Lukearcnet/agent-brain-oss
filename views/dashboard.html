@@ -602,6 +602,132 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.2);
     }
     .refresh-project-dismiss:active { background: #78350f; }
+    .refresh-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .refresh-item-card {
+      background: rgba(255,255,255,0.92);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .refresh-item-header {
+      width: 100%;
+      border: none;
+      background: transparent;
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      cursor: pointer;
+      text-align: left;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .refresh-item-header:active { background: rgba(146, 64, 14, 0.06); }
+    .refresh-rank {
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: 700;
+      color: #92400e;
+      background: rgba(245, 158, 11, 0.18);
+      border-radius: 999px;
+      padding: 4px 8px;
+      margin-top: 1px;
+    }
+    .refresh-item-body {
+      flex: 1;
+      min-width: 0;
+    }
+    .refresh-item-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #78350f;
+      line-height: 1.3;
+    }
+    .refresh-item-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #92400e;
+      line-height: 1.4;
+    }
+    .refresh-reason-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .refresh-reason-chip {
+      font-size: 11px;
+      color: #92400e;
+      background: #fff7ed;
+      border: 1px solid rgba(146, 64, 14, 0.12);
+      border-radius: 999px;
+      padding: 3px 8px;
+    }
+    .refresh-chevron {
+      flex-shrink: 0;
+      color: #b45309;
+      font-size: 14px;
+      transition: transform 0.2s;
+      margin-top: 2px;
+    }
+    .refresh-item-card.expanded .refresh-chevron { transform: rotate(90deg); }
+    .refresh-item-detail {
+      display: none;
+      padding: 0 16px 14px;
+      border-top: 1px solid rgba(146, 64, 14, 0.08);
+      background: rgba(255,255,255,0.55);
+    }
+    .refresh-item-card.expanded .refresh-item-detail { display: block; }
+    .refresh-detail-line {
+      font-size: 13px;
+      color: #78350f;
+      line-height: 1.45;
+      margin-top: 10px;
+    }
+    .refresh-launch-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .refresh-launch-btn {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .refresh-launch-btn.claude {
+      background: linear-gradient(135deg, #d4a574, #a55b2a);
+      color: #fff;
+    }
+    .refresh-launch-btn.codex {
+      background: linear-gradient(135deg, #64b5f6, #1565c0);
+      color: #fff;
+    }
+    .refresh-launch-btn.secondary {
+      background: #fff;
+      color: #92400e;
+      border: 1px solid rgba(146, 64, 14, 0.15);
+    }
+    .refresh-launch-btn:disabled { opacity: 0.5; cursor: default; }
+    .refresh-show-more {
+      margin-top: 12px;
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.7);
+      color: #92400e;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
 
     /* Terminal Management */
     .terminal-card {
@@ -1142,6 +1268,7 @@
     let lastCheckpointIds = [];
     let checkpointTextareaValues = {}; // Preserve user input during re-renders
     let expandedQuestions = {}; // Track which questions are expanded
+    let sessionCheckpointLookup = new Map();
 
     // Load persisted checkpoint text from localStorage
     try {
@@ -1155,10 +1282,39 @@
       } catch (_) {}
     }
 
+    async function buildCheckpointSessionLookup() {
+      try {
+        const resp = await fetch("/api/sessions");
+        const sessions = await resp.json();
+        sessionCheckpointLookup = new Map();
+        for (const session of sessions) {
+          const keys = [
+            session.session_id ? "id:" + session.session_id : "",
+            session.title ? "title:" + session.title : "",
+            session.raw_title ? "title:" + session.raw_title : ""
+          ].filter(Boolean);
+          for (const key of keys) {
+            sessionCheckpointLookup.set(key, {
+              provider: session.provider === "codex" ? "codex" : "claude",
+              title: session.title
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    function enrichCheckpointProvider(cp) {
+      const byId = cp.session_id ? sessionCheckpointLookup.get("id:" + cp.session_id) : null;
+      const byTitle = cp.session_title ? sessionCheckpointLookup.get("title:" + cp.session_title) : null;
+      const match = byId || byTitle;
+      return match ? { ...cp, provider: match.provider } : cp;
+    }
+
     async function refreshCheckpoints() {
       try {
+        await buildCheckpointSessionLookup();
         const resp = await fetch("/api/checkpoints");
-        const checkpoints = await resp.json();
+        const checkpoints = (await resp.json()).map(enrichCheckpointProvider);
 
         // Save all textarea values before potential re-render
         document.querySelectorAll('[id^="ckpt-input-"]').forEach(ta => {
@@ -1819,6 +1975,91 @@
 
     // Morning refresh
     var _morningRefreshes = [];
+    var _expandedRefreshes = {};
+    var _showAllMorningRefreshes = false;
+
+    function toggleMorningRefresh(id) {
+      _expandedRefreshes[id] = !_expandedRefreshes[id];
+      renderMorningRefresh();
+    }
+
+    function toggleAllMorningRefreshes() {
+      _showAllMorningRefreshes = !_showAllMorningRefreshes;
+      renderMorningRefresh();
+    }
+
+    function renderMorningRefresh() {
+      var refreshes = _morningRefreshes || [];
+      var el = document.getElementById("morning-refresh-section");
+      if (!refreshes.length) {
+        el.innerHTML = "";
+        return;
+      }
+
+      var visible = _showAllMorningRefreshes ? refreshes : refreshes.slice(0, 3);
+      var hiddenCount = Math.max(0, refreshes.length - visible.length);
+
+      var html = '<div class="refresh-card" style="position:relative;">';
+      html += '<button class="refresh-dismiss-all" onclick="dismissAllMorningRefresh(this)" title="Dismiss all">&times;</button>';
+      html += '<div class="refresh-header">';
+      html += '  <span class="refresh-icon">&#x2600;&#xFE0F;</span>';
+      html += '  <div>';
+      html += '    <div class="refresh-title">Morning Refresh Ready</div>';
+      html += '    <div class="refresh-subtitle">' + refreshes.length + ' ranked project recommendation' + (refreshes.length === 1 ? '' : 's') + '</div>';
+      html += '  </div>';
+      html += '</div>';
+      html += '<div class="refresh-list">';
+
+      for (var i = 0; i < visible.length; i++) {
+        var r = visible[i];
+        var expanded = !!_expandedRefreshes[r.id];
+        var label = r.project_name || r.project_dir.split("-").pop();
+        var targetProvider = r.target_provider === "codex" ? "Codex" : "Claude";
+        var targetTitle = r.target_session_title || "No mapped session yet";
+        var reasons = r.reason_codes || [];
+        var meta = [];
+        if (r.folder_name) meta.push(r.folder_name);
+        if (r.last_activity) meta.push(timeAgo(r.last_activity));
+        meta.push("Best target: " + targetProvider);
+
+        html += '<div class="refresh-item-card' + (expanded ? ' expanded' : '') + '">';
+        html += '  <button class="refresh-item-header" data-refresh-id="' + esc(r.id) + '" onclick="toggleMorningRefresh(this.dataset.refreshId)">';
+        html += '    <span class="refresh-rank">#' + (i + 1) + '</span>';
+        html += '    <div class="refresh-item-body">';
+        html += '      <div class="refresh-item-title">' + esc(label) + '</div>';
+        html += '      <div class="refresh-item-meta">' + esc(meta.join(' • ')) + '</div>';
+        if (reasons.length > 0) {
+          html += '      <div class="refresh-reason-row">';
+          for (var j = 0; j < Math.min(reasons.length, 3); j++) {
+            html += '<span class="refresh-reason-chip">' + esc(reasons[j]) + '</span>';
+          }
+          html += '      </div>';
+        }
+        html += '    </div>';
+        html += '    <span class="refresh-chevron">&#8250;</span>';
+        html += '  </button>';
+        html += '  <div class="refresh-item-detail">';
+        html += '    <div class="refresh-detail-line"><strong>Resume target:</strong> ' + esc(targetTitle) + '</div>';
+        html += '    <div class="refresh-detail-line"><strong>Signals:</strong> ' + esc((reasons.length ? reasons.join(' • ') : 'No additional signals')) + '</div>';
+        html += '    <div class="refresh-detail-line"><strong>Pending:</strong> ' + esc((r.pending_checkpoint_count || 0) + ' checkpoints') + ', ' + esc((r.unread_count || 0) + ' unread messages') + (r.pending_permission ? ', pending permission' : '') + '</div>';
+        html += '    <div class="refresh-launch-row">';
+        html += '      <button class="refresh-launch-btn claude' + (r.target_provider === "claude" ? '' : ' secondary') + '" data-refresh-id="' + esc(r.id) + '" onclick="event.stopPropagation(); spawnMorningRefresh(this.dataset.refreshId, \'claude\', this)">Start in Claude</button>';
+        html += '      <button class="refresh-launch-btn codex' + (r.target_provider === "codex" ? '' : ' secondary') + '" data-refresh-id="' + esc(r.id) + '" onclick="event.stopPropagation(); spawnMorningRefresh(this.dataset.refreshId, \'codex\', this)">Start in Codex</button>';
+        html += '      <button class="refresh-launch-btn secondary" data-refresh-id="' + esc(r.id) + '" onclick="event.stopPropagation(); dismissMorningRefresh(this.dataset.refreshId, this)">Dismiss</button>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '</div>';
+      }
+
+      html += '</div>';
+      if (hiddenCount > 0) {
+        html += '<button class="refresh-show-more" onclick="toggleAllMorningRefreshes()">' + (_showAllMorningRefreshes ? 'Show Top 3' : 'Show ' + hiddenCount + ' More') + '</button>';
+      } else if (refreshes.length > 3) {
+        html += '<button class="refresh-show-more" onclick="toggleAllMorningRefreshes()">Show Top 3</button>';
+      }
+      html += '</div>';
+      el.innerHTML = html;
+    }
 
     async function refreshMorningRefresh() {
       try {
@@ -1832,31 +2073,7 @@
         }
 
         _morningRefreshes = refreshes;
-
-        var html = '<div class="refresh-card" style="position:relative;">';
-        html += '<button class="refresh-dismiss-all" onclick="dismissAllMorningRefresh(this)" title="Dismiss all">&times;</button>';
-        html += '<div class="refresh-header">';
-        html += '  <span class="refresh-icon">&#x2600;&#xFE0F;</span>';
-        html += '  <div>';
-        html += '    <div class="refresh-title">Morning Refresh Ready</div>';
-        html += '    <div class="refresh-subtitle">' + refreshes.length + ' project(s) with fresh sessions waiting</div>';
-        html += '  </div>';
-        html += '</div>';
-        html += '<div class="refresh-projects">';
-        for (var i = 0; i < refreshes.length; i++) {
-          var r = refreshes[i];
-          var status = r.status === "spawned" ? "spawned" : "";
-          var label = r.status === "spawned" ? "Started" : (r.project_name || r.project_dir.split("-").pop());
-          html += '<div class="refresh-project-wrap">';
-          html += '<button class="refresh-project-btn ' + status + '" onclick="spawnMorningRefresh(\'' + esc(r.id) + '\', this)" ' + (r.status === "spawned" ? "disabled" : "") + '>' + esc(label) + '</button>';
-          if (r.status !== "spawned") {
-            html += '<button class="refresh-project-dismiss" onclick="dismissMorningRefresh(\'' + esc(r.id) + '\', this)" title="Dismiss">&times;</button>';
-          }
-          html += '</div>';
-        }
-        html += '</div>';
-        html += '</div>';
-        el.innerHTML = html;
+        renderMorningRefresh();
       } catch (_) {}
     }
 
@@ -1889,15 +2106,19 @@
       }
     }
 
-    async function spawnMorningRefresh(id, btn) {
+    async function spawnMorningRefresh(id, provider, btn) {
       btn.disabled = true;
       btn.textContent = "Starting...";
       try {
-        var resp = await fetch("/api/morning-refresh/" + id + "/spawn", { method: "POST" });
+        var resp = await fetch("/api/morning-refresh/" + id + "/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: provider })
+        });
         var result = await resp.json();
         if (result.ok) {
           btn.textContent = "Started";
-          btn.classList.add("spawned");
+          setTimeout(refreshMorningRefresh, 300);
         } else {
           btn.textContent = "Error";
           btn.disabled = false;

@@ -193,6 +193,9 @@
       <button onclick="handlePermission('deny')" style="flex:1; padding:10px; border-radius:10px; border:none; background:#ff3b30; color:#fff; font-size:15px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent;">Deny</button>
     </div>
   </div>
+  <div id="provider-note" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#f7f8fa; padding:10px 14px; font-size:13px; color:#636366;">
+    This session is controlled through checkpoints. Direct message injection is only available for Claude Desktop sessions.
+  </div>
   <div id="inject-area" style="flex-shrink:0;">
     <div style="padding:6px 12px; padding-bottom:max(10px, env(safe-area-inset-bottom)); background:#fff; border-top:1px solid #e8e8ed; display:flex; gap:8px; align-items:flex-end;">
       <textarea id="inject-input" rows="1" placeholder="Message..." oninput="autoResize(this)" style="flex:1; font-size:16px; padding:10px 16px; border:1px solid #e0e0e0; border-radius:22px; resize:none; max-height:120px; min-height:42px; font-family:-apple-system,system-ui,sans-serif; line-height:1.35; background:#f9f9f9; color:#1c1c1e;"></textarea>
@@ -270,7 +273,7 @@
       if (window.history.length > 1) {
         window.history.back();
       } else {
-        window.location.href = "/";
+        window.location.href = "/chat";
       }
     }
 
@@ -576,10 +579,26 @@
     }
 
     let isLinkedCC = false;
+    let isCodexSession = false;
     let lastMessageCount = 0;
     let pollTimer = null;
     let currentProjectDir = null;
     let currentCheckpointId = null;
+    let currentSessionTitle = null;
+    let currentProvider = null;
+    let currentSessionRawTitle = null;
+
+    function updateInputVisibility() {
+      const injectArea = document.getElementById("inject-area");
+      const providerNote = document.getElementById("provider-note");
+      const showComposer = !isCodexSession;
+      injectArea.style.display = showComposer ? "" : "none";
+      providerNote.style.display = showComposer ? "none" : "";
+    }
+
+    function normalizeProviderFamily(provider) {
+      return provider === "codex" ? "codex" : "claude";
+    }
 
     // ── Checkpoint handling ──
     function timeAgo(iso) {
@@ -598,8 +617,23 @@
     async function loadCheckpoints() {
       if (!currentProjectDir) return;
       try {
-        const resp = await fetch("/api/checkpoints?project_dir=" + encodeURIComponent(currentProjectDir));
-        const checkpoints = await resp.json();
+        const params = new URLSearchParams({
+          project_dir: currentProjectDir
+        });
+        if (SESSION_ID) params.set("session_id", SESSION_ID);
+        if (currentProvider) params.set("provider", currentProvider);
+        if (currentSessionTitle) params.set("session_title", currentSessionTitle);
+        const resp = await fetch("/api/checkpoints?" + params.toString());
+        let checkpoints = await resp.json();
+        checkpoints = checkpoints.filter(cp => {
+          const checkpointProvider = normalizeProviderFamily(cp.provider || currentProvider);
+          if (checkpointProvider !== currentProvider) return false;
+          if (cp.session_id) return cp.session_id === SESSION_ID;
+          if (cp.session_title) {
+            return cp.session_title === currentSessionTitle || cp.session_title === currentSessionRawTitle;
+          }
+          return false;
+        });
         const bar = document.getElementById("checkpoint-bar");
 
         if (checkpoints.length === 0) {
@@ -660,16 +694,21 @@
         const resp = await fetch("/api/sessions/" + SESSION_ID);
         const data = await resp.json();
         if (data.title) document.getElementById("chat-title").textContent = data.title;
+        currentSessionTitle = data.title || null;
+        currentSessionRawTitle = data.raw_title || data.title || null;
+        currentProvider = data.provider === "codex" ? "codex" : "claude";
         isLinkedCC = !!(data.cc_project_dir && data.claude_session_id);
+        isCodexSession = data.provider === "codex";
         currentProjectDir = data.cc_project_dir || null;
+        updateInputVisibility();
         if (data.messages) {
           renderMessages(data.messages);
           lastMessageCount = data.messages.length;
         }
         // Load checkpoints for this project
         if (currentProjectDir) loadCheckpoints();
-        // Start polling for linked Claude Code sessions
-        if (isLinkedCC) startPolling();
+        // Poll any live-backed session or any session with project checkpoints.
+        if (isLinkedCC || isCodexSession || currentProjectDir) startPolling();
       } catch (e) {}
     }
 
@@ -699,7 +738,7 @@
 
     // Poll immediately when tab becomes visible (Mobile Safari suspends timers in background)
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && isLinkedCC) {
+      if (document.visibilityState === "visible" && (isLinkedCC || isCodexSession || currentProjectDir)) {
         pollRefresh();
       }
     });
@@ -747,6 +786,7 @@
 
     async function injectMessage() {
       if (injecting) return;
+      if (isCodexSession) return;
       const injectInput = document.getElementById("inject-input");
       const injectBtn = document.getElementById("inject-btn");
       const content = injectInput.value.trim();

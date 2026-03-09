@@ -52,6 +52,7 @@ const gcalClient = require("./lib/calendar/gcal-client");
 const calendar = require("./lib/calendar");
 const codexDiscovery = require("./lib/codex-discovery");
 const maintenance = require("./lib/maintenance");
+const { normalizeSessionTitle, getDisplaySessionTitle, getProjectNameFromPath } = require("./lib/session-titles");
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
@@ -148,6 +149,135 @@ async function autoNameSession(session) {
   const projectName = getProjectName(session.cc_project_dir);
   const num = await getNextSessionNumber(projectName);
   session.title = projectName + " " + num;
+}
+
+function normalizeProviderFamily(provider) {
+  return provider === "codex" ? "codex" : "claude";
+}
+
+function sessionMatchesProviderFamily(session, provider) {
+  const family = normalizeProviderFamily(provider);
+  return family === "codex"
+    ? session.provider === "codex"
+    : session.provider !== "codex";
+}
+
+function getSessionDisplayTitle(session, fallbackProjectName = "") {
+  return getDisplaySessionTitle({
+    title: session.title,
+    projectName: fallbackProjectName || (session.cc_project_dir ? getProjectName(session.cc_project_dir) : ""),
+    provider: session.provider,
+    createdAt: session.created_at,
+    updatedAt: session.updated_at
+  });
+}
+
+function appendSessionBindingInstructions(briefing, { sessionId, provider, sessionTitle }) {
+  if (!sessionId) return briefing;
+
+  const normalizedProvider = normalizeProviderFamily(provider);
+  const checkpointUrl = normalizedProvider === "codex"
+    ? 'http://localhost:3030/api/checkpoints?blocking=false'
+    : 'http://localhost:3030/api/checkpoints';
+
+  return `${briefing}
+
+## Agent Brain Session Binding
+
+This session is attached to a specific Agent Brain session record.
+
+- Agent Brain session id: \`${sessionId}\`
+- Provider: \`${normalizedProvider}\`
+- Session label: ${sessionTitle || "(use current session title)"}
+
+When posting checkpoints, always include this session id:
+
+\`\`\`bash
+curl -s -X POST ${checkpointUrl} \\
+  -H "Content-Type: application/json" \\
+  -d '{"project_dir":"'$PROJECT_KEY'","session_id":"${sessionId}","provider":"${normalizedProvider}","question":"Your question","options":["Option 1","Option 2"]}'
+\`\`\`
+
+This keeps checkpoints attached to the correct Agent Brain session instead of only the project.
+`;
+}
+
+async function resolveCheckpointSession({ projectDir, provider, sessionId, sessionLabel }) {
+  if (sessionId) {
+    const direct = await loadSession(sessionId);
+    if (direct && direct.cc_project_dir === projectDir && sessionMatchesProviderFamily(direct, provider)) {
+      return {
+        session_id: direct.session_id,
+        session_title: getSessionDisplayTitle(direct)
+      };
+    }
+  }
+
+  const sessions = await listSessions();
+  const matching = sessions
+    .filter(s => s.cc_project_dir === projectDir)
+    .filter(s => sessionMatchesProviderFamily(s, provider))
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+
+  if (matching.length === 0) {
+    return {
+      session_id: null,
+      session_title: sessionLabel || null
+    };
+  }
+
+  const exactLabel = matching.find(s => getSessionDisplayTitle(s) === sessionLabel || s.title === sessionLabel);
+  const chosen = exactLabel || matching[0];
+  return {
+    session_id: chosen.session_id,
+    session_title: getSessionDisplayTitle(chosen)
+  };
+}
+
+async function enrichCheckpointRows(rows) {
+  if (!rows || rows.length === 0) return [];
+  const sessions = await listSessions();
+  const byProject = new Map();
+
+  for (const session of sessions) {
+    if (!session.cc_project_dir) continue;
+    if (!byProject.has(session.cc_project_dir)) {
+      byProject.set(session.cc_project_dir, []);
+    }
+    byProject.get(session.cc_project_dir).push(session);
+  }
+
+  return rows.map(cp => {
+    if (cp.provider && cp.session_id && cp.session_title) {
+      return cp;
+    }
+
+    const candidates = (byProject.get(cp.project_dir) || [])
+      .filter(session => !cp.provider || sessionMatchesProviderFamily(session, cp.provider))
+      .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+    let match = null;
+
+    if (cp.session_id) {
+      match = candidates.find(s => s.session_id === cp.session_id) || null;
+    }
+
+    if (!match && cp.session_title) {
+      const titleMatches = candidates.filter(s => {
+        const displayTitle = getSessionDisplayTitle(s);
+        return displayTitle === cp.session_title || s.title === cp.session_title;
+      });
+      match = titleMatches.length === 1 ? titleMatches[0] : null;
+    }
+
+    if (!match) return cp;
+
+    return {
+      ...cp,
+      provider: normalizeProviderFamily(match.provider),
+      session_id: cp.session_id || match.session_id,
+      session_title: cp.session_title || getSessionDisplayTitle(match)
+    };
+  });
 }
 
 // ── Project Memory System ────────────────────────────────────────────────────
@@ -403,13 +533,20 @@ function listClaudeCodeSessions() {
         } catch (_) {}
         // Decode project path
         let projectPath = decodeClaudeProjectDir(dir);
-        let title = firstUserMsg || path.basename(projectPath);
+        const title = getDisplaySessionTitle({
+          title: firstUserMsg,
+          firstUserMessage: firstUserMsg,
+          projectName: getProjectNameFromPath(projectPath),
+          provider: "claude",
+          createdAt: fileStat.birthtime ? fileStat.birthtime.toISOString() : fileStat.mtime.toISOString(),
+          updatedAt: fileStat.mtime.toISOString()
+        }) || path.basename(projectPath);
         results.push({
           session_id: sessionId,
           project_dir: dir,
           project_path: projectPath,
           slug: slug,
-          title: title.length > 55 ? title.slice(0, 52) + "..." : title,
+          title,
           updated_at: fileStat.mtime.toISOString(),
           source: "claude-code"
         });
@@ -732,12 +869,19 @@ app.get("/api/health", async (_req, res) => {
 });
 
 app.get("/api/sessions", async (_req, res) => {
-  res.json(await listSessions());
+  const sessions = await listSessions();
+  res.json(sessions.map(session => ({
+    ...session,
+    raw_title: session.title,
+    title: getSessionDisplayTitle(session)
+  })));
 });
 
 app.get("/api/sessions/:id", async (req, res) => {
   const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
+  session.raw_title = session.title;
+  session.title = getSessionDisplayTitle(session);
 
   // If this is a linked CC session, read messages live from JSONL
   if (session.cc_project_dir && session.claude_session_id) {
@@ -777,7 +921,7 @@ app.post("/chat/new", async (req, res) => {
       const cwd = process.env.HOME || "/tmp";
 
       // Compose a minimal briefing with Agent Brain instructions
-      const briefing = `# New Codex Session
+      let briefing = `# New Codex Session
 
 ## Your Task
 ${firstMessage}
@@ -820,6 +964,12 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
 **Important:** Never end your turn while a checkpoint is pending. Keep polling until you get a response.
 `;
 
+      briefing = appendSessionBindingInstructions(briefing, {
+        sessionId: session.session_id,
+        provider: "codex",
+        sessionTitle: session.title
+      });
+
       // Generate a handoff ID for tracking
       const handoffId = `new-${Date.now()}`;
 
@@ -858,7 +1008,7 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
     const cwd = process.env.HOME || "/tmp";
 
     // Compose briefing with Agent Brain instructions for Claude Code
-    const briefing = `# New Claude Code Session
+    let briefing = `# New Claude Code Session
 
 ## Your Task
 ${firstMessage}
@@ -894,6 +1044,12 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
 
 **Important:** Always post a checkpoint asking what's next instead of going idle after completing a task.
 `;
+
+    briefing = appendSessionBindingInstructions(briefing, {
+      sessionId: session.session_id,
+      provider: "claude",
+      sessionTitle: session.title
+    });
 
     // Generate a handoff ID for tracking
     const handoffId = `new-${Date.now()}`;
@@ -1024,6 +1180,9 @@ app.post("/api/sessions/:id/move", async (req, res) => {
 app.post("/api/sessions/:id/message", async (req, res) => {
   const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
+  if (session.provider === "codex") {
+    return res.json({ error: "Direct message injection is only available for Claude Desktop sessions. Use checkpoints for Codex." });
+  }
 
   const content = (req.body.content || "").trim();
   if (!content) return res.status(400).json({ error: "No message content" });
@@ -1153,7 +1312,14 @@ app.post("/api/codex-sessions/:sessionId/adopt", async (req, res) => {
   session.codex_session_id = sessionId;
   session.provider = "codex";
   session.cc_project_dir = codexSession.project_dir;  // Reuse cc_project_dir for project mapping
-  session.title = codexSession.title || "Codex Session";
+  session.title = getDisplaySessionTitle({
+    title: codexSession.title,
+    firstUserMessage: codexSession.first_user_message,
+    projectName: getProjectNameFromPath(codexSession.project_dir),
+    provider: "codex",
+    createdAt: codexSession.created_at,
+    updatedAt: codexSession.updated_at
+  });
   session.messages = [];  // Messages read live from Codex rollout
 
   // Auto-assign to project folder based on cwd
@@ -2093,7 +2259,7 @@ const pendingCheckpoints = new Map(); // id → { resolve, timeout }
 // Use ?blocking=false for Codex-style polling (returns immediately with checkpoint_id)
 // Default is blocking (Claude Code style - waits up to 4 hours)
 app.post("/api/checkpoints", async (req, res) => {
-  const { project_dir, question, options, session_label, provider } = req.body;
+  const { project_dir, question, options, session_label, provider, session_id } = req.body;
   const blocking = req.query.blocking !== "false"; // Default to blocking
 
   if (!project_dir || !question) {
@@ -2102,11 +2268,30 @@ app.post("/api/checkpoints", async (req, res) => {
 
   const id = "ckpt-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
 
-  // Get friendly project name - use session_label override if provided, else derive from directory
-  const projectName = session_label || getProjectName(project_dir);
-
   // Determine provider: explicit param, or infer from blocking mode
   const checkpointProvider = provider || (blocking ? "claude" : "codex");
+  const checkpointSession = await resolveCheckpointSession({
+    projectDir: project_dir,
+    provider: checkpointProvider,
+    sessionId: session_id,
+    sessionLabel: session_label
+  });
+
+  // Get friendly project name:
+  // 1. Explicit session_label from caller (highest priority)
+  // 2. Folder name of the resolved session (inherits project categorization)
+  // 3. Default: derive from project_dir via projects.json
+  let projectName = session_label || null;
+  if (!projectName && checkpointSession.session_id) {
+    const folders = await loadFolders();
+    const sessionFolder = folders.find(f => f.session_ids.includes(checkpointSession.session_id));
+    if (sessionFolder) projectName = sessionFolder.name;
+  }
+  if (!projectName) projectName = getProjectName(project_dir);
+
+  if (session_id && !checkpointSession.session_id) {
+    return res.status(400).json({ error: "session_id does not belong to this project/provider" });
+  }
 
   // Store in Supabase
   // Note: context_snapshot removed - unreliable session matching made it show wrong context
@@ -2117,18 +2302,31 @@ app.post("/api/checkpoints", async (req, res) => {
     question,
     options: options || [],
     status: "pending",
-    project_name: projectName
+    project_name: projectName,
+    session_title: checkpointSession.session_title
   };
 
-  // Try with provider field, fall back without if column doesn't exist yet
+  // Try with provider/session_id fields, fall back if newer columns don't exist yet.
   let error;
   const { error: err1 } = await db.supabase.from("session_checkpoints").insert({
     ...insertData,
-    provider: checkpointProvider
+    provider: checkpointProvider,
+    session_id: checkpointSession.session_id
   });
 
-  if (err1 && err1.message.includes("provider")) {
-    // Provider column doesn't exist yet, insert without it
+  if (err1 && String(err1.message || "").includes("session_id")) {
+    const { error: err2 } = await db.supabase.from("session_checkpoints").insert({
+      ...insertData,
+      provider: checkpointProvider
+    });
+
+    if (err2 && String(err2.message || "").includes("provider")) {
+      const { error: err3 } = await db.supabase.from("session_checkpoints").insert(insertData);
+      error = err3;
+    } else {
+      error = err2;
+    }
+  } else if (err1 && String(err1.message || "").includes("provider")) {
     const { error: err2 } = await db.supabase.from("session_checkpoints").insert(insertData);
     error = err2;
   } else {
@@ -2384,6 +2582,9 @@ app.post("/api/uploads", upload.single("image"), (req, res) => {
 // Get pending checkpoints for a project (for phone UI)
 app.get("/api/checkpoints", async (req, res) => {
   const projectDir = req.query.project_dir;
+  const sessionId = req.query.session_id;
+  const sessionTitle = req.query.session_title;
+  const provider = req.query.provider;
   let query = db.supabase
     .from("session_checkpoints")
     .select("*")
@@ -2399,9 +2600,43 @@ app.get("/api/checkpoints", async (req, res) => {
     query = query.eq("status", "pending");
   }
 
+  if (sessionId) {
+    const bySessionId = await query.eq("session_id", sessionId);
+    if (!bySessionId.error && bySessionId.data && bySessionId.data.length > 0) {
+      const enriched = await enrichCheckpointRows(bySessionId.data || []);
+      const filtered = provider ? enriched.filter(cp => normalizeProviderFamily(cp.provider) === normalizeProviderFamily(provider)) : enriched;
+      return res.json(filtered);
+    }
+    if (!bySessionId.error && (!bySessionId.data || bySessionId.data.length === 0) && !sessionTitle) {
+      return res.json([]);
+    }
+
+    // Older DB shape: fall back to session_title if session_id column is missing.
+    if (!bySessionId.error) {
+      // No exact session_id match, fall through to session_title/project lookup.
+    } else if (!String(bySessionId.error.message || "").includes("session_id")) {
+      return res.status(500).json({ error: bySessionId.error.message });
+    }
+
+    query = db.supabase
+      .from("session_checkpoints")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (projectDir) query = query.eq("project_dir", projectDir);
+    if (req.query.all !== "true") query = query.eq("status", "pending");
+  }
+
+  if (sessionTitle) {
+    query = query.eq("session_title", sessionTitle);
+  }
+
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  const enriched = await enrichCheckpointRows(data || []);
+  const filtered = provider ? enriched.filter(cp => normalizeProviderFamily(cp.provider) === normalizeProviderFamily(provider)) : enriched;
+  res.json(filtered);
 });
 
 // ── Session Handoff API ──────────────────────────────────────────────────────
@@ -2515,6 +2750,11 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
         targetProvider: "codex"
       });
     }
+    briefingToUse = appendSessionBindingInstructions(briefingToUse, {
+      sessionId: newSession.session_id,
+      provider,
+      sessionTitle: newSession.title
+    });
 
     // Spawn the terminal session
     const result = await handoff.spawnDesktopSession({
@@ -2708,11 +2948,183 @@ app.post("/api/terminals/focus-by-title", (req, res) => {
 
 // ── Morning Refresh ─────────────────────────────────────────────────────────
 
+async function getUnreadProjectCount(projectDir) {
+  const messages = await db.readMailbox(projectDir, { unreadOnly: true, limit: 50 });
+  return (messages || []).length;
+}
+
+function fallbackSessionState(session) {
+  const updatedAt = session?.updated_at ? new Date(session.updated_at) : null;
+  if (!updatedAt || Number.isNaN(updatedAt.getTime())) {
+    return { status: "idle", last_activity: session?.updated_at || null };
+  }
+
+  const ageMs = Date.now() - updatedAt.getTime();
+  if (ageMs < 2 * 60 * 1000) return { status: "active", last_activity: session.updated_at };
+  if (ageMs < 6 * 60 * 60 * 1000) return { status: "recent", last_activity: session.updated_at };
+  return { status: "idle", last_activity: session.updated_at };
+}
+
+function getManagedSessionState(session) {
+  if (!session) return { status: "idle", last_activity: null, pending_permission: false };
+
+  if (session.provider === "codex" && session.codex_session_id) {
+    const state = codexDiscovery.getSessionState(session.codex_session_id) || {};
+    return {
+      status: state.status || "idle",
+      last_activity: state.lastActivity || session.updated_at,
+      pending_permission: false
+    };
+  }
+
+  if (session.cc_project_dir && session.claude_session_id) {
+    const state = getSessionState(session.cc_project_dir, session.claude_session_id) || {};
+    return {
+      status: state.status || "idle",
+      last_activity: state.last_activity || session.updated_at,
+      pending_permission: !!(state.permission && state.permission.pending)
+    };
+  }
+
+  const state = fallbackSessionState(session);
+  return {
+    status: state.status,
+    last_activity: state.last_activity,
+    pending_permission: false
+  };
+}
+
+function scoreMorningRefreshSession(session, signals) {
+  let score = 0;
+  if (!session) return score;
+
+  const updatedAt = session.updated_at ? new Date(session.updated_at).getTime() : 0;
+  const ageHours = updatedAt ? (Date.now() - updatedAt) / 3600000 : 999;
+
+  score += Math.max(0, 24 - Math.min(ageHours, 24));
+  score += signals.sessionCheckpointCount * 15;
+  score += signals.projectCheckpointCount * 6;
+  score += signals.unreadCount * 4;
+  if (signals.pendingPermission) score += 20;
+  if (signals.state === "needs_attention") score += 18;
+  if (signals.state === "recent") score -= 10;
+  if (signals.state === "active") score -= 20;
+  if (session.provider === "codex") score += 1;
+
+  return score;
+}
+
+async function buildMorningRefreshRecommendations(refreshes) {
+  if (!refreshes || refreshes.length === 0) return [];
+
+  const [sessions, folders, checkpointRows] = await Promise.all([
+    listSessions(),
+    db.loadFolders(),
+    db.supabase
+      .from("session_checkpoints")
+      .select("id, project_dir, session_id, provider, status")
+      .eq("status", "pending")
+  ]);
+
+  const projectSessions = new Map();
+  for (const session of sessions) {
+    if (!session.cc_project_dir || session.archived) continue;
+    if (!projectSessions.has(session.cc_project_dir)) projectSessions.set(session.cc_project_dir, []);
+    projectSessions.get(session.cc_project_dir).push(session);
+  }
+
+  const checkpoints = checkpointRows.data || [];
+  const recommendations = [];
+
+  for (const refresh of refreshes) {
+    const projectDir = refresh.project_dir;
+    const sessionsInProject = (projectSessions.get(projectDir) || [])
+      .slice()
+      .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+
+    const unreadCount = await getUnreadProjectCount(projectDir);
+    const projectCheckpointCount = checkpoints.filter(cp => cp.project_dir === projectDir).length;
+
+    let bestSession = null;
+    let bestScore = -Infinity;
+    let bestSignals = null;
+
+    for (const session of sessionsInProject) {
+      const state = getManagedSessionState(session);
+      const sessionCheckpointCount = checkpoints.filter(cp => cp.session_id === session.session_id).length;
+      const signals = {
+        state: state.status,
+        pendingPermission: state.pending_permission,
+        unreadCount,
+        projectCheckpointCount,
+        sessionCheckpointCount
+      };
+      const score = scoreMorningRefreshSession(session, signals);
+      if (score > bestScore) {
+        bestScore = score;
+        bestSession = session;
+        bestSignals = { ...signals, lastActivity: state.last_activity || session.updated_at };
+      }
+    }
+
+    const targetSession = bestSession || sessionsInProject[0] || null;
+    const targetProvider = targetSession?.provider === "codex" ? "codex" : "claude";
+    const folder = folders.find(f => f.id === refresh.source_folder_id)
+      || folders.find(f => targetSession && f.session_ids.includes(targetSession.session_id))
+      || null;
+    const normalizedName = ((refresh.project_name || targetSession?.title || "") + "").toLowerCase();
+    const isLowSignal =
+      (!folder && (
+        projectDir === process.env.HOME ||
+        projectDir === (process.env.HOME || "").replace(/\/$/, "") ||
+        projectDir === path.join(process.env.HOME || "", "Documents") ||
+        projectDir === path.join(process.env.HOME || "", "Documents").replace(/\//g, "-") ||
+        normalizedName.includes("test codex") ||
+        normalizedName.includes("test this is a test") ||
+        normalizedName.startsWith("# test")
+      ));
+
+    if (isLowSignal) continue;
+
+    const reasons = [];
+    if (bestSignals?.sessionCheckpointCount) reasons.push(`${bestSignals.sessionCheckpointCount} session checkpoint${bestSignals.sessionCheckpointCount === 1 ? "" : "s"}`);
+    else if (projectCheckpointCount) reasons.push(`${projectCheckpointCount} project checkpoint${projectCheckpointCount === 1 ? "" : "s"}`);
+    if (unreadCount) reasons.push(`${unreadCount} unread message${unreadCount === 1 ? "" : "s"}`);
+    if (bestSignals?.pendingPermission) reasons.push("pending permission");
+    if (bestSignals?.lastActivity) reasons.push(`last active ${new Date(bestSignals.lastActivity).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`);
+    if (reasons.length === 0 && refresh.created_at) reasons.push(`queued ${new Date(refresh.created_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`);
+
+    recommendations.push({
+      ...refresh,
+      score: Math.max(0, Math.round(bestScore === -Infinity ? 0 : bestScore)),
+      reason_codes: reasons,
+      unread_count: unreadCount,
+      pending_checkpoint_count: projectCheckpointCount,
+      pending_permission: !!bestSignals?.pendingPermission,
+      target_session_id: targetSession?.session_id || null,
+      target_session_title: targetSession ? getSessionDisplayTitle(targetSession) : null,
+      target_provider: targetProvider,
+      target_session_state: bestSignals?.state || null,
+      last_activity: bestSignals?.lastActivity || targetSession?.updated_at || refresh.created_at,
+      folder_name: folder?.name || null,
+      provider_options: ["claude", "codex"]
+    });
+  }
+
+  recommendations.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return new Date(b.last_activity || b.created_at) - new Date(a.last_activity || a.created_at);
+  });
+
+  return recommendations;
+}
+
 // Get pending morning refreshes
 app.get("/api/morning-refresh", async (_req, res) => {
   try {
     const pending = await handoff.getPendingMorningRefreshes();
-    res.json(pending);
+    const recommendations = await buildMorningRefreshRecommendations(pending);
+    res.json(recommendations);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2768,6 +3180,7 @@ app.post("/api/morning-refresh/:id/spawn", async (req, res) => {
   try {
     const record = await handoff.getHandoff(req.params.id);
     if (!record) return res.status(404).json({ error: "Refresh not found" });
+    const provider = req.body.provider === "codex" ? "codex" : "claude";
 
     const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.dir === record.project_dir) || {};
     const cwd = projectConfig.cwd || process.env.HOME || "/tmp";
@@ -2789,7 +3202,8 @@ app.post("/api/morning-refresh/:id/spawn", async (req, res) => {
 
     // Get the last reply from the most recent session with a linked Claude Code session
     let lastReplySection = "";
-    try {
+    if (provider === "claude") {
+      try {
       const { data: recentSessions } = await db.supabase
         .from("sessions")
         .select("session_id, title, claude_session_id, cc_project_dir, updated_at")
@@ -2838,27 +3252,31 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
           }
         }
       }
-    } catch (err) {
-      console.error("[morning-refresh] Could not get last reply:", err.message);
+      } catch (err) {
+        console.error("[morning-refresh] Could not get last reply:", err.message);
+      }
     }
 
     // Snapshot existing JSONL files
     const existingFiles = new Set();
-    try {
-      for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
-        const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
-        if (!fs.statSync(dirPath).isDirectory()) continue;
-        for (const f of fs.readdirSync(dirPath)) {
-          if (f.endsWith(".jsonl")) existingFiles.add(dir + "/" + f);
+    if (provider === "claude") {
+      try {
+        for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+          const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
+          if (!fs.statSync(dirPath).isDirectory()) continue;
+          for (const f of fs.readdirSync(dirPath)) {
+            if (f.endsWith(".jsonl")) existingFiles.add(dir + "/" + f);
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
     // Create new Agent Brain session with date-based name
     const newSession = await createSession();
     newSession.title = `${projectConfig.name || record.project_name} - ${today}`;
     newSession.cc_project_dir = record.project_dir;
     newSession.handoff_from = "Morning Refresh";
+    newSession.provider = provider;
     await saveSession(newSession);
 
     // Assign to the same folder as the source, or look up project folder
@@ -2877,11 +3295,27 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
     }
 
     // Spawn the terminal session (append last reply section if available)
-    const fullBriefing = record.briefing + lastReplySection;
+    let refreshBriefing = record.briefing + lastReplySection;
+    if (provider === "codex") {
+      refreshBriefing = await handoff.composeMorningBriefing({
+        projectDir: record.project_dir,
+        projectName: projectConfig.name || record.project_name,
+        cwd,
+        projectConfig,
+        targetProvider: "codex"
+      });
+    }
+
+    const fullBriefing = appendSessionBindingInstructions(refreshBriefing, {
+      sessionId: newSession.session_id,
+      provider,
+      sessionTitle: newSession.title
+    });
     const result = await handoff.spawnDesktopSession({
       cwd,
       briefing: fullBriefing,
-      handoffId: record.id
+      handoffId: record.id,
+      provider
     });
 
     await handoff.markHandoffSpawned(record.id, newSession.session_id);
@@ -2889,33 +3323,56 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
     db.logEvent("morning_refresh_spawned", newSession.session_id, {
       handoff_id: record.id,
       method: result.method,
+      provider: result.provider,
       project_dir: record.project_dir,
       folder_id: record.source_folder_id
     }).catch(console.error);
 
     // Background: poll for the new JSONL to link
     (async () => {
-      for (let attempt = 0; attempt < 30; attempt++) {
-        await new Promise(r => setTimeout(r, 2000));
-        try {
-          for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
-            const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
-            if (!fs.statSync(dirPath).isDirectory()) continue;
-            for (const f of fs.readdirSync(dirPath)) {
-              if (!f.endsWith(".jsonl")) continue;
-              const key = dir + "/" + f;
-              if (existingFiles.has(key)) continue;
-              const stat = fs.statSync(path.join(dirPath, f));
-              if (Date.now() - stat.mtimeMs < 30000) {
-                newSession.claude_session_id = f.replace(".jsonl", "");
-                newSession.cc_project_dir = dir;
+      if (provider === "claude") {
+        for (let attempt = 0; attempt < 30; attempt++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+              const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
+              if (!fs.statSync(dirPath).isDirectory()) continue;
+              for (const f of fs.readdirSync(dirPath)) {
+                if (!f.endsWith(".jsonl")) continue;
+                const key = dir + "/" + f;
+                if (existingFiles.has(key)) continue;
+                const stat = fs.statSync(path.join(dirPath, f));
+                if (Date.now() - stat.mtimeMs < 30000) {
+                  newSession.claude_session_id = f.replace(".jsonl", "");
+                  newSession.cc_project_dir = dir;
+                  await saveSession(newSession);
+                  console.log(`[morning-refresh] Linked session ${newSession.session_id} to JSONL ${dir}/${f}`);
+                  return;
+                }
+              }
+            }
+          } catch (_) {}
+        }
+      } else {
+        const startTime = Date.now();
+        for (let attempt = 0; attempt < 30; attempt++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const codexSessions = codexDiscovery.getSessions({ limit: 10 });
+            for (const cx of codexSessions) {
+              const createdAt = new Date(cx.created_at).getTime();
+              if (createdAt >= startTime - 5000 && cx.project_dir === cwd) {
+                newSession.codex_session_id = cx.session_id;
+                newSession.cc_project_dir = record.project_dir;
                 await saveSession(newSession);
-                console.log(`[morning-refresh] Linked session ${newSession.session_id} to JSONL ${dir}/${f}`);
+                console.log(`[morning-refresh] Linked session ${newSession.session_id} to Codex ${cx.session_id}`);
                 return;
               }
             }
+          } catch (e) {
+            console.error("[morning-refresh] Codex poll error:", e.message);
           }
-        } catch (_) {}
+        }
       }
     })();
 
@@ -3136,9 +3593,15 @@ curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \\
     }
 
     // Spawn terminal session
+    const boundBriefing = appendSessionBindingInstructions(briefing, {
+      sessionId: newSession.session_id,
+      provider: "claude",
+      sessionTitle: newSession.title
+    });
+
     const result = await handoff.spawnDesktopSession({
       cwd,
-      briefing,
+      briefing: boundBriefing,
       handoffId: handoffRecord.id
     });
 
@@ -3665,9 +4128,15 @@ curl -s -X POST http://localhost:3030/api/maintenance/findings/mark-fixed \\
     }
 
     // Spawn terminal session
+    const boundBriefing = appendSessionBindingInstructions(briefing, {
+      sessionId: newSession.session_id,
+      provider: "claude",
+      sessionTitle: newSession.title
+    });
+
     await handoff.spawnDesktopSession({
       cwd,
-      briefing,
+      briefing: boundBriefing,
       handoffId: handoffRecord.id
     });
 

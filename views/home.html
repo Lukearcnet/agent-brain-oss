@@ -161,7 +161,15 @@
     .session-item.selected { background: #e3f2fd; }
     .session-item.archived { opacity: 0.5; }
     .session-info { flex: 1; min-width: 0; }
+    .session-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
     .session-title {
+      flex: 1;
+      min-width: 0;
       font-size: 13px;
       font-weight: 500;
       color: #1c1c1e;
@@ -169,17 +177,37 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .session-time { font-size: 11px; color: #8e8e93; margin-top: 2px; }
+    .session-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 3px;
+      font-size: 11px;
+      color: #8e8e93;
+      min-width: 0;
+    }
+    .session-meta-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .session-state {
+      flex-shrink: 0;
+      font-weight: 600;
+      color: #636366;
+    }
+    .session-state.active { color: #0a7f3f; }
+    .session-state.recent { color: #1565c0; }
     .provider-badge {
       display: inline-block;
+      flex-shrink: 0;
       font-size: 9px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.3px;
       padding: 2px 5px;
       border-radius: 4px;
-      margin-left: 6px;
-      vertical-align: middle;
     }
     .provider-badge.claude { background: #f5e6d3; color: #a55b2a; }
     .provider-badge.codex { background: #e3f2fd; color: #1565c0; }
@@ -682,6 +710,8 @@
 
     function sessionItemHtml(s) {
       const ago = timeAgo(s.updated_at);
+      const state = sessionState(s.updated_at);
+      const projectLabel = getSessionProjectLabel(s);
       const isSelected = s.session_id === selectedSessionId;
       const archivedClass = s.archived ? ' archived' : '';
       const selectedClass = isSelected ? ' selected' : '';
@@ -698,8 +728,8 @@
       if (s.source === "claude-code") {
         return '<div class="session-item' + archivedClass + '" onclick="adoptCCSession(\'' + esc(s.project_dir) + '\', \'' + s.session_id + '\')">' +
           '<div class="session-info">' +
-            '<div class="session-title">' + esc(s.title) + '<span class="provider-badge unadopted">Adopt</span></div>' +
-            '<div class="session-time">' + ago + '</div>' +
+            '<div class="session-title-row"><div class="session-title">' + esc(s.title) + '</div><span class="provider-badge unadopted">Adopt</span></div>' +
+            sessionMetaHtml(projectLabel, state, ago, true) +
           '</div>' +
         '</div>';
       }
@@ -708,8 +738,8 @@
       if (s.source === "codex") {
         return '<div class="session-item' + archivedClass + '" onclick="adoptCodexSession(\'' + s.session_id + '\')">' +
           '<div class="session-info">' +
-            '<div class="session-title">' + esc(s.title) + '<span class="provider-badge unadopted">Adopt</span></div>' +
-            '<div class="session-time">' + ago + '</div>' +
+            '<div class="session-title-row"><div class="session-title">' + esc(s.title) + '</div><span class="provider-badge unadopted">Adopt</span></div>' +
+            sessionMetaHtml(projectLabel, state, ago, true) +
           '</div>' +
         '</div>';
       }
@@ -717,12 +747,47 @@
       // Adopted session (Agent Brain managed)
       return '<div class="session-item' + archivedClass + selectedClass + '" onclick="selectSession(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">' +
         '<div class="session-info">' +
-          '<div class="session-title">' + esc(s.title) + badge + '</div>' +
-          '<div class="session-time">' + ago + '</div>' +
+          '<div class="session-title-row"><div class="session-title">' + esc(s.title) + '</div>' + badge + '</div>' +
+          sessionMetaHtml(projectLabel, state, ago, false) +
         '</div>' +
         '<button class="session-terminal-btn" onclick="event.stopPropagation(); focusTerminal(\'' + esc(s.title).replace(/'/g, "\\'") + '\')" title="Focus terminal">💻</button>' +
         '<button class="session-action-btn" onclick="event.stopPropagation(); openModal(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">...</button>' +
       '</div>';
+    }
+
+    function sessionMetaHtml(projectLabel, state, ago, isExternal) {
+      const bits = [];
+      if (projectLabel) bits.push(projectLabel);
+      if (isExternal) bits.push("External");
+      bits.push(ago);
+      return '<div class="session-meta">' +
+        '<span class="session-state ' + state.className + '">' + state.label + '</span>' +
+        '<span class="session-meta-text">' + esc(bits.join(" • ")) + '</span>' +
+      '</div>';
+    }
+
+    function sessionState(iso) {
+      const diff = Date.now() - new Date(iso).getTime();
+      if (diff < 10 * 60 * 1000) return { label: "Active", className: "active" };
+      if (diff < 6 * 60 * 60 * 1000) return { label: "Recent", className: "recent" };
+      return { label: "Idle", className: "idle" };
+    }
+
+    function getSessionProjectLabel(s) {
+      const folderName = getFolderNameForSession(s.session_id);
+      if (folderName) return folderName;
+      const rawPath = s.project_path || s.project_dir || s.cc_project_dir || "";
+      if (!rawPath) return "";
+      if (rawPath.includes("/")) {
+        const parts = rawPath.split("/").filter(Boolean);
+        return parts[parts.length - 1] || "";
+      }
+      return "";
+    }
+
+    function getFolderNameForSession(sessionId) {
+      const folder = allFolders.find(f => f.session_ids.includes(sessionId));
+      return folder ? folder.name : "";
     }
 
     function selectSession(sessionId, title) {
@@ -735,10 +800,41 @@
       container.classList.remove("mobile-menu-open");
     }
 
+    function closePreview() {
+      selectedSessionId = null;
+      renderList();
+      const preview = document.getElementById("preview");
+      preview.innerHTML = '<div class="preview-empty" id="preview-empty"><div class="preview-empty-icon">💬</div><div>Select a session to preview</div></div>';
+      const container = document.querySelector(".container");
+      container.classList.remove("mobile-show-preview");
+    }
+
+    function getPreviewFrame() {
+      return document.querySelector("#preview iframe");
+    }
+
+    function previewCopyChat(btn) {
+      const frame = getPreviewFrame();
+      if (!frame || !frame.contentWindow || typeof frame.contentWindow.copyChat !== "function") return;
+      frame.contentWindow.copyChat(btn);
+    }
+
+    function previewOpenActions() {
+      const frame = getPreviewFrame();
+      if (!frame || !frame.contentWindow || typeof frame.contentWindow.openActionMenu !== "function") return;
+      frame.contentWindow.openActionMenu();
+    }
+
     function showPreview(sessionId, title) {
       const preview = document.getElementById("preview");
-      // Show full chat without embed mode - gives access to handoff, rename, etc. via action menu
-      preview.innerHTML = '<iframe src="/chat/' + sessionId + '"></iframe>';
+      preview.innerHTML =
+        '<div class="preview-header">' +
+          '<button class="preview-btn secondary" onclick="closePreview()">Back</button>' +
+          '<div class="preview-title">' + esc(title || "Session") + '</div>' +
+          '<button class="preview-btn secondary" onclick="previewCopyChat(this)">Copy</button>' +
+          '<button class="preview-btn secondary" onclick="previewOpenActions()">...</button>' +
+        '</div>' +
+        '<iframe src="/chat/' + sessionId + '?embed=1"></iframe>';
     }
 
     function toggleMobileMenu() {
@@ -756,6 +852,12 @@
           container.classList.remove("mobile-menu-open");
         }
       }
+    });
+
+    window.addEventListener("message", function(event) {
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || event.data.type !== "agent-brain-sessions-back") return;
+      closePreview();
     });
 
     async function focusTerminal(sessionTitle) {
