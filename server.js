@@ -3014,6 +3014,63 @@ function scoreMorningRefreshSession(session, signals) {
   return score;
 }
 
+function normalizeRecapText(text, maxLen = 140) {
+  if (!text) return "";
+  const singleLine = String(text).replace(/\s+/g, " ").trim();
+  if (!singleLine) return "";
+  return singleLine.length > maxLen ? singleLine.slice(0, maxLen - 3) + "..." : singleLine;
+}
+
+function extractSessionRecapItems(messages, maxItems = 3) {
+  if (!Array.isArray(messages) || messages.length === 0) return [];
+
+  const recap = [];
+  for (let i = messages.length - 1; i >= 0 && recap.length < maxItems; i--) {
+    const msg = messages[i];
+    if (!msg) continue;
+
+    if (msg.role === "tool_use" && Array.isArray(msg.tools) && msg.tools.length > 0) {
+      const toolNames = msg.tools.map(t => t.name).filter(Boolean).slice(0, 3);
+      if (toolNames.length > 0) {
+        recap.push("Used tools: " + toolNames.join(", "));
+      }
+      continue;
+    }
+
+    if ((msg.role === "assistant" || msg.role === "user") && msg.content) {
+      const text = normalizeRecapText(msg.content);
+      if (!text) continue;
+      recap.push((msg.role === "assistant" ? "Assistant: " : "User: ") + text);
+    }
+  }
+
+  return recap;
+}
+
+function getSessionRecap(session) {
+  if (!session) return [];
+
+  if (session.provider === "codex" && session.codex_session_id) {
+    try {
+      const messages = codexDiscovery.getSessionMessages(session.codex_session_id);
+      return extractSessionRecapItems(messages, 3);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  if (session.cc_project_dir && session.claude_session_id) {
+    try {
+      const messages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
+      return extractSessionRecapItems(messages, 3);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  return [];
+}
+
 async function buildMorningRefreshRecommendations(refreshes) {
   if (!refreshes || refreshes.length === 0) return [];
 
@@ -3069,6 +3126,7 @@ async function buildMorningRefreshRecommendations(refreshes) {
 
     const targetSession = bestSession || sessionsInProject[0] || null;
     const targetProvider = targetSession?.provider === "codex" ? "codex" : "claude";
+    const sessionRecap = getSessionRecap(targetSession);
     const folder = folders.find(f => f.id === refresh.source_folder_id)
       || folders.find(f => targetSession && f.session_ids.includes(targetSession.session_id))
       || null;
@@ -3107,6 +3165,7 @@ async function buildMorningRefreshRecommendations(refreshes) {
       target_session_state: bestSignals?.state || null,
       last_activity: bestSignals?.lastActivity || targetSession?.updated_at || refresh.created_at,
       folder_name: folder?.name || null,
+      session_recap: sessionRecap,
       provider_options: ["claude", "codex"]
     });
   }
