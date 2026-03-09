@@ -486,7 +486,18 @@
   <div class="modal-overlay" id="new-chat-modal" onclick="closeNewChatModal(event)">
     <div style="width:100%; max-width:400px;">
       <div class="modal" onclick="event.stopPropagation()">
-        <div class="modal-title">New Claude Code Session</div>
+        <div class="modal-title">New Session</div>
+        <!-- Provider selector -->
+        <div style="display:flex;gap:8px;padding:0 16px 12px;">
+          <button id="provider-claude" class="provider-btn active" onclick="selectProvider('claude')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border:2px solid #d97706;background:#fef3c7;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.2s;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#d97706"/><path d="M12 7v5l3 3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+            Claude Code
+          </button>
+          <button id="provider-codex" class="provider-btn" onclick="selectProvider('codex')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border:2px solid #e0e0e0;background:#f9f9f9;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.2s;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+            Codex
+          </button>
+        </div>
         <div style="padding:0 16px 16px;">
           <textarea id="new-chat-message" rows="3" placeholder="What would you like to work on?" style="width:100%; font-size:16px; padding:12px; border:1px solid #e0e0e0; border-radius:12px; resize:none; font-family:inherit; line-height:1.4; background:#f9f9f9;"></textarea>
         </div>
@@ -955,9 +966,29 @@
     }
 
     // ── New Chat Modal ──
+    let selectedProvider = "claude";
+
+    function selectProvider(provider) {
+      selectedProvider = provider;
+      const claudeBtn = document.getElementById("provider-claude");
+      const codexBtn = document.getElementById("provider-codex");
+      if (provider === "claude") {
+        claudeBtn.style.border = "2px solid #d97706";
+        claudeBtn.style.background = "#fef3c7";
+        codexBtn.style.border = "2px solid #e0e0e0";
+        codexBtn.style.background = "#f9f9f9";
+      } else {
+        codexBtn.style.border = "2px solid #10b981";
+        codexBtn.style.background = "#d1fae5";
+        claudeBtn.style.border = "2px solid #e0e0e0";
+        claudeBtn.style.background = "#f9f9f9";
+      }
+    }
+
     function openNewChatModal() {
       document.getElementById("new-chat-message").value = "";
       document.getElementById("new-chat-status").style.display = "none";
+      selectProvider("claude"); // Reset to Claude by default
       document.getElementById("new-chat-modal").classList.add("active");
       setTimeout(() => document.getElementById("new-chat-message").focus(), 300);
     }
@@ -972,12 +1003,12 @@
       if (!msg) return;
       const statusEl = document.getElementById("new-chat-status");
       statusEl.style.display = "";
-      statusEl.textContent = "Opening Claude Desktop...";
+      statusEl.textContent = selectedProvider === "codex" ? "Opening Codex..." : "Opening Claude Desktop...";
       try {
         const resp = await fetch("/chat/new", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: msg })
+          body: JSON.stringify({ message: msg, provider: selectedProvider })
         });
         const data = await resp.json();
         if (data.error) {

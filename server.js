@@ -757,15 +757,104 @@ app.get("/api/sessions/:id", async (req, res) => {
   res.json(session);
 });
 
-// Create a new Claude Desktop conversation and link it
+// Create a new Claude Desktop or Codex conversation and link it
 app.post("/chat/new", async (req, res) => {
   const firstMessage = (req.body.message || "").trim();
+  const provider = req.body.provider || "claude";
   if (!firstMessage) return res.status(400).json({ error: "First message required" });
 
   // Create Agent Brain session
   const session = await createSession();
+  session.provider = provider;
+
+  // Auto-title from first message
+  session.title = firstMessage.length > 50 ? firstMessage.slice(0, 47) + "..." : firstMessage;
 
   try {
+    // Handle Codex sessions
+    if (provider === "codex") {
+      // Use home directory as default cwd for new sessions
+      const cwd = process.env.HOME || "/tmp";
+
+      // Compose a minimal briefing with Agent Brain instructions
+      const briefing = `# New Codex Session
+
+## Your Task
+${firstMessage}
+
+## Agent Brain Integration
+You are connected to Agent Brain (http://localhost:3030). At session start:
+
+1. Determine your project key:
+\`\`\`bash
+PROJECT_KEY=$(pwd | sed 's|/|-|g')
+\`\`\`
+
+2. Load project memory and check mailbox:
+\`\`\`bash
+curl -s http://localhost:3030/api/memory/$PROJECT_KEY | jq -r '.content // "No prior memory."'
+curl -s "http://localhost:3030/api/mailbox/$PROJECT_KEY?unread=true" | jq '.'
+\`\`\`
+
+3. When you need user input, use checkpoints (non-blocking for Codex):
+\`\`\`bash
+RESULT=$(curl -s -X POST "http://localhost:3030/api/checkpoints?blocking=false" \\
+  -H "Content-Type: application/json" \\
+  -d '{"project_dir": "'$PROJECT_KEY'", "provider": "codex", "question": "Your question", "options": ["Option 1", "Option 2"]}')
+CHECKPOINT_ID=$(echo "$RESULT" | jq -r '.checkpoint_id')
+echo "$CHECKPOINT_ID" > /tmp/agent-brain-checkpoint-id
+\`\`\`
+
+4. Poll for response:
+\`\`\`bash
+curl -s "http://localhost:3030/api/checkpoints/$CHECKPOINT_ID/wait?timeout=30"
+\`\`\`
+
+5. Before ending, save memory:
+\`\`\`bash
+curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
+  -H "Content-Type: application/json" \\
+  -d '{"content": "<summary of work done>"}'
+\`\`\`
+
+**Important:** Never end your turn while a checkpoint is pending. Keep polling until you get a response.
+`;
+
+      // Generate a handoff ID for tracking
+      const handoffId = `new-${Date.now()}`;
+
+      // Spawn Codex session
+      const result = await handoff.spawnDesktopSession({
+        cwd,
+        briefing,
+        handoffId,
+        provider: "codex"
+      });
+
+      if (result.ok) {
+        // Wait briefly for Codex to start, then try to find the session
+        await new Promise(r => setTimeout(r, 3000));
+
+        // Try to link to the newest Codex session
+        try {
+          const recentSessions = codexDiscovery.listSessions();
+          if (recentSessions.length > 0) {
+            const newest = recentSessions[0];
+            session.codex_session_id = newest.session_id;
+            session.cc_project_dir = newest.project_dir;
+          }
+        } catch (_) {}
+
+        await saveSession(session);
+        res.json({ session_id: session.session_id, linked: !!session.codex_session_id, provider: "codex" });
+      } else {
+        await saveSession(session);
+        res.json({ session_id: session.session_id, linked: false, error: "Failed to spawn Codex" });
+      }
+      return;
+    }
+
+    // Handle Claude Code sessions (existing flow)
     // Snapshot existing JSONL files so we can detect the new one
     const existingFiles = new Set();
     try {
@@ -791,8 +880,6 @@ app.post("/chat/new", async (req, res) => {
     // Inject the first message directly into the Code input
     await injectIntoClaudeDesktop(firstMessage);
 
-    // Auto-title from first message
-    session.title = firstMessage.length > 50 ? firstMessage.slice(0, 47) + "..." : firstMessage;
     await saveSession(session);
 
     // Watch for the new JSONL to appear (poll for up to 30 seconds)
