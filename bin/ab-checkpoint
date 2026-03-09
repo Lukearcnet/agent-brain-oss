@@ -1,0 +1,175 @@
+#!/bin/bash
+# ab-checkpoint - Atomic checkpoint wrapper for Agent Brain
+# Combines checkpoint creation and polling into foolproof commands
+#
+# Usage:
+#   ab-checkpoint cycle "question" "opt1" "opt2" ...  # Create + poll (atomic)
+#   ab-checkpoint ask "question" "opt1" "opt2" ...    # Create only (non-blocking)
+#   ab-checkpoint wait <checkpoint_id>                 # Poll until response
+#   ab-checkpoint status <checkpoint_id>               # Check status once
+#
+# Environment:
+#   AB_HOST - Agent Brain server (default: http://localhost:3030)
+#   AB_POLL_INTERVAL - Seconds between polls (default: 30)
+#   AB_TIMEOUT - Max wait time in seconds (default: 14400 = 4 hours)
+
+set -e
+
+AB_HOST="${AB_HOST:-http://localhost:3030}"
+AB_POLL_INTERVAL="${AB_POLL_INTERVAL:-30}"
+AB_TIMEOUT="${AB_TIMEOUT:-14400}"
+
+# Determine project key from current directory
+PROJECT_KEY=$(pwd | sed 's|/|-|g')
+
+usage() {
+  cat <<EOF
+ab-checkpoint - Atomic checkpoint wrapper for Agent Brain
+
+Commands:
+  cycle "question" "opt1" "opt2" ...   Create checkpoint and poll until response (RECOMMENDED)
+  ask "question" "opt1" "opt2" ...     Create checkpoint only (non-blocking)
+  wait <checkpoint_id>                  Poll checkpoint until response
+  status <checkpoint_id>                Check checkpoint status once
+
+Options are optional. If none provided, user gets a free-form text input.
+
+Examples:
+  ab-checkpoint cycle "Ready to proceed with refactor?" "Yes" "No" "Modify approach"
+  ab-checkpoint ask "Task complete. What's next?"
+  ab-checkpoint wait ckpt-1234567890-abc123
+EOF
+  exit 1
+}
+
+# Create a checkpoint (non-blocking)
+create_checkpoint() {
+  local question="$1"
+  shift
+  local options=("$@")
+
+  # Build options JSON array
+  local options_json="[]"
+  if [ ${#options[@]} -gt 0 ]; then
+    options_json=$(printf '%s\n' "${options[@]}" | jq -R . | jq -s .)
+  fi
+
+  local payload=$(jq -n \
+    --arg project_dir "$PROJECT_KEY" \
+    --arg question "$question" \
+    --argjson options "$options_json" \
+    '{project_dir: $project_dir, question: $question, options: $options}')
+
+  local response=$(curl -s -X POST "${AB_HOST}/api/checkpoints?blocking=false" \
+    -H "Content-Type: application/json" \
+    -d "$payload")
+
+  local checkpoint_id=$(echo "$response" | jq -r '.checkpoint_id // empty')
+
+  if [ -z "$checkpoint_id" ]; then
+    echo "Error creating checkpoint: $response" >&2
+    exit 1
+  fi
+
+  echo "$checkpoint_id"
+}
+
+# Poll checkpoint until response
+poll_checkpoint() {
+  local checkpoint_id="$1"
+  local start_time=$(date +%s)
+
+  while true; do
+    local elapsed=$(($(date +%s) - start_time))
+    if [ $elapsed -ge $AB_TIMEOUT ]; then
+      echo '{"status":"timeout","response":"Checkpoint timed out after '"$AB_TIMEOUT"' seconds"}'
+      exit 1
+    fi
+
+    local response=$(curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/wait?timeout=${AB_POLL_INTERVAL}")
+    local status=$(echo "$response" | jq -r '.status // "error"')
+
+    case "$status" in
+      responded)
+        echo "$response"
+        return 0
+        ;;
+      pending)
+        # Continue polling
+        ;;
+      timeout)
+        # Server poll timeout, continue our loop
+        ;;
+      *)
+        echo "Error polling checkpoint: $response" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+# Get checkpoint status without blocking
+get_status() {
+  local checkpoint_id="$1"
+  curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/status"
+}
+
+# Main command dispatch
+case "${1:-}" in
+  cycle)
+    shift
+    if [ $# -lt 1 ]; then
+      echo "Error: cycle requires at least a question" >&2
+      usage
+    fi
+    question="$1"
+    shift
+
+    # Create checkpoint
+    checkpoint_id=$(create_checkpoint "$question" "$@")
+    echo "Checkpoint created: $checkpoint_id" >&2
+    echo "Waiting for response..." >&2
+
+    # Poll until response
+    poll_checkpoint "$checkpoint_id"
+    ;;
+
+  ask)
+    shift
+    if [ $# -lt 1 ]; then
+      echo "Error: ask requires at least a question" >&2
+      usage
+    fi
+    question="$1"
+    shift
+
+    checkpoint_id=$(create_checkpoint "$question" "$@")
+    echo "$checkpoint_id"
+    ;;
+
+  wait)
+    shift
+    if [ $# -lt 1 ]; then
+      echo "Error: wait requires a checkpoint_id" >&2
+      usage
+    fi
+    poll_checkpoint "$1"
+    ;;
+
+  status)
+    shift
+    if [ $# -lt 1 ]; then
+      echo "Error: status requires a checkpoint_id" >&2
+      usage
+    fi
+    get_status "$1"
+    ;;
+
+  -h|--help|help)
+    usage
+    ;;
+
+  *)
+    usage
+    ;;
+esac

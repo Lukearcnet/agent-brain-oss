@@ -11,12 +11,10 @@ Every Codex session is connected to Agent Brain (http://localhost:3030) for pers
 3. **DO NOT start working yet!**
 4. Post a checkpoint asking for direction:
 ```bash
-PROJECT_KEY=$(pwd | sed 's|/|-|g')
-curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \
-  -H "Content-Type: application/json" \
-  -d "{\"project_dir\": \"$PROJECT_KEY\", \"question\": \"Handoff received. I've caught up on context. What would you like me to focus on?\", \"options\": [\"Continue previous work\", \"New task\", \"Just checking in\"]}"
+bin/ab-checkpoint cycle "Handoff received. I've caught up on context. What would you like me to focus on?" \
+  "Continue previous work" "New task" "Just checking in"
 ```
-5. Wait for user response before proceeding with any work
+5. The cycle command blocks until the user responds — then proceed with their instruction
 
 **For all sessions**, determine your project key:
 ```bash
@@ -69,74 +67,38 @@ curl -s -X POST http://localhost:3030/api/mailbox \
   -d "{\"from_session\": \"$PROJECT_KEY\", \"to_session\": \"-Users-lukeblanton-Documents-other-project\", \"subject\": \"<subject>\", \"body\": \"<body>\"}"
 ```
 
-## Checkpoints (User Approval from Phone) — Codex Polling Mode
+## Checkpoints (User Approval from Phone)
 
-Codex uses a **non-blocking polling pattern** for checkpoints because its turn-based execution model doesn't support true blocking curls. When you need user input, use the checkpoint system.
+Use the `ab-checkpoint` wrapper script for all checkpoint operations. It handles the create-poll cycle atomically, preventing drift.
 
-### Step 1: Create Checkpoint (Non-blocking)
+**Location:** `bin/ab-checkpoint` (in the agent-brain repo, or copy to your project)
+
+### Recommended: Atomic Cycle (Create + Poll)
 ```bash
-PROJECT_KEY=$(pwd | sed 's|/|-|g')
-
-# Post checkpoint with ?blocking=false — returns immediately with checkpoint_id
-RESULT=$(curl -s -X POST "http://localhost:3030/api/checkpoints?blocking=false" \
-  -H "Content-Type: application/json" \
-  -d "{\"project_dir\": \"$PROJECT_KEY\", \"provider\": \"codex\", \"question\": \"<your question>\", \"options\": [\"Option 1\", \"Option 2\", \"Other\"]}")
-
-CHECKPOINT_ID=$(echo "$RESULT" | jq -r '.checkpoint_id')
-echo "$CHECKPOINT_ID" > /tmp/agent-brain-checkpoint-id
-echo "Checkpoint created: $CHECKPOINT_ID"
+# This creates a checkpoint and polls until the user responds
+# The script handles everything — you just get the final response
+bin/ab-checkpoint cycle "Your question here?" "Option 1" "Option 2" "Option 3"
 ```
 
-### Step 2: Poll for Response (Sequential /wait calls)
-```bash
-CHECKPOINT_ID=$(cat /tmp/agent-brain-checkpoint-id)
-
-# Each /wait call blocks up to 30 seconds, then returns
-RESPONSE=$(curl -s "http://localhost:3030/api/checkpoints/$CHECKPOINT_ID/wait?timeout=30")
-STATUS=$(echo "$RESPONSE" | jq -r '.status')
-
-if [ "$STATUS" = "responded" ]; then
-  USER_RESPONSE=$(echo "$RESPONSE" | jq -r '.response')
-  echo "User responded: $USER_RESPONSE"
-  # Execute the user's instruction, then post a new checkpoint
-else
-  echo "Still pending, continue polling..."
-  # Make another /wait call
-fi
+Output is JSON with `status` and `response` fields:
+```json
+{"status":"responded","response":"Option 1"}
 ```
 
-### Anti-Drift Rules (CRITICAL)
-**Never end your turn while a checkpoint is still pending.**
-
-After every `/wait` result with `status: "pending"`, remind yourself:
-> **Pending means continue. Do NOT end the turn.**
-
-**Minimum waiting requirement:**
-- At least **10 /wait calls**, OR
-- At least **5 minutes of waiting**
-
-**Prohibited actions while checkpoint is pending:**
-- Ending your turn
-- Sending a "still waiting" message
-- Treating repeated pending results as a reason to stop
-
-**Recovery if session restarts:**
+### Other Commands
 ```bash
-# Check if there's a pending checkpoint from a previous session
-if [ -f /tmp/agent-brain-checkpoint-id ]; then
-  CHECKPOINT_ID=$(cat /tmp/agent-brain-checkpoint-id)
-  RESPONSE=$(curl -s "http://localhost:3030/api/checkpoints/$CHECKPOINT_ID/status")
-  STATUS=$(echo "$RESPONSE" | jq -r '.status')
-  if [ "$STATUS" = "pending" ]; then
-    echo "Resuming wait for checkpoint $CHECKPOINT_ID"
-    # Continue polling
-  elif [ "$STATUS" = "responded" ]; then
-    USER_RESPONSE=$(echo "$RESPONSE" | jq -r '.response')
-    echo "User already responded: $USER_RESPONSE"
-    # Execute the response
-  fi
-fi
+# Create checkpoint only (returns checkpoint_id)
+bin/ab-checkpoint ask "Question?" "Yes" "No"
+
+# Poll existing checkpoint until response
+bin/ab-checkpoint wait ckpt-1234567890-abc123
+
+# Check status without blocking
+bin/ab-checkpoint status ckpt-1234567890-abc123
 ```
+
+### Why Use the Wrapper
+The wrapper enforces checkpoint discipline by combining create + poll into one atomic operation. This prevents the drift problem where you post a checkpoint but forget to poll for the response.
 
 **When to use checkpoints:**
 - After creating a plan that needs approval before execution
@@ -154,23 +116,14 @@ fi
 **Never end a task by simply going idle.** When you finish what you were asked to do, ALWAYS post a checkpoint:
 
 ```bash
-PROJECT_KEY=$(pwd | sed 's|/|-|g')
-
-# Create completion checkpoint
-RESULT=$(curl -s -X POST "http://localhost:3030/api/checkpoints?blocking=false" \
-  -H "Content-Type: application/json" \
-  -d "{\"project_dir\": \"$PROJECT_KEY\", \"provider\": \"codex\", \"question\": \"Task complete: <brief summary of what was done>. What would you like me to work on next?\", \"options\": [\"Continue with related work\", \"New task\", \"Done for now\"]}")
-
-CHECKPOINT_ID=$(echo "$RESULT" | jq -r '.checkpoint_id')
-echo "$CHECKPOINT_ID" > /tmp/agent-brain-checkpoint-id
-
-# Poll for response (minimum 10 calls or 5 minutes)
-# ... use the polling pattern above ...
+# Use the atomic cycle — it creates and polls in one command
+bin/ab-checkpoint cycle "Task complete: <brief summary>. What would you like me to work on next?" \
+  "Continue with related work" "New task" "Done for now"
 ```
 
 This ensures the user can direct you from their phone instead of you going idle while they're away from the computer.
 
-**If polling times out** (after minimum wait period with no response): save progress to memory and note what you were waiting on.
+**If the wrapper times out** (after 4 hours with no response): save progress to memory and note what you were waiting on.
 
 ## Pre-Review Self-Validation (IMPORTANT)
 Before asking the user to review your work or posting a "task complete" checkpoint, run these mechanical checks to catch obvious breakage. This applies to ALL projects.
