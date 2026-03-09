@@ -854,7 +854,50 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
       return;
     }
 
-    // Handle Claude Code sessions (existing flow)
+    // Handle Claude Code sessions - spawn via Terminal with Agent Brain instructions
+    const cwd = process.env.HOME || "/tmp";
+
+    // Compose briefing with Agent Brain instructions for Claude Code
+    const briefing = `# New Claude Code Session
+
+## Your Task
+${firstMessage}
+
+## Agent Brain Integration
+You are connected to Agent Brain (http://localhost:3030). At session start:
+
+1. Determine your project key:
+\`\`\`bash
+PROJECT_KEY=$(pwd | sed 's|/|-|g')
+\`\`\`
+
+2. Load project memory and check mailbox:
+\`\`\`bash
+curl -s http://localhost:3030/api/memory/$PROJECT_KEY | jq -r '.content // "No prior memory."'
+curl -s "http://localhost:3030/api/mailbox/$PROJECT_KEY?unread=true" | jq '.'
+\`\`\`
+
+3. When you need user input, use checkpoints (blocks up to 4 hours):
+\`\`\`bash
+RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \\
+  -H "Content-Type: application/json" \\
+  -d '{"project_dir": "'$PROJECT_KEY'", "question": "Your question", "options": ["Option 1", "Option 2"]}')
+echo "$RESPONSE"
+\`\`\`
+
+4. Before ending, save memory:
+\`\`\`bash
+curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
+  -H "Content-Type: application/json" \\
+  -d '{"content": "<summary of work done>"}'
+\`\`\`
+
+**Important:** Always post a checkpoint asking what's next instead of going idle after completing a task.
+`;
+
+    // Generate a handoff ID for tracking
+    const handoffId = `new-${Date.now()}`;
+
     // Snapshot existing JSONL files so we can detect the new one
     const existingFiles = new Set();
     try {
@@ -867,18 +910,19 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
       }
     } catch (_) {}
 
-    // Open Claude Desktop in Code mode — don't use Cmd+N (that opens Chat)
-    // Just navigate to Code view and inject directly into its input
-    await new Promise((resolve, reject) => {
-      execFile("/usr/bin/open", ["claude://claude.ai/claude-code-desktop"], { timeout: 5000 }, (err) => {
-        if (err) return reject(err);
-        // Wait for Code mode to fully load
-        setTimeout(resolve, 2500);
-      });
+    // Spawn Claude Code session via Terminal
+    const result = await handoff.spawnDesktopSession({
+      cwd,
+      briefing,
+      handoffId,
+      provider: "claude"
     });
 
-    // Inject the first message directly into the Code input
-    await injectIntoClaudeDesktop(firstMessage);
+    if (!result.ok) {
+      await saveSession(session);
+      res.json({ session_id: session.session_id, linked: false, error: "Failed to spawn Claude Code" });
+      return;
+    }
 
     await saveSession(session);
 
