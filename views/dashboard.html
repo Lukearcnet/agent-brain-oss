@@ -2017,6 +2017,7 @@
         var targetProvider = r.target_provider === "codex" ? "Codex" : "Claude";
         var targetTitle = r.target_session_title || "No mapped session yet";
         var reasons = r.reason_codes || [];
+        var recap = r.session_recap || [];
         var meta = [];
         if (r.folder_name) meta.push(r.folder_name);
         if (r.last_activity) meta.push(timeAgo(r.last_activity));
@@ -2042,6 +2043,9 @@
         html += '    <div class="refresh-detail-line"><strong>Resume target:</strong> ' + esc(targetTitle) + '</div>';
         html += '    <div class="refresh-detail-line"><strong>Signals:</strong> ' + esc((reasons.length ? reasons.join(' • ') : 'No additional signals')) + '</div>';
         html += '    <div class="refresh-detail-line"><strong>Pending:</strong> ' + esc((r.pending_checkpoint_count || 0) + ' checkpoints') + ', ' + esc((r.unread_count || 0) + ' unread messages') + (r.pending_permission ? ', pending permission' : '') + '</div>';
+        if (recap.length > 0) {
+          html += '    <div class="refresh-detail-line"><strong>Recent work:</strong><br>' + recap.map(function(item) { return '&bull; ' + esc(item); }).join('<br>') + '</div>';
+        }
         html += '    <div class="refresh-launch-row">';
         html += '      <button class="refresh-launch-btn claude' + (r.target_provider === "claude" ? '' : ' secondary') + '" data-refresh-id="' + esc(r.id) + '" onclick="event.stopPropagation(); spawnMorningRefresh(this.dataset.refreshId, \'claude\', this)">Start in Claude</button>';
         html += '      <button class="refresh-launch-btn codex' + (r.target_provider === "codex" ? '' : ' secondary') + '" data-refresh-id="' + esc(r.id) + '" onclick="event.stopPropagation(); spawnMorningRefresh(this.dataset.refreshId, \'codex\', this)">Start in Codex</button>';
