@@ -2259,23 +2259,46 @@ const pendingCheckpoints = new Map(); // id → { resolve, timeout }
 // Use ?blocking=false for Codex-style polling (returns immediately with checkpoint_id)
 // Default is blocking (Claude Code style - waits up to 4 hours)
 app.post("/api/checkpoints", async (req, res) => {
-  const { project_dir, question, options, session_label, provider, session_id } = req.body;
+  let { project_dir, question, options, session_label, provider, session_id } = req.body;
   const blocking = req.query.blocking !== "false"; // Default to blocking
 
-  if (!project_dir || !question) {
-    return res.status(400).json({ error: "project_dir and question required" });
+  // Auto-resolve fields from session_id when possible (reduces LLM burden)
+  let resolvedSession = null;
+  if (session_id) {
+    resolvedSession = await loadSession(session_id);
+    if (resolvedSession) {
+      // Derive project_dir from session record if not provided
+      if (!project_dir && resolvedSession.cc_project_dir) {
+        project_dir = resolvedSession.cc_project_dir;
+      }
+      // Derive provider from session record if not provided
+      if (!provider && resolvedSession.provider) {
+        provider = normalizeProviderFamily(resolvedSession.provider);
+      }
+    }
   }
+
+  if (!question) {
+    return res.status(400).json({ error: "question is required" });
+  }
+  if (!project_dir && !session_id) {
+    return res.status(400).json({ error: "project_dir or session_id required" });
+  }
+  // Final fallback: if still no project_dir, use a generic key
+  if (!project_dir) project_dir = "unknown";
 
   const id = "ckpt-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
 
-  // Determine provider: explicit param, or infer from blocking mode
+  // Determine provider: explicit param > session record > infer from blocking mode
   const checkpointProvider = provider || (blocking ? "claude" : "codex");
-  const checkpointSession = await resolveCheckpointSession({
-    projectDir: project_dir,
-    provider: checkpointProvider,
-    sessionId: session_id,
-    sessionLabel: session_label
-  });
+  const checkpointSession = resolvedSession
+    ? { session_id: resolvedSession.session_id, session_title: getSessionDisplayTitle(resolvedSession) }
+    : await resolveCheckpointSession({
+        projectDir: project_dir,
+        provider: checkpointProvider,
+        sessionId: session_id,
+        sessionLabel: session_label
+      });
 
   // Get friendly project name:
   // 1. Explicit session_label from caller (highest priority)
@@ -2288,10 +2311,6 @@ app.post("/api/checkpoints", async (req, res) => {
     if (sessionFolder) projectName = sessionFolder.name;
   }
   if (!projectName) projectName = getProjectName(project_dir);
-
-  if (session_id && !checkpointSession.session_id) {
-    return res.status(400).json({ error: "session_id does not belong to this project/provider" });
-  }
 
   // Store in Supabase
   // Note: context_snapshot removed - unreliable session matching made it show wrong context
@@ -2422,6 +2441,29 @@ app.post("/api/checkpoints/:id/respond", async (req, res) => {
   res.json({ ok: true });
 });
 
+// In-memory tracking of last poll time per checkpoint (for stale-wait detection)
+const checkpointPollTracker = new Map(); // checkpoint_id → { last_polled_at, session_id, provider }
+
+function trackCheckpointPoll(checkpointId, sessionId, provider) {
+  checkpointPollTracker.set(checkpointId, {
+    last_polled_at: new Date().toISOString(),
+    session_id: sessionId || null,
+    provider: provider || null
+  });
+}
+
+function getStaleCheckpoints(thresholdMs = 120000) {
+  const now = Date.now();
+  const stale = [];
+  for (const [id, info] of checkpointPollTracker.entries()) {
+    const elapsed = now - new Date(info.last_polled_at).getTime();
+    if (elapsed > thresholdMs) {
+      stale.push({ checkpoint_id: id, ...info, stale_for_ms: elapsed });
+    }
+  }
+  return stale;
+}
+
 // Poll checkpoint status (for Codex-style non-blocking workflow)
 // Returns status, response (if any), and protocol fields
 app.get("/api/checkpoints/:id/status", async (req, res) => {
@@ -2429,13 +2471,16 @@ app.get("/api/checkpoints/:id/status", async (req, res) => {
 
   const { data: checkpoint, error } = await db.supabase
     .from("session_checkpoints")
-    .select("id, status, response, created_at, responded_at, project_dir")
+    .select("id, status, response, created_at, responded_at, project_dir, session_id, provider")
     .eq("id", id)
     .single();
 
   if (error || !checkpoint) {
     return res.status(404).json({ error: "Checkpoint not found" });
   }
+
+  // Track this poll for stale-wait detection
+  trackCheckpointPoll(id, checkpoint.session_id, checkpoint.provider);
 
   // Base response with status info
   const result = {
@@ -2478,7 +2523,7 @@ app.get("/api/checkpoints/:id/wait", async (req, res) => {
   const getCheckpointStatus = async () => {
     const { data: checkpoint, error } = await db.supabase
       .from("session_checkpoints")
-      .select("id, status, response, created_at, responded_at, project_dir")
+      .select("id, status, response, created_at, responded_at, project_dir, session_id, provider")
       .eq("id", id)
       .single();
 
@@ -2514,6 +2559,9 @@ app.get("/api/checkpoints/:id/wait", async (req, res) => {
     return res.status(404).json({ error: "Checkpoint not found" });
   }
 
+  // Track this poll for stale-wait detection
+  trackCheckpointPoll(id, immediateResult.session_id, immediateResult.provider);
+
   // If already responded/dismissed/timeout, return immediately
   if (immediateResult.status !== "pending") {
     return res.json(immediateResult);
@@ -2531,6 +2579,9 @@ app.get("/api/checkpoints/:id/wait", async (req, res) => {
       return res.status(404).json({ error: "Checkpoint not found" });
     }
 
+    // Update poll tracker on each iteration
+    trackCheckpointPoll(id, result.session_id, result.provider);
+
     if (result.status !== "pending") {
       return res.json(result);
     }
@@ -2539,6 +2590,108 @@ app.get("/api/checkpoints/:id/wait", async (req, res) => {
   // Timeout - return current pending status
   const finalResult = await getCheckpointStatus();
   res.json(finalResult || { checkpoint_id: id, status: "pending" });
+});
+
+// Get the current pending checkpoint for a session (recovery endpoint)
+// Allows resumed Codex sessions to find their checkpoint by session_id alone
+app.get("/api/sessions/:id/pending-checkpoint", async (req, res) => {
+  const sessionId = req.params.id;
+
+  // Look for pending checkpoints associated with this session
+  const { data: checkpoints, error } = await db.supabase
+    .from("session_checkpoints")
+    .select("id, status, question, options, response, created_at, responded_at, project_dir, session_id, provider")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  // Try exact session_id match first
+  let match = (checkpoints || []).find(cp => cp.session_id === sessionId);
+
+  // Fallback: check poll tracker for checkpoints polled by this session
+  if (!match) {
+    for (const cp of (checkpoints || [])) {
+      const tracker = checkpointPollTracker.get(cp.id);
+      if (tracker && tracker.session_id === sessionId) {
+        match = cp;
+        break;
+      }
+    }
+  }
+
+  if (!match) {
+    return res.json({ pending: false, message: "No pending checkpoint for this session" });
+  }
+
+  // Return checkpoint with recovery info
+  const pollInfo = checkpointPollTracker.get(match.id);
+  res.json({
+    pending: true,
+    checkpoint_id: match.id,
+    question: match.question,
+    options: match.options,
+    created_at: match.created_at,
+    last_polled_at: pollInfo ? pollInfo.last_polled_at : null,
+    actively_polled: pollInfo ? (Date.now() - new Date(pollInfo.last_polled_at).getTime() < 60000) : false
+  });
+});
+
+// Get stale/abandoned checkpoints (for dashboard watchdog)
+app.get("/api/checkpoints/stale", async (req, res) => {
+  const thresholdMs = parseInt(req.query.threshold, 10) || 120000; // Default 2 min
+
+  // Get all pending checkpoints
+  const { data: pending, error } = await db.supabase
+    .from("session_checkpoints")
+    .select("id, question, created_at, project_dir, session_id, provider, project_name")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  const results = (pending || []).map(cp => {
+    const pollInfo = checkpointPollTracker.get(cp.id);
+    const now = Date.now();
+    const createdAge = now - new Date(cp.created_at).getTime();
+
+    let pollState = "never_polled";
+    let staleForMs = createdAge;
+
+    if (pollInfo) {
+      const sinceLastPoll = now - new Date(pollInfo.last_polled_at).getTime();
+      if (sinceLastPoll < 60000) {
+        pollState = "actively_polled";
+        staleForMs = 0;
+      } else {
+        pollState = "abandoned";
+        staleForMs = sinceLastPoll;
+      }
+    }
+
+    return {
+      checkpoint_id: cp.id,
+      project_name: cp.project_name,
+      question: cp.question && cp.question.length > 100 ? cp.question.slice(0, 100) + "..." : cp.question,
+      created_at: cp.created_at,
+      last_polled_at: pollInfo ? pollInfo.last_polled_at : null,
+      poll_state: pollState, // never_polled, actively_polled, abandoned
+      stale_for_ms: staleForMs,
+      session_id: cp.session_id,
+      provider: cp.provider
+    };
+  });
+
+  // Filter to only stale if requested
+  const staleOnly = req.query.stale_only === "true";
+  const filtered = staleOnly ? results.filter(r => r.poll_state !== "actively_polled" && r.stale_for_ms > thresholdMs) : results;
+
+  res.json(filtered);
 });
 
 // Dismiss a checkpoint without responding (user doesn't want to answer)
@@ -3021,27 +3174,105 @@ function normalizeRecapText(text, maxLen = 140) {
   return singleLine.length > maxLen ? singleLine.slice(0, maxLen - 3) + "..." : singleLine;
 }
 
+function isNoisySessionText(text) {
+  if (!text) return true;
+  const normalized = String(text).toLowerCase();
+  return (
+    normalized.includes("<task-notification>") ||
+    normalized.includes("checkpoint posted") ||
+    normalized.includes("checkpoint reposted") ||
+    normalized.includes("waiting for your response") ||
+    normalized.includes("standing by") ||
+    normalized.includes("goodnight") ||
+    normalized.includes("wrapped up") ||
+    normalized.includes("read the output file to retrieve the result")
+  );
+}
+
+function isSubstantiveLine(text) {
+  if (!text) return false;
+  const normalized = String(text).trim().toLowerCase();
+  if (!normalized) return false;
+  if (isNoisySessionText(normalized)) return false;
+
+  return (
+    /^(fixed|created|added|updated|implemented|identified|ran|investigated|cleaned|removed|deployed|documented|wrote|built)\b/.test(normalized) ||
+    normalized.includes("created `") ||
+    normalized.includes("created ") ||
+    normalized.includes("fixed ") ||
+    normalized.includes("implemented ") ||
+    normalized.includes("identified ") ||
+    normalized.includes("documentation/") ||
+    normalized.includes(".md") ||
+    /\b\d+\b/.test(normalized)
+  );
+}
+
+function extractSubstantiveTextItems(text, maxItems = 4) {
+  if (!text) return [];
+
+  const items = [];
+  const lines = String(text)
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const cleaned = line.replace(/^[-*•]\s*/, "").replace(/^\d+\.\s*/, "").trim();
+    if (!cleaned) continue;
+    if (!isSubstantiveLine(cleaned)) continue;
+    items.push(normalizeRecapText(cleaned, 160));
+    if (items.length >= maxItems) return items;
+  }
+
+  const sentences = String(text)
+    .replace(/\n+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  for (const sentence of sentences) {
+    if (!isSubstantiveLine(sentence)) continue;
+    items.push(normalizeRecapText(sentence, 160));
+    if (items.length >= maxItems) break;
+  }
+
+  return items;
+}
+
 function extractSessionRecapItems(messages, maxItems = 3) {
   if (!Array.isArray(messages) || messages.length === 0) return [];
 
   const recap = [];
+  const seen = new Set();
+
   for (let i = messages.length - 1; i >= 0 && recap.length < maxItems; i--) {
     const msg = messages[i];
     if (!msg) continue;
 
-    if (msg.role === "tool_use" && Array.isArray(msg.tools) && msg.tools.length > 0) {
-      const toolNames = msg.tools.map(t => t.name).filter(Boolean).slice(0, 3);
-      if (toolNames.length > 0) {
-        recap.push("Used tools: " + toolNames.join(", "));
-      }
+    if (msg.role !== "assistant" || !msg.content) {
       continue;
     }
 
-    if ((msg.role === "assistant" || msg.role === "user") && msg.content) {
-      const text = normalizeRecapText(msg.content);
-      if (!text) continue;
-      recap.push((msg.role === "assistant" ? "Assistant: " : "User: ") + text);
+    const candidates = extractSubstantiveTextItems(msg.content, maxItems);
+    for (const candidate of candidates) {
+      const key = candidate.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      recap.push(candidate);
+      if (recap.length >= maxItems) break;
     }
+  }
+
+  if (recap.length > 0) return recap;
+
+  // Fallback: if we found no structured substantive lines, use the last non-noisy assistant text.
+  for (let i = messages.length - 1; i >= 0 && recap.length < maxItems; i--) {
+    const msg = messages[i];
+    if (msg?.role !== "assistant" || !msg.content) continue;
+    if (isNoisySessionText(msg.content)) continue;
+    recap.push(normalizeRecapText(msg.content, 160));
+    break;
   }
 
   return recap;

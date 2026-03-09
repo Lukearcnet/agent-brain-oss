@@ -7,9 +7,12 @@
 #   ab-checkpoint ask "question" "opt1" "opt2" ...    # Create only (non-blocking)
 #   ab-checkpoint wait <checkpoint_id>                 # Poll until response
 #   ab-checkpoint status <checkpoint_id>               # Check status once
+#   ab-checkpoint recover                              # Resume polling saved checkpoint
 #
 # Environment:
 #   AB_HOST - Agent Brain server (default: http://localhost:3030)
+#   AB_SESSION_ID - Agent Brain session ID (auto-resolves provider/project_dir)
+#   AB_PROVIDER - Provider override (claude/codex)
 #   AB_POLL_INTERVAL - Seconds between polls (default: 30)
 #   AB_TIMEOUT - Max wait time in seconds (default: 14400 = 4 hours)
 
@@ -22,6 +25,9 @@ AB_TIMEOUT="${AB_TIMEOUT:-14400}"
 # Determine project key from current directory
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 
+# Checkpoint persistence file (for recovery after session restart)
+CHECKPOINT_FILE="/tmp/ab-checkpoint-${AB_SESSION_ID:-$PROJECT_KEY}"
+
 usage() {
   cat <<EOF
 ab-checkpoint - Atomic checkpoint wrapper for Agent Brain
@@ -31,15 +37,43 @@ Commands:
   ask "question" "opt1" "opt2" ...     Create checkpoint only (non-blocking)
   wait <checkpoint_id>                  Poll checkpoint until response
   status <checkpoint_id>                Check checkpoint status once
+  recover                               Resume polling a saved checkpoint (from file or session lookup)
 
 Options are optional. If none provided, user gets a free-form text input.
+
+Environment variables:
+  AB_SESSION_ID    Agent Brain session ID (enables server-side field resolution)
+  AB_PROVIDER      Provider override (claude/codex)
+  AB_HOST          Server URL (default: http://localhost:3030)
+  AB_POLL_INTERVAL Poll interval in seconds (default: 30)
+  AB_TIMEOUT       Max wait in seconds (default: 14400)
 
 Examples:
   ab-checkpoint cycle "Ready to proceed with refactor?" "Yes" "No" "Modify approach"
   ab-checkpoint ask "Task complete. What's next?"
   ab-checkpoint wait ckpt-1234567890-abc123
+  AB_SESSION_ID=20260309-120514 ab-checkpoint cycle "Question?" "A" "B"
+  ab-checkpoint recover
 EOF
   exit 1
+}
+
+# Save checkpoint ID for recovery
+save_checkpoint_id() {
+  local checkpoint_id="$1"
+  echo "$checkpoint_id" > "$CHECKPOINT_FILE"
+}
+
+# Load saved checkpoint ID
+load_checkpoint_id() {
+  if [ -f "$CHECKPOINT_FILE" ]; then
+    cat "$CHECKPOINT_FILE"
+  fi
+}
+
+# Clean up saved checkpoint
+clear_checkpoint_id() {
+  rm -f "$CHECKPOINT_FILE"
 }
 
 # Create a checkpoint (non-blocking)
@@ -54,11 +88,23 @@ create_checkpoint() {
     options_json=$(printf '%s\n' "${options[@]}" | jq -R . | jq -s .)
   fi
 
-  local payload=$(jq -n \
-    --arg project_dir "$PROJECT_KEY" \
-    --arg question "$question" \
-    --argjson options "$options_json" \
-    '{project_dir: $project_dir, question: $question, options: $options}')
+  # Build payload — include session_id if available (server resolves the rest)
+  local payload
+  if [ -n "$AB_SESSION_ID" ]; then
+    payload=$(jq -n \
+      --arg session_id "$AB_SESSION_ID" \
+      --arg project_dir "$PROJECT_KEY" \
+      --arg question "$question" \
+      --argjson options "$options_json" \
+      --arg provider "${AB_PROVIDER:-}" \
+      '{session_id: $session_id, project_dir: $project_dir, question: $question, options: $options} + (if $provider != "" then {provider: $provider} else {} end)')
+  else
+    payload=$(jq -n \
+      --arg project_dir "$PROJECT_KEY" \
+      --arg question "$question" \
+      --argjson options "$options_json" \
+      '{project_dir: $project_dir, question: $question, options: $options}')
+  fi
 
   local response=$(curl -s -X POST "${AB_HOST}/api/checkpoints?blocking=false" \
     -H "Content-Type: application/json" \
@@ -70,6 +116,9 @@ create_checkpoint() {
     echo "Error creating checkpoint: $response" >&2
     exit 1
   fi
+
+  # Persist checkpoint ID for recovery
+  save_checkpoint_id "$checkpoint_id"
 
   echo "$checkpoint_id"
 }
@@ -91,6 +140,8 @@ poll_checkpoint() {
 
     case "$status" in
       responded)
+        # Clean up persistence file on successful response
+        clear_checkpoint_id
         echo "$response"
         return 0
         ;;
@@ -112,6 +163,46 @@ poll_checkpoint() {
 get_status() {
   local checkpoint_id="$1"
   curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/status"
+}
+
+# Recover: find and resume polling a pending checkpoint
+recover_checkpoint() {
+  # Strategy 1: Check saved checkpoint file
+  local saved_id=$(load_checkpoint_id)
+  if [ -n "$saved_id" ]; then
+    echo "Found saved checkpoint: $saved_id" >&2
+    local status=$(curl -s "${AB_HOST}/api/checkpoints/${saved_id}/status" | jq -r '.status // "error"')
+    if [ "$status" = "pending" ]; then
+      echo "Resuming polling..." >&2
+      poll_checkpoint "$saved_id"
+      return
+    elif [ "$status" = "responded" ]; then
+      echo "Checkpoint already responded:" >&2
+      clear_checkpoint_id
+      curl -s "${AB_HOST}/api/checkpoints/${saved_id}/status"
+      return
+    fi
+    echo "Saved checkpoint is $status, clearing..." >&2
+    clear_checkpoint_id
+  fi
+
+  # Strategy 2: Ask server for pending checkpoint by session_id
+  if [ -n "$AB_SESSION_ID" ]; then
+    echo "Looking up pending checkpoint for session $AB_SESSION_ID..." >&2
+    local lookup=$(curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/pending-checkpoint")
+    local pending=$(echo "$lookup" | jq -r '.pending // false')
+
+    if [ "$pending" = "true" ]; then
+      local ckpt_id=$(echo "$lookup" | jq -r '.checkpoint_id')
+      echo "Found pending checkpoint: $ckpt_id" >&2
+      save_checkpoint_id "$ckpt_id"
+      poll_checkpoint "$ckpt_id"
+      return
+    fi
+  fi
+
+  echo "No pending checkpoint to recover." >&2
+  exit 0
 }
 
 # Main command dispatch
@@ -153,6 +244,8 @@ case "${1:-}" in
       echo "Error: wait requires a checkpoint_id" >&2
       usage
     fi
+    # Save for recovery
+    save_checkpoint_id "$1"
     poll_checkpoint "$1"
     ;;
 
@@ -163,6 +256,10 @@ case "${1:-}" in
       usage
     fi
     get_status "$1"
+    ;;
+
+  recover)
+    recover_checkpoint
     ;;
 
   -h|--help|help)
