@@ -295,6 +295,27 @@
       font-weight: 600;
       cursor: pointer;
     }
+
+    @media (max-width: 640px) {
+      .add-task-bar {
+        flex-wrap: wrap;
+        align-items: stretch;
+      }
+
+      .add-task-input {
+        flex-basis: 100%;
+      }
+
+      .add-task-select,
+      .add-task-btn {
+        flex: 1 1 0;
+      }
+
+      .add-task-select {
+        max-width: none;
+        min-width: 0;
+      }
+    }
   </style>
 </head>
 <body>

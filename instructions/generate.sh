@@ -1,0 +1,65 @@
+#!/bin/bash
+# Generate CLAUDE.md and AGENTS.md from templates
+# Run this whenever you update the shared contract
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Read templates
+CONTRACT=$(cat "$SCRIPT_DIR/agent-brain-contract.md")
+CLAUDE_SPECIFIC=$(cat "$SCRIPT_DIR/claude-specific.md")
+CODEX_SPECIFIC=$(cat "$SCRIPT_DIR/codex-specific.md")
+
+# Generate CLAUDE.md (project-level)
+CLAUDE_CONTENT="${CONTRACT//\{\{PROVIDER\}\}/Claude Code}"
+CLAUDE_CONTENT="$CLAUDE_CONTENT
+
+$CLAUDE_SPECIFIC"
+
+# Generate AGENTS.md (project-level)
+AGENTS_CONTENT="${CONTRACT//\{\{PROVIDER\}\}/Codex}"
+AGENTS_CONTENT="$AGENTS_CONTENT
+
+$CODEX_SPECIFIC"
+
+# Add project-specific context section to both
+PROJECT_CONTEXT="
+## Project Context (Agent Brain)
+- Node.js/Express server on port 3030
+- Supabase for all persistent data (sessions, memory, events, orchestrator, checkpoints, messages)
+- Views are vanilla HTML in views/ directory (no framework)
+- Templates loaded dynamically via readView() — changes take effect without restart
+- Hook system for permission approval from phone
+- Checkpoint system for user approval from phone (4-hour timeout)
+- Push notifications via ntfy.sh"
+
+# Write project-level files
+echo "# Agent Brain Project Instructions
+$CLAUDE_CONTENT
+$PROJECT_CONTEXT" > "$PROJECT_DIR/CLAUDE.md"
+
+echo "# Agent Brain Project Instructions
+$AGENTS_CONTENT
+$PROJECT_CONTEXT" > "$PROJECT_DIR/AGENTS.md"
+
+echo "Generated:"
+echo "  - $PROJECT_DIR/CLAUDE.md"
+echo "  - $PROJECT_DIR/AGENTS.md"
+
+# Also generate global CLAUDE.md (without project context)
+GLOBAL_DIR="$HOME/.claude"
+if [ -d "$GLOBAL_DIR" ]; then
+  echo "# Agent Brain Integration
+$CLAUDE_CONTENT" > "$GLOBAL_DIR/CLAUDE.md"
+  echo "  - $GLOBAL_DIR/CLAUDE.md (global)"
+fi
+
+# Generate global AGENTS.md for Codex
+CODEX_GLOBAL_DIR="$HOME/.codex"
+if [ -d "$CODEX_GLOBAL_DIR" ]; then
+  echo "# Agent Brain Integration
+$AGENTS_CONTENT" > "$CODEX_GLOBAL_DIR/AGENTS.md"
+  echo "  - $CODEX_GLOBAL_DIR/AGENTS.md (global)"
+fi
+
+echo "Done!"

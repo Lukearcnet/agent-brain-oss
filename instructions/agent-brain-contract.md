@@ -1,7 +1,6 @@
-# Agent Brain Project Instructions
 # Agent Brain Integration
 
-Every Claude Code session is connected to Agent Brain (http://localhost:3030) for persistent memory and cross-session communication. This applies to ALL projects.
+Every {{PROVIDER}} session is connected to Agent Brain (http://localhost:3030) for persistent memory and cross-session communication. This applies to ALL projects.
 
 ## At Session Start
 Determine your project key from the current working directory (replace `/` with `-`):
@@ -197,20 +196,3 @@ curl -s "http://localhost:3030/api/memory/$PROJECT_KEY" | jq -r '.content'
 - Use daily logs for detailed session-by-session history
 - Use mailbox for cross-project communication or notes to the user
 - Run pre-review self-validation before completing any task
-
-## Real-Time Messages from User
-The user can send you messages from their phone while you work. These are delivered automatically via a PreToolUse hook — you'll see them as system messages between tool calls. When you receive a message:
-- Acknowledge it immediately
-- Factor the instructions into your current work
-- If the message changes your priorities, adjust accordingly
-
-You don't need to do anything to receive messages — they arrive automatically.
-
-## Project Context (Agent Brain)
-- Node.js/Express server on port 3030
-- Supabase for all persistent data (sessions, memory, events, orchestrator, checkpoints, messages)
-- Views are vanilla HTML in views/ directory (no framework)
-- Templates loaded dynamically via readView() — changes take effect without restart
-- Hook system for permission approval from phone
-- Checkpoint system for user approval from phone (4-hour timeout)
-- Push notifications via ntfy.sh

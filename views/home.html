@@ -170,6 +170,20 @@
       white-space: nowrap;
     }
     .session-time { font-size: 11px; color: #8e8e93; margin-top: 2px; }
+    .provider-badge {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .provider-badge.claude { background: #f5e6d3; color: #a55b2a; }
+    .provider-badge.codex { background: #e3f2fd; color: #1565c0; }
+    .provider-badge.unadopted { background: #f2f2f7; color: #8e8e93; border: 1px dashed #c7c7cc; }
     .session-terminal-btn {
       background: none;
       border: none;
@@ -346,10 +360,76 @@
       font-weight: 600;
       cursor: pointer;
     }
+
+    /* Mobile menu button (hamburger - hidden on desktop) */
+    .mobile-menu-btn {
+      display: none;
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 18px;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+    }
+    .mobile-menu-btn:active { background: rgba(255,255,255,0.25); }
+
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+      .mobile-menu-btn {
+        display: block;
+      }
+      .container {
+        position: relative;
+      }
+      .sidebar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        max-width: none;
+        z-index: 10;
+        transition: transform 0.25s ease;
+      }
+      .preview {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 5;
+      }
+      /* When a session is selected on mobile, hide sidebar and show preview */
+      .container.mobile-show-preview .sidebar {
+        transform: translateX(-100%);
+      }
+      .container.mobile-show-preview .preview {
+        z-index: 15;
+      }
+      /* Show sidebar overlay when menu is open */
+      .container.mobile-menu-open .sidebar {
+        transform: translateX(0);
+        z-index: 20;
+        box-shadow: 2px 0 20px rgba(0,0,0,0.2);
+      }
+      .container.mobile-menu-open::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.4);
+        z-index: 15;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="header">
+    <button class="mobile-menu-btn" id="mobile-menu-btn" onclick="toggleMobileMenu()">☰</button>
     <h1>Sessions</h1>
     <a href="/" class="header-btn">Dashboard</a>
   </div>
@@ -443,24 +523,34 @@
     let collapsedArchived = JSON.parse(localStorage.getItem("collapsedArchived") || "{}");
 
     async function loadData() {
-      const [sResp, fResp, ccResp] = await Promise.all([
+      const [sResp, fResp, ccResp, codexResp] = await Promise.all([
         fetch("/api/sessions"),
         fetch("/api/folders"),
-        fetch("/api/claude-sessions")
+        fetch("/api/claude-sessions"),
+        fetch("/api/codex-sessions")
       ]);
       const abSessions = await sResp.json();
       allFolders = await fResp.json();
       const ccSessions = await ccResp.json();
+      const codexSessions = await codexResp.json();
 
+      // Track which external sessions are already adopted
       const adoptedCC = new Set();
+      const adoptedCodex = new Set();
       for (const ab of abSessions) {
         if (ab.claude_session_id) adoptedCC.add(ab.claude_session_id);
+        if (ab.codex_session_id) adoptedCodex.add(ab.codex_session_id);
       }
 
       allSessions = [];
+
+      // Add Agent Brain sessions with provider info
       for (const ab of abSessions) {
-        allSessions.push({ ...ab, source: "agent-brain" });
+        const provider = ab.provider || (ab.claude_session_id ? "claude" : "agent-brain");
+        allSessions.push({ ...ab, source: "agent-brain", provider });
       }
+
+      // Add unadopted Claude Code sessions
       for (const cc of ccSessions) {
         if (!adoptedCC.has(cc.session_id)) {
           allSessions.push({
@@ -468,11 +558,27 @@
             title: cc.title,
             updated_at: cc.updated_at,
             source: "claude-code",
+            provider: "claude",
             project_dir: cc.project_dir,
             project_path: cc.project_path
           });
         }
       }
+
+      // Add unadopted Codex sessions
+      for (const cx of codexSessions) {
+        if (!adoptedCodex.has(cx.session_id)) {
+          allSessions.push({
+            session_id: cx.session_id,
+            title: cx.title,
+            updated_at: cx.updated_at,
+            source: "codex",
+            provider: "codex",
+            project_dir: cx.project_dir
+          });
+        }
+      }
+
       allSessions.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
       renderList();
     }
@@ -569,22 +675,42 @@
       const archivedClass = s.archived ? ' archived' : '';
       const selectedClass = isSelected ? ' selected' : '';
 
+      // Provider badge
+      let badge = '';
+      if (s.provider === 'claude' || s.provider === 'claude-code') {
+        badge = '<span class="provider-badge claude">Claude</span>';
+      } else if (s.provider === 'codex') {
+        badge = '<span class="provider-badge codex">Codex</span>';
+      }
+
+      // Unadopted Claude Code session
       if (s.source === "claude-code") {
         return '<div class="session-item' + archivedClass + '" onclick="adoptCCSession(\'' + esc(s.project_dir) + '\', \'' + s.session_id + '\')">' +
           '<div class="session-info">' +
-            '<div class="session-title">' + esc(s.title) + '</div>' +
+            '<div class="session-title">' + esc(s.title) + '<span class="provider-badge unadopted">Adopt</span></div>' +
             '<div class="session-time">' + ago + '</div>' +
           '</div>' +
         '</div>';
       }
 
+      // Unadopted Codex session
+      if (s.source === "codex") {
+        return '<div class="session-item' + archivedClass + '" onclick="adoptCodexSession(\'' + s.session_id + '\')">' +
+          '<div class="session-info">' +
+            '<div class="session-title">' + esc(s.title) + '<span class="provider-badge unadopted">Adopt</span></div>' +
+            '<div class="session-time">' + ago + '</div>' +
+          '</div>' +
+        '</div>';
+      }
+
+      // Adopted session (Agent Brain managed)
       return '<div class="session-item' + archivedClass + selectedClass + '" onclick="selectSession(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">' +
         '<div class="session-info">' +
-          '<div class="session-title">' + esc(s.title) + '</div>' +
+          '<div class="session-title">' + esc(s.title) + badge + '</div>' +
           '<div class="session-time">' + ago + '</div>' +
         '</div>' +
         '<button class="session-terminal-btn" onclick="event.stopPropagation(); focusTerminal(\'' + esc(s.title).replace(/'/g, "\\'") + '\')" title="Focus terminal">💻</button>' +
-        '<button class="session-action-btn" onclick="event.stopPropagation(); openModal(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">···</button>' +
+        '<button class="session-action-btn" onclick="event.stopPropagation(); openModal(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">...</button>' +
       '</div>';
     }
 
@@ -592,18 +718,34 @@
       selectedSessionId = sessionId;
       renderList();
       showPreview(sessionId, title);
+      // On mobile, show the preview panel and close menu
+      const container = document.querySelector(".container");
+      container.classList.add("mobile-show-preview");
+      container.classList.remove("mobile-menu-open");
     }
 
     function showPreview(sessionId, title) {
       const preview = document.getElementById("preview");
-      preview.innerHTML =
-        '<div class="preview-header">' +
-          '<div class="preview-title">' + esc(title) + '</div>' +
-          '<button class="preview-btn secondary" onclick="focusTerminal(\'' + esc(title).replace(/'/g, "\\'") + '\')">💻 Terminal</button>' +
-          '<button class="preview-btn" onclick="window.location.href=\'/chat/' + sessionId + '\'">Open Chat</button>' +
-        '</div>' +
-        '<iframe src="/chat/' + sessionId + '?embed=1"></iframe>';
+      // Show full chat without embed mode - gives access to handoff, rename, etc. via action menu
+      preview.innerHTML = '<iframe src="/chat/' + sessionId + '"></iframe>';
     }
+
+    function toggleMobileMenu() {
+      const container = document.querySelector(".container");
+      container.classList.toggle("mobile-menu-open");
+    }
+
+    // Close mobile menu when clicking backdrop
+    document.addEventListener("click", function(e) {
+      const container = document.querySelector(".container");
+      if (container.classList.contains("mobile-menu-open")) {
+        // If click is on the backdrop (::after element area), close menu
+        const sidebar = document.querySelector(".sidebar");
+        if (!sidebar.contains(e.target) && !document.getElementById("mobile-menu-btn").contains(e.target)) {
+          container.classList.remove("mobile-menu-open");
+        }
+      }
+    });
 
     async function focusTerminal(sessionTitle) {
       try {
@@ -628,6 +770,26 @@
         selectedSessionId = data.session_id;
         loadData();
         showPreview(data.session_id, data.title || sessionId);
+        const container = document.querySelector(".container");
+        container.classList.add("mobile-show-preview");
+        container.classList.remove("mobile-menu-open");
+      }
+    }
+
+    async function adoptCodexSession(sessionId) {
+      const resp = await fetch("/api/codex-sessions/" + sessionId + "/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const data = await resp.json();
+      if (data.session_id) {
+        selectedSessionId = data.session_id;
+        loadData();
+        showPreview(data.session_id, data.title || sessionId);
+        const container = document.querySelector(".container");
+        container.classList.add("mobile-show-preview");
+        container.classList.remove("mobile-menu-open");
       }
     }
 
@@ -707,6 +869,9 @@
       closeModal();
       if (selectedSessionId === activeSessionId) {
         selectedSessionId = null;
+        const container = document.querySelector(".container");
+        container.classList.remove("mobile-show-preview");
+        container.classList.remove("mobile-menu-open");
         document.getElementById("preview").innerHTML =
           '<div class="preview-empty"><div class="preview-empty-icon">💬</div><div>Select a session to preview</div></div>';
       }
@@ -824,6 +989,9 @@
         selectedSessionId = data.session_id;
         loadData();
         showPreview(data.session_id, msg.slice(0, 50));
+        const container = document.querySelector(".container");
+        container.classList.add("mobile-show-preview");
+        container.classList.remove("mobile-menu-open");
       } catch (e) {
         statusEl.textContent = "Failed: " + e.message;
       }

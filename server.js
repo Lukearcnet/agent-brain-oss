@@ -50,6 +50,7 @@ const emailSynth = require("./lib/email-synth");
 const gmailClient = require("./lib/email-synth/gmail-client");
 const gcalClient = require("./lib/calendar/gcal-client");
 const calendar = require("./lib/calendar");
+const codexDiscovery = require("./lib/codex-discovery");
 const maintenance = require("./lib/maintenance");
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -743,6 +744,15 @@ app.get("/api/sessions/:id", async (req, res) => {
     const liveMessages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
     if (liveMessages) session.messages = liveMessages;
   }
+  // If this is a Codex session, read messages from Codex SQLite
+  else if (session.provider === "codex" && session.codex_session_id) {
+    try {
+      const codexMessages = codexDiscovery.getSessionMessages(session.codex_session_id);
+      if (codexMessages) session.messages = codexMessages;
+    } catch (e) {
+      console.error("[codex] Failed to load messages:", e.message);
+    }
+  }
 
   res.json(session);
 });
@@ -953,6 +963,85 @@ app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", async (req, res) =
   await autoNameSession(session);
   await saveSession(session);
   res.json({ session_id: session.session_id });
+});
+
+// ── Codex session browsing ──────────────────────────────────────────────────
+
+app.get("/api/codex-sessions", (_req, res) => {
+  if (!codexDiscovery.isCodexAvailable()) {
+    return res.json([]);
+  }
+  const sessions = codexDiscovery.getSessions({ limit: 50 });
+  res.json(sessions);
+});
+
+app.get("/api/codex-sessions/:sessionId", (req, res) => {
+  if (!codexDiscovery.isCodexAvailable()) {
+    return res.status(404).json({ error: "Codex not available" });
+  }
+  const session = codexDiscovery.getSession(req.params.sessionId);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  const messages = codexDiscovery.getSessionMessages(req.params.sessionId);
+  res.json({ ...session, messages });
+});
+
+app.get("/api/codex-sessions/:sessionId/state", (req, res) => {
+  if (!codexDiscovery.isCodexAvailable()) {
+    return res.status(404).json({ error: "Codex not available" });
+  }
+  const state = codexDiscovery.getSessionState(req.params.sessionId);
+  res.json(state);
+});
+
+// Adopt a Codex session into Agent Brain
+app.post("/api/codex-sessions/:sessionId/adopt", async (req, res) => {
+  const { sessionId } = req.params;
+
+  if (!codexDiscovery.isCodexAvailable()) {
+    return res.status(404).json({ error: "Codex not available" });
+  }
+
+  // Check if already adopted
+  const sessions = await listSessions();
+  for (const s of sessions) {
+    const full = await loadSession(s.session_id);
+    if (full && full.codex_session_id === sessionId) {
+      return res.json({ session_id: s.session_id, title: full.title });
+    }
+  }
+
+  // Get Codex session info
+  const codexSession = codexDiscovery.getSession(sessionId);
+  if (!codexSession) {
+    return res.status(404).json({ error: "Codex session not found" });
+  }
+
+  // Create Agent Brain session linked to this Codex session
+  const session = await createSession();
+  session.codex_session_id = sessionId;
+  session.provider = "codex";
+  session.cc_project_dir = codexSession.project_dir;  // Reuse cc_project_dir for project mapping
+  session.title = codexSession.title || "Codex Session";
+  session.messages = [];  // Messages read live from Codex rollout
+
+  // Auto-assign to project folder based on cwd
+  const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.cwd === codexSession.project_dir);
+  if (projectConfig && projectConfig.name) {
+    const folders = await db.loadFolders();
+    let projectFolder = folders.find(f => f.name === projectConfig.name);
+    if (!projectFolder) {
+      // Create folder for this project
+      const { data, error } = await db.supabase.from("session_folders").insert({ name: projectConfig.name }).select().single();
+      if (!error && data) projectFolder = data;
+    }
+    if (projectFolder) {
+      await moveToFolder(session.session_id, projectFolder.id);
+    }
+  }
+
+  await saveSession(session);
+  res.json({ session_id: session.session_id, title: session.title });
 });
 
 // ── Permission prompt detection & approval ────────────────────────────────────
@@ -1869,9 +1958,13 @@ app.get("/api/sessions/messages/:projectDir", async (req, res) => {
 
 const pendingCheckpoints = new Map(); // id → { resolve, timeout }
 
-// Claude posts a checkpoint (question/decision point) and blocks waiting for response
+// Claude posts a checkpoint (question/decision point)
+// Use ?blocking=false for Codex-style polling (returns immediately with checkpoint_id)
+// Default is blocking (Claude Code style - waits up to 4 hours)
 app.post("/api/checkpoints", async (req, res) => {
-  const { project_dir, question, options, session_label } = req.body;
+  const { project_dir, question, options, session_label, provider } = req.body;
+  const blocking = req.query.blocking !== "false"; // Default to blocking
+
   if (!project_dir || !question) {
     return res.status(400).json({ error: "project_dir and question required" });
   }
@@ -1881,16 +1974,35 @@ app.post("/api/checkpoints", async (req, res) => {
   // Get friendly project name - use session_label override if provided, else derive from directory
   const projectName = session_label || getProjectName(project_dir);
 
+  // Determine provider: explicit param, or infer from blocking mode
+  const checkpointProvider = provider || (blocking ? "claude" : "codex");
+
   // Store in Supabase
   // Note: context_snapshot removed - unreliable session matching made it show wrong context
-  const { error } = await db.supabase.from("session_checkpoints").insert({
+  // Note: provider column requires migration 20260309_checkpoint_provider.sql
+  const insertData = {
     id,
     project_dir,
     question,
     options: options || [],
     status: "pending",
     project_name: projectName
+  };
+
+  // Try with provider field, fall back without if column doesn't exist yet
+  let error;
+  const { error: err1 } = await db.supabase.from("session_checkpoints").insert({
+    ...insertData,
+    provider: checkpointProvider
   });
+
+  if (err1 && err1.message.includes("provider")) {
+    // Provider column doesn't exist yet, insert without it
+    const { error: err2 } = await db.supabase.from("session_checkpoints").insert(insertData);
+    error = err2;
+  } else {
+    error = err1;
+  }
 
   if (error) return res.status(500).json({ error: error.message });
 
@@ -1903,6 +2015,11 @@ app.post("/api/checkpoints", async (req, res) => {
     message: question.length > 120 ? question.slice(0, 120) + "..." : question,
     priority: 4
   });
+
+  // Non-blocking mode: return immediately with checkpoint_id (for Codex polling)
+  if (!blocking) {
+    return res.json({ checkpoint_id: id, status: "pending" });
+  }
 
   // Long-poll: wait up to 4 hours for blocking response
   // If no response, return timeout BUT keep checkpoint pending in DB
@@ -1953,15 +2070,146 @@ app.post("/api/checkpoints/:id/respond", async (req, res) => {
     response_length: response.length
   });
 
-  // Resolve the long-poll
+  // Resolve the long-poll with atomic cycle protocol for remote-controlled sessions
   const pending = pendingCheckpoints.get(id);
   if (pending) {
     clearTimeout(pending.timeout);
     pendingCheckpoints.delete(id);
-    pending.resolve({ status: "responded", response });
+
+    // Protocol fields for atomic cycle enforcement
+    const protocol = {
+      mode: "atomic_cycle",
+      your_state: "EXECUTING",
+      required_next_action: "execute_user_instruction_then_post_checkpoint",
+      prohibit_final_until_next_checkpoint: true,
+      user_instruction: response
+    };
+
+    const reminder = "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
+
+    pending.resolve({ status: "responded", response, protocol, reminder });
   }
 
   res.json({ ok: true });
+});
+
+// Poll checkpoint status (for Codex-style non-blocking workflow)
+// Returns status, response (if any), and protocol fields
+app.get("/api/checkpoints/:id/status", async (req, res) => {
+  const { id } = req.params;
+
+  const { data: checkpoint, error } = await db.supabase
+    .from("session_checkpoints")
+    .select("id, status, response, created_at, responded_at, project_dir")
+    .eq("id", id)
+    .single();
+
+  if (error || !checkpoint) {
+    return res.status(404).json({ error: "Checkpoint not found" });
+  }
+
+  // Base response with status info
+  const result = {
+    checkpoint_id: id,
+    status: checkpoint.status, // pending, responded, dismissed, timeout
+    created_at: checkpoint.created_at,
+    updated_at: checkpoint.responded_at || checkpoint.created_at
+  };
+
+  // If responded, include response and protocol fields
+  if (checkpoint.status === "responded" && checkpoint.response) {
+    result.response = checkpoint.response;
+    result.protocol = {
+      mode: "atomic_cycle",
+      your_state: "EXECUTING",
+      required_next_action: "execute_user_instruction_then_post_checkpoint",
+      prohibit_final_until_next_checkpoint: true,
+      user_instruction: checkpoint.response
+    };
+    result.reminder = "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
+  }
+
+  res.json(result);
+});
+
+// Blocking wait for checkpoint response (for Codex-style sequential calls)
+// Blocks up to ?timeout seconds (1-30, default 10), returns immediately if responded
+// Returns same shape as /status endpoint
+app.get("/api/checkpoints/:id/wait", async (req, res) => {
+  const { id } = req.params;
+  const requestedTimeout = parseInt(req.query.timeout, 10);
+
+  // Validate and cap timeout (1-30 seconds)
+  if (req.query.timeout !== undefined && (isNaN(requestedTimeout) || requestedTimeout < 1 || requestedTimeout > 30)) {
+    return res.status(400).json({ error: "timeout must be between 1 and 30 seconds" });
+  }
+  const timeout = requestedTimeout || 10;
+
+  // Helper to fetch checkpoint status
+  const getCheckpointStatus = async () => {
+    const { data: checkpoint, error } = await db.supabase
+      .from("session_checkpoints")
+      .select("id, status, response, created_at, responded_at, project_dir")
+      .eq("id", id)
+      .single();
+
+    if (error || !checkpoint) {
+      return null;
+    }
+
+    const result = {
+      checkpoint_id: id,
+      status: checkpoint.status,
+      created_at: checkpoint.created_at,
+      updated_at: checkpoint.responded_at || checkpoint.created_at
+    };
+
+    if (checkpoint.status === "responded" && checkpoint.response) {
+      result.response = checkpoint.response;
+      result.protocol = {
+        mode: "atomic_cycle",
+        your_state: "EXECUTING",
+        required_next_action: "execute_user_instruction_then_post_checkpoint",
+        prohibit_final_until_next_checkpoint: true,
+        user_instruction: checkpoint.response
+      };
+      result.reminder = "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
+    }
+
+    return result;
+  };
+
+  // Check immediately first
+  const immediateResult = await getCheckpointStatus();
+  if (!immediateResult) {
+    return res.status(404).json({ error: "Checkpoint not found" });
+  }
+
+  // If already responded/dismissed/timeout, return immediately
+  if (immediateResult.status !== "pending") {
+    return res.json(immediateResult);
+  }
+
+  // Poll every 500ms until timeout or response
+  const startTime = Date.now();
+  const timeoutMs = timeout * 1000;
+
+  while (Date.now() - startTime < timeoutMs) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const result = await getCheckpointStatus();
+    if (!result) {
+      return res.status(404).json({ error: "Checkpoint not found" });
+    }
+
+    if (result.status !== "pending") {
+      return res.json(result);
+    }
+  }
+
+  // Timeout - return current pending status
+  const finalResult = await getCheckpointStatus();
+  res.json(finalResult || { checkpoint_id: id, status: "pending" });
 });
 
 // Dismiss a checkpoint without responding (user doesn't want to answer)
@@ -2074,31 +2322,36 @@ app.post("/api/sessions/:id/handoff", async (req, res) => {
   }
 });
 
-// Spawn a new desktop Claude session from a handoff
+// Spawn a new desktop session from a handoff (Claude or Codex)
 app.post("/api/handoffs/:id/spawn", async (req, res) => {
   try {
     const record = await handoff.getHandoff(req.params.id);
     if (!record) return res.status(404).json({ error: "Handoff not found" });
 
+    const provider = req.body.provider || "claude";
     const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.dir === record.project_dir) || {};
     const cwd = projectConfig.cwd || process.env.HOME || "/tmp";
 
-    // Snapshot existing JSONL files so we can detect the new one
+    // Snapshot existing session files so we can detect the new one
     const existingFiles = new Set();
-    try {
-      for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
-        const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
-        if (!fs.statSync(dirPath).isDirectory()) continue;
-        for (const f of fs.readdirSync(dirPath)) {
-          if (f.endsWith(".jsonl")) existingFiles.add(dir + "/" + f);
+    if (provider === "claude") {
+      try {
+        for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+          const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
+          if (!fs.statSync(dirPath).isDirectory()) continue;
+          for (const f of fs.readdirSync(dirPath)) {
+            if (f.endsWith(".jsonl")) existingFiles.add(dir + "/" + f);
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
+    // For Codex, we'll detect new sessions via codexDiscovery
 
     // Create an Agent Brain session for the new handoff
     const newSession = await createSession();
     newSession.title = `Handoff: ${record.project_name || record.project_dir}`;
     newSession.cc_project_dir = record.project_dir;
+    newSession.provider = provider;
     newSession.handoff_from = record.from_session_title || null;
     await saveSession(newSession);
 
@@ -2118,11 +2371,26 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
       await moveToFolder(newSession.session_id, targetFolderId);
     }
 
+    // For Codex spawns, re-compose briefing with AGENTS.md instead of CLAUDE.md
+    let briefingToUse = record.briefing;
+    if (provider === "codex") {
+      briefingToUse = await handoff.composeBriefing({
+        projectDir: record.project_dir,
+        projectName: record.project_name || projectConfig.name || "Unknown",
+        cwd: projectConfig.cwd || null,
+        fromSessionTitle: record.from_session_title || "",
+        handoffNotes: record.handoff_notes || "",
+        projectConfig,
+        targetProvider: "codex"
+      });
+    }
+
     // Spawn the terminal session
     const result = await handoff.spawnDesktopSession({
       cwd,
-      briefing: record.briefing,
-      handoffId: record.id
+      briefing: briefingToUse,
+      handoffId: record.id,
+      provider
     });
 
     // Update handoff record with the new session ID
@@ -2131,35 +2399,63 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
     db.logEvent("handoff_spawned", newSession.session_id, {
       handoff_id: record.id,
       method: result.method,
+      provider: result.provider,
       project_dir: record.project_dir,
       folder_id: record.source_folder_id
     }).catch(console.error);
 
-    // Background: poll for the new JSONL to link the Claude Code session
+    // Background: poll for the new session to link it
     (async () => {
-      for (let attempt = 0; attempt < 30; attempt++) {
-        await new Promise(r => setTimeout(r, 2000));
-        try {
-          for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
-            const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
-            if (!fs.statSync(dirPath).isDirectory()) continue;
-            for (const f of fs.readdirSync(dirPath)) {
-              if (!f.endsWith(".jsonl")) continue;
-              const key = dir + "/" + f;
-              if (existingFiles.has(key)) continue;
-              const stat = fs.statSync(path.join(dirPath, f));
-              if (Date.now() - stat.mtimeMs < 30000) {
-                newSession.claude_session_id = f.replace(".jsonl", "");
-                newSession.cc_project_dir = dir;
+      if (provider === "claude") {
+        // Poll for new JSONL files
+        for (let attempt = 0; attempt < 30; attempt++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+              const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
+              if (!fs.statSync(dirPath).isDirectory()) continue;
+              for (const f of fs.readdirSync(dirPath)) {
+                if (!f.endsWith(".jsonl")) continue;
+                const key = dir + "/" + f;
+                if (existingFiles.has(key)) continue;
+                const stat = fs.statSync(path.join(dirPath, f));
+                if (Date.now() - stat.mtimeMs < 30000) {
+                  newSession.claude_session_id = f.replace(".jsonl", "");
+                  newSession.cc_project_dir = dir;
+                  await saveSession(newSession);
+                  console.log(`[handoff] Linked spawned session ${newSession.session_id} to JSONL ${dir}/${f}`);
+                  return;
+                }
+              }
+            }
+          } catch (_) {}
+        }
+        console.warn(`[handoff] Could not link JSONL for spawned session ${newSession.session_id} after 60s`);
+      } else if (provider === "codex") {
+        // Poll Codex SQLite for new sessions
+        const startTime = Date.now();
+        for (let attempt = 0; attempt < 30; attempt++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            // Get recent Codex sessions, look for one newer than spawn time
+            const codexSessions = codexDiscovery.getSessions({ limit: 10 });
+            for (const cx of codexSessions) {
+              const createdAt = new Date(cx.created_at).getTime();
+              // Session created after we spawned, in the same project directory
+              if (createdAt >= startTime - 5000 && cx.project_dir === cwd) {
+                newSession.codex_session_id = cx.session_id;
+                newSession.cc_project_dir = record.project_dir;
                 await saveSession(newSession);
-                console.log(`[handoff] Linked spawned session ${newSession.session_id} to JSONL ${dir}/${f}`);
+                console.log(`[handoff] Linked spawned session ${newSession.session_id} to Codex ${cx.session_id}`);
                 return;
               }
             }
+          } catch (e) {
+            console.error(`[handoff] Codex poll error:`, e.message);
           }
-        } catch (_) {}
+        }
+        console.warn(`[handoff] Could not link Codex session for ${newSession.session_id} after 60s`);
       }
-      console.warn(`[handoff] Could not link JSONL for spawned session ${newSession.session_id} after 60s`);
     })();
 
     res.json({ ok: true, ...result, handoff_id: record.id, session_id: newSession.session_id });

@@ -1213,8 +1213,13 @@
         const questionText = (isLongQuestion && !isQuestionExpanded) ? cp.question.slice(0, 400) + "..." : cp.question;
         const opts = cp.options || [];
 
-        html += '<div class="attention-card" data-checkpoint-id="' + cp.id + '" style="border-left-color:#6366f1;">';
+        html += '<div class="attention-card" data-checkpoint-id="' + cp.id + '" style="border-left-color:#6366f1;position:relative;">';
         html += '  <div class="attention-card-inner">';
+        // Provider icon in top right corner
+        const providerIcon = cp.provider === 'codex'
+          ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Codex"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>'
+          : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" title="Claude"><circle cx="12" cy="12" r="10" fill="#d97706"/><path d="M12 7v5l3 3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
+        html += '  <div style="position:absolute;top:10px;right:10px;opacity:0.8;" title="' + (cp.provider === 'codex' ? 'Codex' : 'Claude') + '">' + providerIcon + '</div>';
         // Labels row - just show project name (session title was unreliable)
         html += '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
         html += '      <span style="font-size:12px;font-weight:600;color:#fff;background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:3px 10px;border-radius:6px;">' + esc(projectLabel) + '</span>';

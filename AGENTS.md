@@ -1,10 +1,24 @@
 # Agent Brain Project Instructions
 # Agent Brain Integration
 
-Every Claude Code session is connected to Agent Brain (http://localhost:3030) for persistent memory and cross-session communication. This applies to ALL projects.
+Every Codex session is connected to Agent Brain (http://localhost:3030) for persistent memory and cross-session communication. This applies to ALL projects.
 
-## At Session Start
-Determine your project key from the current working directory (replace `/` with `-`):
+## At Session Start (CRITICAL - Read Carefully)
+
+**If this is a HANDOFF session** (you received a briefing from a previous session):
+1. Read and process the briefing to understand context
+2. Load project memory and mailbox (see below)
+3. **DO NOT start working yet!**
+4. Post a checkpoint asking for direction:
+```bash
+PROJECT_KEY=$(pwd | sed 's|/|-|g')
+curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \
+  -H "Content-Type: application/json" \
+  -d "{\"project_dir\": \"$PROJECT_KEY\", \"question\": \"Handoff received. I've caught up on context. What would you like me to focus on?\", \"options\": [\"Continue previous work\", \"New task\", \"Just checking in\"]}"
+```
+5. Wait for user response before proceeding with any work
+
+**For all sessions**, determine your project key:
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 ```
@@ -55,23 +69,74 @@ curl -s -X POST http://localhost:3030/api/mailbox \
   -d "{\"from_session\": \"$PROJECT_KEY\", \"to_session\": \"-Users-lukeblanton-Documents-other-project\", \"subject\": \"<subject>\", \"body\": \"<body>\"}"
 ```
 
-## Checkpoints (User Approval from Phone)
-When you need user input before proceeding (plan approval, design decisions, clarifying questions), use the checkpoint system instead of just printing a question and waiting. This lets the user respond from their phone even when away from the computer.
+## Checkpoints (User Approval from Phone) — Codex Polling Mode
 
+Codex uses a **non-blocking polling pattern** for checkpoints because its turn-based execution model doesn't support true blocking curls. When you need user input, use the checkpoint system.
+
+### Step 1: Create Checkpoint (Non-blocking)
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 
-# Post a checkpoint — this BLOCKS until the user responds (up to 4 hours)
-RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \
+# Post checkpoint with ?blocking=false — returns immediately with checkpoint_id
+RESULT=$(curl -s -X POST "http://localhost:3030/api/checkpoints?blocking=false" \
   -H "Content-Type: application/json" \
-  -d "{\"project_dir\": \"$PROJECT_KEY\", \"question\": \"<your question or plan summary here>\", \"options\": [\"Yes, proceed\", \"Modify approach\", \"Cancel\"]}")
+  -d "{\"project_dir\": \"$PROJECT_KEY\", \"provider\": \"codex\", \"question\": \"<your question>\", \"options\": [\"Option 1\", \"Option 2\", \"Other\"]}")
 
-echo "$RESPONSE"
+CHECKPOINT_ID=$(echo "$RESULT" | jq -r '.checkpoint_id')
+echo "$CHECKPOINT_ID" > /tmp/agent-brain-checkpoint-id
+echo "Checkpoint created: $CHECKPOINT_ID"
 ```
 
-The curl will block until the user taps a response on their phone dashboard. The response JSON contains:
-- `status`: "responded" or "timeout"
-- `response`: the user's text response
+### Step 2: Poll for Response (Sequential /wait calls)
+```bash
+CHECKPOINT_ID=$(cat /tmp/agent-brain-checkpoint-id)
+
+# Each /wait call blocks up to 30 seconds, then returns
+RESPONSE=$(curl -s "http://localhost:3030/api/checkpoints/$CHECKPOINT_ID/wait?timeout=30")
+STATUS=$(echo "$RESPONSE" | jq -r '.status')
+
+if [ "$STATUS" = "responded" ]; then
+  USER_RESPONSE=$(echo "$RESPONSE" | jq -r '.response')
+  echo "User responded: $USER_RESPONSE"
+  # Execute the user's instruction, then post a new checkpoint
+else
+  echo "Still pending, continue polling..."
+  # Make another /wait call
+fi
+```
+
+### Anti-Drift Rules (CRITICAL)
+**Never end your turn while a checkpoint is still pending.**
+
+After every `/wait` result with `status: "pending"`, remind yourself:
+> **Pending means continue. Do NOT end the turn.**
+
+**Minimum waiting requirement:**
+- At least **10 /wait calls**, OR
+- At least **5 minutes of waiting**
+
+**Prohibited actions while checkpoint is pending:**
+- Ending your turn
+- Sending a "still waiting" message
+- Treating repeated pending results as a reason to stop
+
+**Recovery if session restarts:**
+```bash
+# Check if there's a pending checkpoint from a previous session
+if [ -f /tmp/agent-brain-checkpoint-id ]; then
+  CHECKPOINT_ID=$(cat /tmp/agent-brain-checkpoint-id)
+  RESPONSE=$(curl -s "http://localhost:3030/api/checkpoints/$CHECKPOINT_ID/status")
+  STATUS=$(echo "$RESPONSE" | jq -r '.status')
+  if [ "$STATUS" = "pending" ]; then
+    echo "Resuming wait for checkpoint $CHECKPOINT_ID"
+    # Continue polling
+  elif [ "$STATUS" = "responded" ]; then
+    USER_RESPONSE=$(echo "$RESPONSE" | jq -r '.response')
+    echo "User already responded: $USER_RESPONSE"
+    # Execute the response
+  fi
+fi
+```
 
 **When to use checkpoints:**
 - After creating a plan that needs approval before execution
@@ -85,29 +150,27 @@ The curl will block until the user taps a response on their phone dashboard. The
 - When the user already gave clear instructions
 - For status updates (use memory/mailbox instead)
 
-**CRITICAL: Checkpoints vs AskUserQuestion**
-- **NEVER use AskUserQuestion** for design decisions, approach selection, or clarifying questions
-- AskUserQuestion times out after 90 seconds and requires the user at the computer
-- Checkpoints wait up to 4 hours and the user can respond from their phone
-- If you're tempted to ask "which approach?" or "what do you prefer?" — USE A CHECKPOINT
-
 ## Task Completion Checkpoint (CRITICAL)
 **Never end a task by simply going idle.** When you finish what you were asked to do, ALWAYS post a checkpoint:
 
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 
-RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \
+# Create completion checkpoint
+RESULT=$(curl -s -X POST "http://localhost:3030/api/checkpoints?blocking=false" \
   -H "Content-Type: application/json" \
-  -d "{\"project_dir\": \"$PROJECT_KEY\", \"question\": \"Task complete: <brief summary of what was done>. What would you like me to work on next?\", \"options\": [\"Continue with related work\", \"New task\", \"Done for now\"]}")
+  -d "{\"project_dir\": \"$PROJECT_KEY\", \"provider\": \"codex\", \"question\": \"Task complete: <brief summary of what was done>. What would you like me to work on next?\", \"options\": [\"Continue with related work\", \"New task\", \"Done for now\"]}")
 
-# If user responds, continue working on their request
-# If timeout, save memory and end session gracefully
+CHECKPOINT_ID=$(echo "$RESULT" | jq -r '.checkpoint_id')
+echo "$CHECKPOINT_ID" > /tmp/agent-brain-checkpoint-id
+
+# Poll for response (minimum 10 calls or 5 minutes)
+# ... use the polling pattern above ...
 ```
 
-This ensures the user can direct you from their phone instead of you going idle while they're away from the computer. The checkpoint blocks for up to 4 hours, giving them time to respond.
+This ensures the user can direct you from their phone instead of you going idle while they're away from the computer.
 
-If the checkpoint times out (5 min with no response), proceed with the most conservative option or save your progress and note what you were waiting on.
+**If polling times out** (after minimum wait period with no response): save progress to memory and note what you were waiting on.
 
 ## Pre-Review Self-Validation (IMPORTANT)
 Before asking the user to review your work or posting a "task complete" checkpoint, run these mechanical checks to catch obvious breakage. This applies to ALL projects.
@@ -199,12 +262,12 @@ curl -s "http://localhost:3030/api/memory/$PROJECT_KEY" | jq -r '.content'
 - Run pre-review self-validation before completing any task
 
 ## Real-Time Messages from User
-The user can send you messages from their phone while you work. These are delivered automatically via a PreToolUse hook — you'll see them as system messages between tool calls. When you receive a message:
-- Acknowledge it immediately
-- Factor the instructions into your current work
-- If the message changes your priorities, adjust accordingly
+For Codex sessions, real-time message injection is not yet supported. To receive user input during a session:
+- Post a checkpoint and wait for the user's response
+- Check the mailbox at logical breakpoints in your work
+- The user can respond to checkpoints from their phone
 
-You don't need to do anything to receive messages — they arrive automatically.
+This limitation may be removed in future versions when the Codex app-server protocol is stable.
 
 ## Project Context (Agent Brain)
 - Node.js/Express server on port 3030

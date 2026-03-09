@@ -340,10 +340,13 @@
             '<div style="width:100%;max-width:400px;margin:0 auto;">' +
             '  <div style="background:rgba(255,255,255,0.97);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;">' +
             '    <div style="padding:14px 16px;font-size:15px;font-weight:600;text-align:center;color:#1c1c1e;border-bottom:1px solid rgba(0,0,0,0.08);">Handoff Ready</div>' +
-            '    <div style="padding:12px 16px;font-size:13px;color:#8e8e93;">Briefing compiled from all context (' + Math.round(data.briefing_length / 1024) + 'KB). Choose how to continue:</div>' +
-            '    <div style="display:flex;flex-direction:column;gap:8px;padding:12px 16px;">' +
-            '      <button onclick="spawnHandoff(\'' + data.handoff_id + '\', this)" style="padding:14px;background:#34c759;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Spawn on Desktop</button>' +
-            '      <button onclick="showHandoffBriefing(\'' + data.handoff_id + '\', this)" style="padding:14px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">View & Copy Briefing</button>' +
+            '    <div style="padding:12px 16px;font-size:13px;color:#8e8e93;">Briefing compiled (' + Math.round(data.briefing_length / 1024) + 'KB). Choose target:</div>' +
+            '    <div style="display:flex;gap:8px;padding:0 16px 12px;">' +
+            '      <button onclick="spawnHandoff(\'' + data.handoff_id + '\', \'claude\', this)" style="flex:1;padding:14px;background:linear-gradient(135deg,#d4a574,#a55b2a);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Claude</button>' +
+            '      <button onclick="spawnHandoff(\'' + data.handoff_id + '\', \'codex\', this)" style="flex:1;padding:14px;background:linear-gradient(135deg,#64b5f6,#1565c0);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Codex</button>' +
+            '    </div>' +
+            '    <div style="padding:0 16px 12px;">' +
+            '      <button onclick="showHandoffBriefing(\'' + data.handoff_id + '\', this)" style="width:100%;padding:14px;background:#e8e8ed;color:#1c1c1e;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">View & Copy Briefing</button>' +
             '    </div>' +
             '  </div>' +
             '  <button onclick="this.closest(\'div[style]\').parentElement.remove()" style="display:block;width:100%;margin-top:8px;padding:16px;border:none;background:rgba(255,255,255,0.95);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-radius:14px;font-size:18px;font-weight:600;cursor:pointer;color:#007aff;">Close</button>' +
@@ -358,11 +361,15 @@
       }
     }
 
-    async function spawnHandoff(handoffId, btn) {
+    async function spawnHandoff(handoffId, provider, btn) {
       btn.textContent = "Spawning...";
       btn.style.background = "#8e8e93";
       try {
-        const resp = await fetch("/api/handoffs/" + handoffId + "/spawn", { method: "POST" });
+        const resp = await fetch("/api/handoffs/" + handoffId + "/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: provider || "claude" })
+        });
         const data = await resp.json();
         if (data.ok) {
           btn.textContent = "Spawned!";
