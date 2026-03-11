@@ -1269,6 +1269,7 @@
     let checkpointTextareaValues = {}; // Preserve user input during re-renders
     let expandedQuestions = {}; // Track which questions are expanded
     let sessionCheckpointLookup = new Map();
+    let sessionCheckpointAmbiguousKeys = new Set();
 
     // Load persisted checkpoint text from localStorage
     try {
@@ -1287,17 +1288,33 @@
         const resp = await fetch("/api/sessions");
         const sessions = await resp.json();
         sessionCheckpointLookup = new Map();
+        sessionCheckpointAmbiguousKeys = new Set();
+
+        function addLookupKey(key, value) {
+          if (!key || sessionCheckpointAmbiguousKeys.has(key)) return;
+          const existing = sessionCheckpointLookup.get(key);
+          if (existing && existing.session_id !== value.session_id) {
+            sessionCheckpointLookup.delete(key);
+            sessionCheckpointAmbiguousKeys.add(key);
+            return;
+          }
+          sessionCheckpointLookup.set(key, value);
+        }
+
         for (const session of sessions) {
+          const resolved = {
+            session_id: session.session_id,
+            provider: session.provider === "codex" ? "codex" : "claude",
+            title: session.title,
+            raw_title: session.raw_title || session.title
+          };
           const keys = [
             session.session_id ? "id:" + session.session_id : "",
             session.title ? "title:" + session.title : "",
             session.raw_title ? "title:" + session.raw_title : ""
           ].filter(Boolean);
           for (const key of keys) {
-            sessionCheckpointLookup.set(key, {
-              provider: session.provider === "codex" ? "codex" : "claude",
-              title: session.title
-            });
+            addLookupKey(key, resolved);
           }
         }
       } catch (_) {}
@@ -1307,7 +1324,14 @@
       const byId = cp.session_id ? sessionCheckpointLookup.get("id:" + cp.session_id) : null;
       const byTitle = cp.session_title ? sessionCheckpointLookup.get("title:" + cp.session_title) : null;
       const match = byId || byTitle;
-      return match ? { ...cp, provider: match.provider } : cp;
+      return match ? {
+        ...cp,
+        provider: match.provider,
+        resolved_session_id: byId ? match.session_id : null,
+        resolved_session_title: match.title,
+        resolved_session_raw_title: match.raw_title,
+        rename_safe: !!byId
+      } : cp;
     }
 
     async function refreshCheckpoints() {
@@ -1364,9 +1388,18 @@
       for (const cp of checkpoints) {
         // Use stored project_name if available, fallback to parsing project_dir
         const projectLabel = cp.project_name || cp.project_dir.split("-").slice(-1)[0] || "Unknown";
-        const isLongQuestion = cp.question.length > 400;
+        const sessionRecap = cp.provider === "codex"
+          ? (Array.isArray(cp.session_recap) ? cp.session_recap.filter(Boolean).slice(0, 3) : [])
+          : [];
+        const combinedQuestionParts = [];
+        if (sessionRecap.length > 0) {
+          combinedQuestionParts.push(sessionRecap.join("\n\n"));
+        }
+        combinedQuestionParts.push(cp.question);
+        const combinedQuestion = combinedQuestionParts.filter(Boolean).join("\n\n");
+        const isLongQuestion = combinedQuestion.length > 400;
         const isQuestionExpanded = expandedQuestions[cp.id];
-        const questionText = (isLongQuestion && !isQuestionExpanded) ? cp.question.slice(0, 400) + "..." : cp.question;
+        const questionText = (isLongQuestion && !isQuestionExpanded) ? combinedQuestion.slice(0, 400) + "..." : combinedQuestion;
         const opts = cp.options || [];
 
         html += '<div class="attention-card" data-checkpoint-id="' + cp.id + '" style="border-left-color:#6366f1;position:relative;">';
@@ -1379,9 +1412,15 @@
         // Labels row - just show project name (session title was unreliable)
         html += '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
         html += '      <span style="font-size:12px;font-weight:600;color:#fff;background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:3px 10px;border-radius:6px;">' + esc(projectLabel) + '</span>';
+        if (cp.resolved_session_title) {
+          html += '      <span style="font-size:12px;font-weight:600;color:#4b5563;background:#eef2ff;padding:3px 10px;border-radius:6px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(cp.resolved_session_title) + '">' + esc(cp.resolved_session_title) + '</span>';
+        }
+        if (cp.rename_safe && cp.resolved_session_id) {
+          html += '      <button style="border:none;background:#eef2ff;color:#4338ca;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;cursor:pointer;" onclick="renameCheckpointSession(\'' + esc(cp.resolved_session_id).replace(/'/g, "\\'") + '\', \'' + esc(cp.resolved_session_raw_title || cp.resolved_session_title || "").replace(/'/g, "\\'") + '\', this)">Rename</button>';
+        }
         html += '    </div>';
 
-        // Question text with expand option
+        // Combined context + checkpoint text with expand option
         html += '    <div id="ckpt-question-' + cp.id + '" style="font-size:14px;color:#1c1c1e;line-height:1.5;white-space:pre-wrap;max-height:' + (isQuestionExpanded ? 'none' : '300px') + ';overflow-y:auto;">' + esc(questionText) + '</div>';
         if (isLongQuestion) {
           html += '    <button onclick="toggleQuestionExpand(\'' + cp.id + '\')" style="background:none;border:none;color:#007aff;font-size:13px;padding:4px 0;cursor:pointer;">' + (isQuestionExpanded ? 'Show Less' : 'Show Full Message') + '</button>';
@@ -1475,6 +1514,41 @@
       // Force re-render by clearing cached IDs
       lastCheckpointIds = [];
       refreshCheckpoints();
+    }
+
+    async function renameCheckpointSession(sessionId, currentTitle, btn) {
+      if (!sessionId) return;
+      const nextTitle = prompt("Rename session", currentTitle || "");
+      if (nextTitle === null) return;
+      const trimmed = nextTitle.trim();
+      if (!trimmed) return;
+
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = "0.6";
+      }
+
+      try {
+        const resp = await fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: trimmed })
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          throw new Error(data.error || "Rename failed");
+        }
+        lastCheckpointIds = [];
+        await refreshCheckpoints();
+        await refresh();
+      } catch (err) {
+        alert("Rename failed: " + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.style.opacity = "1";
+        }
+      }
     }
 
     async function respondCheckpoint(checkpointId, response, btn) {

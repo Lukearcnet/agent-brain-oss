@@ -10,6 +10,19 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <title>Calendar</title>
   <style>
+    :root {
+      --shell-bg: #f4efe6;
+      --panel-bg: rgba(255, 255, 255, 0.9);
+      --panel-border: rgba(132, 111, 82, 0.18);
+      --text-main: #231f1a;
+      --text-muted: #756757;
+      --accent: #c46d2d;
+      --accent-soft: #f6dfc8;
+      --accent-strong: #9f4b1f;
+      --ink-blue: #245c73;
+      --calendar-accent: #1a73e8;
+      --shadow-soft: 0 18px 40px rgba(73, 52, 31, 0.08);
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       overflow-x: hidden;
@@ -17,31 +30,99 @@
     }
     body {
       font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
-      background: #fff; min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.88), transparent 38%),
+        linear-gradient(180deg, #f8f3ea 0%, var(--shell-bg) 100%);
+      min-height: 100vh;
       -webkit-font-smoothing: antialiased;
-      padding-bottom: max(80px, env(safe-area-inset-bottom));
+      color: var(--text-main);
+      padding-bottom: max(32px, env(safe-area-inset-bottom));
     }
 
     /* ── Header ──────────────────────────────────────────────────────────── */
     .hdr {
-      background: #fff; padding: 10px 12px 6px;
-      padding-top: max(10px, env(safe-area-inset-top));
-      border-bottom: 1px solid #dadce0;
+      background: rgba(244, 239, 230, 0.92);
+      backdrop-filter: blur(18px);
+      padding: 14px 14px 10px;
+      padding-top: max(14px, env(safe-area-inset-top));
+      border-bottom: 1px solid rgba(132, 111, 82, 0.12);
       position: sticky; top: 0; z-index: 100;
     }
-    .hdr-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-    .hdr-left { display: flex; align-items: center; gap: 4px; }
-    .hdr-title { font-size: 18px; font-weight: 600; color: #202124; letter-spacing: -0.2px; white-space: nowrap; }
-    .hdr-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-    .nb { background: none; border: none; font-size: 22px; padding: 4px 6px; color: #5f6368; cursor: pointer; border-radius: 50%; -webkit-tap-highlight-color: transparent; line-height: 1; }
-    .nb:active { background: #f1f3f4; }
-    .tb { font-size: 12px; font-weight: 500; color: #1a73e8; background: none; border: 1px solid #dadce0; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
-    .tb:active { background: #e8f0fe; }
-    .lk { font-size: 12px; font-weight: 500; color: #5f6368; text-decoration: none; padding: 4px 8px; border-radius: 4px; }
-    .lk:active { background: #f1f3f4; }
-    .view-sw { display: flex; background: #f1f3f4; border-radius: 8px; padding: 2px; margin-bottom: 6px; }
-    .vb { flex: 1; padding: 5px 0; text-align: center; font-size: 13px; font-weight: 500; color: #5f6368; border: none; background: none; border-radius: 6px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-    .vb.on { background: #fff; color: #202124; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    .hdr-inner {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 24px;
+      box-shadow: var(--shadow-soft);
+      padding: 14px;
+    }
+    .hdr-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; flex-wrap: wrap; }
+    .hdr-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+    .hdr-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.74);
+      border: 1px solid rgba(132, 111, 82, 0.14);
+      color: var(--text-main);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+      flex-shrink: 0;
+    }
+    .hdr-brand-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
+    .hdr-brand-title { font-size: 13px; font-weight: 700; }
+    .hdr-title-wrap { min-width: 0; }
+    .hdr-title { font-size: 26px; line-height: 1; font-weight: 700; color: var(--text-main); letter-spacing: -0.04em; }
+    .hdr-subtitle { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+    .hdr-right { display: flex; gap: 8px; align-items: center; flex-shrink: 0; margin-left: auto; }
+    .nb {
+      background: #fff;
+      border: 1px solid rgba(132, 111, 82, 0.16);
+      font-size: 18px;
+      width: 40px;
+      height: 40px;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: 50%;
+      -webkit-tap-highlight-color: transparent;
+      line-height: 1;
+      box-shadow: 0 8px 18px rgba(73, 52, 31, 0.08);
+    }
+    .nb:active { background: #f6f1e8; }
+    .tb {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      border: 1px solid rgba(196, 109, 45, 0.22);
+      border-radius: 999px;
+      padding: 9px 14px;
+      cursor: pointer;
+    }
+    .tb:active { background: #f2d2b3; }
+    .app-switch { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .app-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.72);
+      border: 1px solid rgba(132, 111, 82, 0.16);
+    }
+    .app-pill.active {
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      border-color: rgba(196, 109, 45, 0.22);
+    }
+    .app-pill.dashboard { color: var(--ink-blue); }
+    .view-sw { display: flex; gap: 8px; margin-bottom: 10px; }
+    .vb { flex: 1; padding: 10px 8px; text-align: center; font-size: 13px; font-weight: 600; color: var(--text-muted); border: 1px solid transparent; background: rgba(255,255,255,0.72); border-radius: 14px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .vb.on { color: var(--accent-strong); border-color: rgba(196, 109, 45, 0.22); background: var(--accent-soft); box-shadow: inset 0 1px 0 rgba(255,255,255,0.5); }
     .chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0; -webkit-overflow-scrolling: touch; }
     .chips::-webkit-scrollbar { display: none; }
     .chip { flex-shrink: 0; display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 16px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1.5px solid transparent; -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
@@ -160,7 +241,7 @@
     .btn-del:active { background: #f4c7c3; }
 
     /* ── FAB ──────────────────────────────────────────────────────────────── */
-    .fab { position: fixed; bottom: max(24px, env(safe-area-inset-bottom)); right: 20px; width: 56px; height: 56px; border-radius: 16px; background: #1a73e8; color: #fff; border: none; font-size: 28px; font-weight: 300; cursor: pointer; box-shadow: 0 2px 8px rgba(26,115,232,0.4), 0 6px 20px rgba(26,115,232,0.2); display: flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent; z-index: 200; }
+    .fab { position: fixed; bottom: max(24px, env(safe-area-inset-bottom)); right: 24px; width: 56px; height: 56px; border-radius: 16px; background: #1a73e8; color: #fff; border: none; font-size: 28px; font-weight: 300; cursor: pointer; box-shadow: 0 2px 8px rgba(26,115,232,0.4), 0 6px 20px rgba(26,115,232,0.2); display: flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent; z-index: 230; }
     .fab:active { transform: scale(0.93); }
 
     /* ── Drag ghost ──────────────────────────────────────────────────────── */
@@ -174,7 +255,7 @@
     .ai-fab {
       position: fixed;
       bottom: max(90px, calc(env(safe-area-inset-bottom) + 70px));
-      right: 20px;
+      right: 24px;
       width: 48px;
       height: 48px;
       border-radius: 50%;
@@ -184,7 +265,7 @@
       font-size: 20px;
       cursor: pointer;
       box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
-      z-index: 199;
+      z-index: 229;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -265,25 +346,44 @@
 
 <!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <div class="hdr">
-  <div class="hdr-top">
-    <div class="hdr-left">
-      <button class="nb" onclick="navPrev()">&#8249;</button>
-      <span class="hdr-title" id="hdr-title">March 2026</span>
-      <button class="nb" onclick="navNext()">&#8250;</button>
-      <button class="tb" onclick="goToday()">Today</button>
+  <div class="hdr-inner">
+    <div class="hdr-top">
+      <div class="hdr-left">
+        <div class="hdr-brand">
+          <span class="hdr-brand-kicker">Agent Brain</span>
+          <span class="hdr-brand-title">Workspace</span>
+        </div>
+        <div class="hdr-title-wrap">
+          <div class="hdr-title">Calendar</div>
+          <div class="hdr-subtitle">Keep scheduling in the same lane as email, with one shared workspace shell and faster jumps between surfaces.</div>
+        </div>
+        <button class="tb" onclick="goToday()">Today</button>
+      </div>
+      <div class="hdr-right">
+        <button class="nb" onclick="syncNow()" id="sync-btn" title="Sync">&#x27F3;</button>
+      </div>
     </div>
-    <div class="hdr-right">
-      <button class="nb" onclick="syncNow()" id="sync-btn" title="Sync">&#x27F3;</button>
-      <a href="/email-triage" class="lk">Email</a>
-      <a href="/" class="lk">Home</a>
+    <div class="app-switch">
+      <a href="/" class="app-pill dashboard">Dashboard</a>
+      <a href="/email-triage" class="app-pill">Email</a>
+      <a href="/calendar" class="app-pill active">Calendar</a>
     </div>
+    <div class="hdr-top" style="margin-bottom:10px">
+      <div class="hdr-left" style="gap:8px">
+        <button class="nb" onclick="navPrev()" title="Previous">&#8249;</button>
+        <div class="hdr-title-wrap">
+          <div style="font-size:18px;font-weight:700;color:var(--text-main);letter-spacing:-0.03em" id="hdr-title">March 2026</div>
+        </div>
+        <button class="nb" onclick="navNext()" title="Next">&#8250;</button>
+      </div>
+    </div>
+    <div class="view-sw">
+      <button class="vb on" data-v="month" onclick="setView('month')">Month</button>
+      <button class="vb" data-v="week" onclick="setView('week')">Week</button>
+      <button class="vb" data-v="day" onclick="setView('day')">Day</button>
+    </div>
+    <div class="chips" id="chips"></div>
   </div>
-  <div class="view-sw">
-    <button class="vb on" data-v="month" onclick="setView('month')">Month</button>
-    <button class="vb" data-v="week" onclick="setView('week')">Week</button>
-    <button class="vb" data-v="day" onclick="setView('day')">Day</button>
-  </div>
-  <div class="chips" id="chips"></div>
 </div>
 
 <!-- ── AI Outbox Section ───────────────────────────────────────────────────── -->

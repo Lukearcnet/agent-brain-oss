@@ -4,7 +4,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const Anthropic = require("@anthropic-ai/sdk");
 const multer = require("multer");
 const db = require("./lib/db");
@@ -62,6 +62,21 @@ app.use(express.static(path.join(__dirname, "public")));
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const HOME = os.homedir();
+const CODEX_CLI_CANDIDATES = [
+  "/Applications/Codex.app/Contents/Resources/codex",
+  "/usr/local/bin/codex",
+  "/opt/homebrew/bin/codex"
+];
+const AGENT_BRAIN_BIN_DIR = path.join(__dirname, "bin");
+const codexReactivationTimers = new Map();
+const CODEX_REACTIVATION_DELAYS_MS = [3000, 10000, 20000];
+const CODEX_RECENT_ACTIVITY_GRACE_MS = 12000;
+const AUTO_ARCHIVE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+const LOW_SIGNIFICANCE_ARCHIVE_AGE_MS = 24 * 60 * 60 * 1000;
+const OVERFLOW_LOW_SIGNIFICANCE_ARCHIVE_AGE_MS = 2 * 60 * 60 * 1000;
+const DUPLICATE_SESSION_ARCHIVE_AGE_MS = 6 * 60 * 60 * 1000;
+const MAX_ACTIVE_SESSIONS_PER_PROJECT = 6;
+let lastAutoArchiveSweepAt = 0;
 
 
 const SESSIONS_DIR = path.join(__dirname, "sessions");
@@ -128,6 +143,143 @@ function getProjectName(projectDir) {
   return last.charAt(0).toUpperCase() + last.slice(1);
 }
 
+function resolveCodexCliPath() {
+  for (const candidate of CODEX_CLI_CANDIDATES) {
+    if (candidate && fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function buildCodexReactivationPrompt(sessionId) {
+  return [
+    "A checkpoint response is ready in Agent Brain for this session.",
+    `First run \`export AB_SESSION_ID="${sessionId}"; bin/ab-checkpoint consume\`.`,
+    "Continue only from the consumed response.",
+    "Do not choose a different task, do not summarize, and do not post a new checkpoint until you have consumed that stored response."
+  ].join(" ");
+}
+
+function getCodexLastActivityAgeMs(state) {
+  if (!state?.lastActivity) return null;
+  const lastActivityTs = new Date(state.lastActivity).getTime();
+  if (Number.isNaN(lastActivityTs)) return null;
+  return Date.now() - lastActivityTs;
+}
+
+function scheduleCodexReactivation(sessionId, checkpointId, attempt = 1) {
+  if (!sessionId || !checkpointId) return;
+
+  const existing = codexReactivationTimers.get(sessionId);
+  if (existing) clearTimeout(existing);
+
+  const delayMs = CODEX_REACTIVATION_DELAYS_MS[Math.min(attempt - 1, CODEX_REACTIVATION_DELAYS_MS.length - 1)];
+  const timer = setTimeout(async () => {
+    codexReactivationTimers.delete(sessionId);
+
+    try {
+      const runtime = await getSessionRuntimeState(sessionId);
+      if (!runtime?.response_ready || runtime.checkpoint_id !== checkpointId) {
+        logEvent("codex_reactivation_skipped", sessionId, {
+          checkpoint_id: checkpointId,
+          reason: "response_not_ready"
+        });
+        return;
+      }
+
+      const session = await loadSession(sessionId);
+      if (!session || session.provider !== "codex" || !session.codex_session_id) {
+        logEvent("codex_reactivation_skipped", sessionId, {
+          checkpoint_id: checkpointId,
+          reason: "missing_codex_session"
+        });
+        return;
+      }
+
+      const state = codexDiscovery.getSessionState(session.codex_session_id);
+      const codexSession = codexDiscovery.getSession(session.codex_session_id);
+      const lastActivityAgeMs = getCodexLastActivityAgeMs(state);
+      const shouldDeferForRecentActivity =
+        state?.status === "active" &&
+        lastActivityAgeMs !== null &&
+        lastActivityAgeMs < CODEX_RECENT_ACTIVITY_GRACE_MS &&
+        attempt < CODEX_REACTIVATION_DELAYS_MS.length;
+
+      if (shouldDeferForRecentActivity) {
+        logEvent("codex_reactivation_deferred", sessionId, {
+          checkpoint_id: checkpointId,
+          codex_session_id: session.codex_session_id,
+          attempt,
+          reason: "session_recently_active",
+          last_activity_age_ms: lastActivityAgeMs
+        });
+        scheduleCodexReactivation(sessionId, checkpointId, attempt + 1);
+        return;
+      }
+
+      const codexCli = resolveCodexCliPath();
+      if (!codexCli) {
+        logEvent("codex_reactivation_failed", sessionId, {
+          checkpoint_id: checkpointId,
+          reason: "codex_cli_not_found"
+        });
+        return;
+      }
+
+      const logDir = path.join(__dirname, "logs", "codex-reactivate");
+      fs.mkdirSync(logDir, { recursive: true });
+      const logFile = path.join(logDir, `${sessionId}-${Date.now()}.log`);
+      const prompt = buildCodexReactivationPrompt(sessionId);
+      const args = [
+        "-q",
+        logFile,
+        codexCli,
+        "resume",
+        session.codex_session_id,
+        prompt,
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--no-alt-screen"
+      ];
+      const cwd = codexSession?.project_dir && fs.existsSync(codexSession.project_dir)
+        ? codexSession.project_dir
+        : process.cwd();
+
+      const child = spawn("/usr/bin/script", args, {
+        cwd,
+        detached: true,
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          PATH: `${AGENT_BRAIN_BIN_DIR}:/usr/local/bin:/opt/homebrew/bin:${process.env.PATH || ""}`,
+          AB_SESSION_ID: sessionId
+        }
+      });
+      child.on("error", (err) => {
+        logEvent("codex_reactivation_failed", sessionId, {
+          checkpoint_id: checkpointId,
+          attempt,
+          error: err.message
+        });
+      });
+      child.unref();
+
+      logEvent("codex_reactivation_started", sessionId, {
+        checkpoint_id: checkpointId,
+        codex_session_id: session.codex_session_id,
+        attempt,
+        log_file: logFile
+      });
+    } catch (err) {
+      logEvent("codex_reactivation_failed", sessionId, {
+        checkpoint_id: checkpointId,
+        attempt,
+        error: err.message
+      });
+    }
+  }, delayMs);
+
+  codexReactivationTimers.set(sessionId, timer);
+}
+
 async function getNextSessionNumber(projectName) {
   // Count existing sessions with this project name prefix
   const sessions = await listSessions();
@@ -172,13 +324,323 @@ function getSessionDisplayTitle(session, fallbackProjectName = "") {
   });
 }
 
+function buildContinuationInstruction({ handoffNotes, projectName }) {
+  const trimmed = (handoffNotes || "").trim();
+  if (trimmed) {
+    return `Continue the active work described in the handoff notes for ${projectName || "this project"}. Do not pick a different task until that work is complete or the user redirects you.\n\nHandoff notes:\n${trimmed}`;
+  }
+  return `Continue the most recent incomplete work for ${projectName || "this project"} from the handoff context. Do not switch to a different task unless the user explicitly redirects you.`;
+}
+
+async function setSessionStartupContract(sessionId, patch = {}) {
+  if (!sessionId) return null;
+  const current = await getSessionStartupContract(sessionId);
+  const has = (key) => Object.prototype.hasOwnProperty.call(patch, key);
+  const next = {
+    startup_mode: patch.startup_mode || current?.startup_mode || "manual",
+    requires_initial_direction: has("requires_initial_direction") ? patch.requires_initial_direction : (current?.requires_initial_direction ?? false),
+    authorization_status: patch.authorization_status || current?.authorization_status || "not_required",
+    active_instruction: has("active_instruction") ? patch.active_instruction : (current?.active_instruction ?? null),
+    continuation_instruction: has("continuation_instruction") ? patch.continuation_instruction : (current?.continuation_instruction ?? null),
+    current_checkpoint_id: has("current_checkpoint_id") ? patch.current_checkpoint_id : (current?.current_checkpoint_id ?? null),
+    last_response_classification: has("last_response_classification") ? patch.last_response_classification : (current?.last_response_classification ?? null),
+    provider: patch.provider || current?.provider || null,
+    updated_at: new Date().toISOString()
+  };
+  logEvent("session_start_contract", sessionId, next);
+  return next;
+}
+
+async function getSessionStartupContract(sessionId) {
+  if (!sessionId) return null;
+  const events = await queryEvents({ sessionId, type: "session_start_contract", limit: 10 });
+  return events && events.length > 0 ? (events[0].data || null) : null;
+}
+
+async function setSessionRuntimeState(sessionId, patch = {}) {
+  if (!sessionId) return null;
+  const current = await getSessionRuntimeState(sessionId);
+  const has = (key) => Object.prototype.hasOwnProperty.call(patch, key);
+  const next = {
+    state: patch.state || current?.state || "idle",
+    wait_required: has("wait_required") ? patch.wait_required : (current?.wait_required ?? false),
+    checkpoint_id: has("checkpoint_id") ? patch.checkpoint_id : (current?.checkpoint_id ?? null),
+    wait_kind: patch.wait_kind || current?.wait_kind || null,
+    last_wait_result: has("last_wait_result") ? patch.last_wait_result : (current?.last_wait_result ?? null),
+    response_ready: has("response_ready") ? patch.response_ready : (current?.response_ready ?? false),
+    response_text: has("response_text") ? patch.response_text : (current?.response_text ?? null),
+    responded_at: has("responded_at") ? patch.responded_at : (current?.responded_at ?? null),
+    provider: patch.provider || current?.provider || null,
+    updated_at: new Date().toISOString()
+  };
+  logEvent("session_runtime_state", sessionId, next);
+  return next;
+}
+
+async function getSessionRuntimeState(sessionId) {
+  if (!sessionId) return null;
+  const events = await queryEvents({ sessionId, type: "session_runtime_state", limit: 10 });
+  return events && events.length > 0 ? (events[0].data || null) : null;
+}
+
+function classifyInitialDirectionResponse(response) {
+  const text = (response || "").trim();
+  const normalized = text.toLowerCase().replace(/\s+/g, " ");
+
+  if (!normalized) {
+    return { kind: "ack_only", instruction: null };
+  }
+
+  if (
+    normalized === "continue previous work" ||
+    normalized === "continue from yesterday" ||
+    normalized === "continue previous task"
+  ) {
+    return { kind: "continue_previous_work", instruction: null };
+  }
+
+  if (normalized === "new task") {
+    return { kind: "needs_specific_direction", instruction: null };
+  }
+
+  if (normalized === "just checking in") {
+    return { kind: "ack_only", instruction: null };
+  }
+
+  if (/^(ok|okay|sounds good|got it|ack|thanks|thank you|yep|yes|sure|fine|cool)$/i.test(text)) {
+    return { kind: "ack_only", instruction: null };
+  }
+
+  if (text.length < 12 && !/[.!?]/.test(text) && text.split(/\s+/).length <= 2) {
+    return { kind: "ack_only", instruction: null };
+  }
+
+  return { kind: "explicit_direction", instruction: text };
+}
+
+async function buildPendingCheckpointProtocol(checkpoint) {
+  const startup = checkpoint?.session_id ? await getSessionStartupContract(checkpoint.session_id) : null;
+  const waitKind = startup?.requires_initial_direction && startup.authorization_status !== "granted"
+    ? "startup"
+    : ((checkpoint?.question || "").startsWith("Task complete:") ? "completion" : "general");
+
+  return {
+    protocol: {
+      mode: "checkpoint_wait",
+      your_state: "WAITING",
+      required_next_action: "call_wait_again",
+      prohibit_final_until_checkpoint_resolves: true,
+      prohibit_summary_until_checkpoint_resolves: true,
+      checkpoint_pending: true,
+      wait_kind: waitKind
+    },
+    reminder: checkpoint?.provider === "codex"
+      ? "CHECKPOINT STILL PENDING (CODEX): Do not summarize or switch tasks. You may call `ab-checkpoint wait-once` again for a short poll, but Agent Brain is now holding the long wait for this session and will preserve the response for later recovery."
+      : "CHECKPOINT STILL PENDING: Do not summarize or stop. Continue waiting on the blocking checkpoint."
+  };
+}
+
+async function buildReadyCheckpointPayload(sessionId, { consume = false } = {}) {
+  if (!sessionId) return null;
+  const session = await loadSession(sessionId);
+  if (!session) return null;
+
+  const runtime = await getSessionRuntimeState(sessionId);
+  if (!runtime?.response_ready || !runtime?.checkpoint_id) {
+    return {
+      ready: false,
+      session_id: sessionId,
+      provider: normalizeProviderFamily(session.provider),
+      runtime: runtime || null
+    };
+  }
+
+  const { data: checkpoint, error } = await db.supabase
+    .from("session_checkpoints")
+    .select("id, status, response, question, options, created_at, responded_at, project_dir, session_id, provider")
+    .eq("id", runtime.checkpoint_id)
+    .single();
+
+  if (error || !checkpoint || checkpoint.status !== "responded" || !checkpoint.response) {
+    return {
+      ready: false,
+      session_id: sessionId,
+      provider: normalizeProviderFamily(session.provider),
+      runtime: runtime || null
+    };
+  }
+
+  const execution = await buildCheckpointProtocol(checkpoint, checkpoint.response);
+  const payload = {
+    ready: true,
+    checkpoint_id: checkpoint.id,
+    status: checkpoint.status,
+    response: checkpoint.response,
+    created_at: checkpoint.created_at,
+    updated_at: checkpoint.responded_at || checkpoint.created_at,
+    responded_at: checkpoint.responded_at || null,
+    session_id: checkpoint.session_id || sessionId,
+    provider: checkpoint.provider || normalizeProviderFamily(session.provider),
+    protocol: execution.protocol,
+    reminder: execution.reminder
+  };
+
+  if (consume) {
+    await setSessionRuntimeState(sessionId, {
+      state: execution.protocol?.your_state === "AWAITING_DIRECTION" ? "awaiting_initial_direction" : "executing",
+      wait_required: false,
+      checkpoint_id: null,
+      wait_kind: null,
+      last_wait_result: "consumed",
+      response_ready: false,
+      response_text: null,
+      responded_at: null,
+      provider: checkpoint.provider || normalizeProviderFamily(session.provider)
+    });
+    payload.consumed = true;
+  }
+
+  return payload;
+}
+
+async function buildCheckpointProtocol(checkpoint, response) {
+  const baseResponse = (response || checkpoint?.response || "").trim();
+  const sessionId = checkpoint?.session_id || null;
+  const startup = sessionId ? await getSessionStartupContract(sessionId) : null;
+
+  if (startup?.requires_initial_direction && startup.current_checkpoint_id === checkpoint?.id) {
+    if (startup.authorization_status === "pending" && startup.last_response_classification === "ack_only") {
+      return {
+        protocol: {
+          mode: "startup_gate",
+          your_state: "AWAITING_DIRECTION",
+          required_next_action: "post_followup_checkpoint_for_specific_direction",
+          prohibit_final_until_next_checkpoint: true,
+          prohibit_execution_until_direction: true,
+          user_instruction: "The user acknowledged the startup checkpoint but did not provide a concrete task. Do not start work. Post a narrower follow-up checkpoint asking exactly what task to work on next."
+        },
+        reminder: checkpoint.provider === "codex"
+          ? "STARTUP GATE STILL LOCKED (CODEX): Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint with `ab-checkpoint ask`, then keep polling with `ab-checkpoint wait-once` until the user gives a concrete task."
+          : "STARTUP GATE STILL LOCKED: Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint and wait for a concrete task."
+      };
+    }
+
+    if (startup.authorization_status === "granted" && startup.last_response_classification === "continue_previous_work" && startup.active_instruction) {
+      return {
+        protocol: {
+          mode: "startup_gate",
+          your_state: "EXECUTING",
+          required_next_action: "execute_user_instruction_then_post_checkpoint",
+          prohibit_final_until_next_checkpoint: true,
+          user_instruction: startup.active_instruction
+        },
+        reminder: checkpoint.provider === "codex"
+          ? "STARTUP GATE CLEARED (CODEX): The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint with `ab-checkpoint ask` and keep polling with `ab-checkpoint wait-once`."
+          : "STARTUP GATE CLEARED: The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint."
+      };
+    }
+
+    if (startup.authorization_status === "granted" && startup.last_response_classification === "explicit_direction" && startup.active_instruction) {
+      return {
+        protocol: {
+          mode: "startup_gate",
+          your_state: "EXECUTING",
+          required_next_action: "execute_user_instruction_then_post_checkpoint",
+          prohibit_final_until_next_checkpoint: true,
+          user_instruction: startup.active_instruction
+        },
+        reminder: getCheckpointExecutionReminder(checkpoint.provider)
+      };
+    }
+  }
+
+  if (startup?.requires_initial_direction && startup.authorization_status !== "granted") {
+    const classification = classifyInitialDirectionResponse(baseResponse);
+
+    if (classification.kind === "continue_previous_work") {
+      const instruction = startup.continuation_instruction
+        || "Continue the most recent incomplete work from the handoff context. Do not switch to a different task.";
+      await setSessionStartupContract(sessionId, {
+        authorization_status: "granted",
+        active_instruction: instruction,
+        last_response_classification: classification.kind
+      });
+      return {
+        protocol: {
+          mode: "startup_gate",
+          your_state: "EXECUTING",
+          required_next_action: "execute_user_instruction_then_post_checkpoint",
+          prohibit_final_until_next_checkpoint: true,
+          user_instruction: instruction
+        },
+        reminder: checkpoint.provider === "codex"
+          ? "STARTUP GATE CLEARED (CODEX): The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint with `ab-checkpoint ask` and keep polling with `ab-checkpoint wait-once`."
+          : "STARTUP GATE CLEARED: The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint."
+      };
+    }
+
+    if (classification.kind === "explicit_direction") {
+      await setSessionStartupContract(sessionId, {
+        authorization_status: "granted",
+        active_instruction: classification.instruction,
+        last_response_classification: classification.kind
+      });
+      return {
+        protocol: {
+          mode: "startup_gate",
+          your_state: "EXECUTING",
+          required_next_action: "execute_user_instruction_then_post_checkpoint",
+          prohibit_final_until_next_checkpoint: true,
+          user_instruction: classification.instruction
+        },
+        reminder: getCheckpointExecutionReminder(checkpoint.provider)
+      };
+    }
+
+    await setSessionStartupContract(sessionId, {
+      authorization_status: "pending",
+      active_instruction: null,
+      last_response_classification: classification.kind
+    });
+
+    return {
+      protocol: {
+        mode: "startup_gate",
+        your_state: "AWAITING_DIRECTION",
+        required_next_action: "post_followup_checkpoint_for_specific_direction",
+        prohibit_final_until_next_checkpoint: true,
+        prohibit_execution_until_direction: true,
+        user_instruction: "The user acknowledged the startup checkpoint but did not provide a concrete task. Do not start work. Post a narrower follow-up checkpoint asking exactly what task to work on next."
+      },
+      reminder: checkpoint.provider === "codex"
+        ? "STARTUP GATE STILL LOCKED (CODEX): Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint with `ab-checkpoint ask`, then keep polling with `ab-checkpoint wait-once` until the user gives a concrete task."
+        : "STARTUP GATE STILL LOCKED: Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint and wait for a concrete task."
+    };
+  }
+
+  return {
+    protocol: {
+      mode: "atomic_cycle",
+      your_state: "EXECUTING",
+      required_next_action: "execute_user_instruction_then_post_checkpoint",
+      prohibit_final_until_next_checkpoint: true,
+      user_instruction: baseResponse
+    },
+    reminder: getCheckpointExecutionReminder(checkpoint?.provider)
+  };
+}
+
 function appendSessionBindingInstructions(briefing, { sessionId, provider, sessionTitle }) {
   if (!sessionId) return briefing;
 
   const normalizedProvider = normalizeProviderFamily(provider);
-  const checkpointUrl = normalizedProvider === "codex"
-    ? 'http://localhost:3030/api/checkpoints?blocking=false'
-    : 'http://localhost:3030/api/checkpoints';
+  const checkpointExample = normalizedProvider === "codex"
+    ? `export AB_SESSION_ID="${sessionId}"
+CHECKPOINT_ID=$(ab-checkpoint ask "Your question" "Option 1" "Option 2")
+ab-checkpoint wait-once "$CHECKPOINT_ID"`
+    : `curl -s -X POST http://localhost:3030/api/checkpoints \\
+  -H "Content-Type: application/json" \\
+  -d '{"project_dir":"'$PROJECT_KEY'","session_id":"${sessionId}","question":"Your question","options":["Option 1","Option 2"]}'`;
 
   return `${briefing}
 
@@ -193,9 +655,7 @@ This session is attached to a specific Agent Brain session record.
 When posting checkpoints, always include this session id:
 
 \`\`\`bash
-curl -s -X POST ${checkpointUrl} \\
-  -H "Content-Type: application/json" \\
-  -d '{"project_dir":"'$PROJECT_KEY'","session_id":"${sessionId}","provider":"${normalizedProvider}","question":"Your question","options":["Option 1","Option 2"]}'
+${checkpointExample}
 \`\`\`
 
 This keeps checkpoints attached to the correct Agent Brain session instead of only the project.
@@ -247,9 +707,18 @@ async function enrichCheckpointRows(rows) {
     byProject.get(session.cc_project_dir).push(session);
   }
 
+  function buildCheckpointRecap(match) {
+    const latestContext = getLatestSessionContextItems(match, 4);
+    if (latestContext && latestContext.length > 0) return latestContext;
+    const recap = getSessionRecap(match);
+    if (!recap || recap.length === 0) return null;
+    return recap.slice(0, 3);
+  }
+
   return rows.map(cp => {
     if (cp.provider && cp.session_id && cp.session_title) {
-      return cp;
+      const exact = sessions.find(s => s.session_id === cp.session_id);
+      return exact ? { ...cp, session_recap: buildCheckpointRecap(exact) } : cp;
     }
 
     const candidates = (byProject.get(cp.project_dir) || [])
@@ -275,7 +744,8 @@ async function enrichCheckpointRows(rows) {
       ...cp,
       provider: normalizeProviderFamily(match.provider),
       session_id: cp.session_id || match.session_id,
-      session_title: cp.session_title || getSessionDisplayTitle(match)
+      session_title: cp.session_title || getSessionDisplayTitle(match),
+      session_recap: buildCheckpointRecap(match)
     };
   });
 }
@@ -293,6 +763,44 @@ async function sendMailboxMessage(opts) {
 
 async function readMailbox(sessionId, opts) {
   return db.readMailbox(sessionId, opts);
+}
+
+function getCheckpointExecutionReminder(provider) {
+  if (provider === "codex") {
+    return "ATOMIC CYCLE PROTOCOL (CODEX): You are now in EXECUTING state. Execute the user's instruction, then POST the next checkpoint with `ab-checkpoint ask`. You may try `ab-checkpoint wait-once` once for an immediate reply, but Agent Brain owns the long wait. If the session resumes later, run `ab-checkpoint consume` (or `ab-checkpoint wait-once` with no id) before doing anything else.";
+  }
+  return "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
+}
+
+async function sendCheckpointFollowup({ checkpointId, projectDir, sessionId, provider, response, reminder }) {
+  const followupReminder = reminder || getCheckpointExecutionReminder(provider);
+  const safeResponse = (response || "").trim();
+  const responseLine = safeResponse ? `User responded to checkpoint ${checkpointId}: ${safeResponse}` : `User responded to checkpoint ${checkpointId}.`;
+
+  if (provider === "codex") {
+    if (!projectDir) return;
+    await sendMailboxMessage({
+      from_session: AGENT_BRAIN_PROJECT_DIR,
+      to_session: projectDir,
+      subject: "Checkpoint Response",
+      body: `${responseLine}\n\n${followupReminder}\n\nIf you need to resume the pending checkpoint for this session, set AB_SESSION_ID and run:\n` +
+        "bin/ab-checkpoint consume\n\n`bin/ab-checkpoint wait-once` also works and will pick up a ready response automatically."
+    });
+    return;
+  }
+
+  if (!projectDir) return;
+  const id = "msg-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+  const { error } = await db.supabase.from("session_messages").insert({
+    id,
+    project_dir: projectDir,
+    content: `${responseLine}\n\n${followupReminder}`,
+    sender: "agent-brain",
+    status: "pending"
+  });
+  if (!error) {
+    writeInboxFile(projectDir);
+  }
 }
 
 async function markMailboxRead(messageId) {
@@ -381,6 +889,15 @@ function checkToolPolicy(toolName, toolInput) {
 
 // ── Push Notifications (ntfy.sh) ─────────────────────────────────────────────
 
+function sanitizeNtfyHeaderValue(value, fallback = "") {
+  const source = String(value || fallback || "");
+  const normalized = source.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  const singleLine = normalized.replace(/[\r\n\t]+/g, " ");
+  const latin1Safe = singleLine.replace(/[^\x20-\x7E\xA0-\xFF]/g, " ");
+  const collapsed = latin1Safe.replace(/\s+/g, " ").trim();
+  return collapsed || fallback;
+}
+
 async function sendPushNotification({ title, message, priority, hookId }) {
   const settings = loadSettings();
   const notif = settings.notifications;
@@ -390,9 +907,9 @@ async function sendPushNotification({ title, message, priority, hookId }) {
   const url = `${server}/${notif.ntfyTopic}`;
 
   const headers = {
-    "Title": title || "Agent Brain",
+    "Title": sanitizeNtfyHeaderValue(title, "Agent Brain"),
     "Priority": String(priority || 4),
-    "Tags": "robot",
+    "Tags": sanitizeNtfyHeaderValue("robot", "robot"),
   };
 
   // If we have a callback URL and hook ID, add Allow/Deny action buttons
@@ -400,13 +917,13 @@ async function sendPushNotification({ title, message, priority, hookId }) {
     const base = notif.agentBrainUrl.replace(/\/$/, "");
     const allowUrl = `${base}/api/hooks/pending/${encodeURIComponent(hookId)}/resolve`;
     const denyUrl = allowUrl;
-    headers["Actions"] = [
+    headers["Actions"] = sanitizeNtfyHeaderValue([
       `http, Allow, ${allowUrl}, method=POST, headers.Content-Type=application/json, body={"behavior":"allow"}`,
       `http, Deny, ${denyUrl}, method=POST, headers.Content-Type=application/json, body={"behavior":"deny"}`
-    ].join("; ");
+    ].join("; "), "");
 
     // Click opens dashboard
-    headers["Click"] = `${base}/`;
+    headers["Click"] = sanitizeNtfyHeaderValue(`${base}/`, "");
   }
 
   try {
@@ -869,6 +1386,7 @@ app.get("/api/health", async (_req, res) => {
 });
 
 app.get("/api/sessions", async (_req, res) => {
+  await maybeAutoArchiveSessions();
   const sessions = await listSessions();
   res.json(sessions.map(session => ({
     ...session,
@@ -901,6 +1419,42 @@ app.get("/api/sessions/:id", async (req, res) => {
   res.json(session);
 });
 
+app.get("/api/sessions/:id/startup-state", async (req, res) => {
+  const session = await loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  const startup = await getSessionStartupContract(req.params.id);
+  res.json({
+    session_id: req.params.id,
+    provider: normalizeProviderFamily(session.provider),
+    startup: startup || null
+  });
+});
+
+app.get("/api/sessions/:id/runtime-state", async (req, res) => {
+  const session = await loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  const startup = await getSessionStartupContract(req.params.id);
+  const runtime = await getSessionRuntimeState(req.params.id);
+  res.json({
+    session_id: req.params.id,
+    provider: normalizeProviderFamily(session.provider),
+    startup: startup || null,
+    runtime: runtime || null
+  });
+});
+
+app.get("/api/sessions/:id/ready-checkpoint", async (req, res) => {
+  const payload = await buildReadyCheckpointPayload(req.params.id, { consume: false });
+  if (!payload) return res.status(404).json({ error: "Session not found" });
+  res.json(payload);
+});
+
+app.post("/api/sessions/:id/consume-ready-checkpoint", async (req, res) => {
+  const payload = await buildReadyCheckpointPayload(req.params.id, { consume: true });
+  if (!payload) return res.status(404).json({ error: "Session not found" });
+  res.json(payload);
+});
+
 // Create a new Claude Desktop or Codex conversation and link it
 app.post("/chat/new", async (req, res) => {
   const firstMessage = (req.body.message || "").trim();
@@ -913,6 +1467,13 @@ app.post("/chat/new", async (req, res) => {
 
   // Auto-title from first message
   session.title = firstMessage.length > 50 ? firstMessage.slice(0, 47) + "..." : firstMessage;
+  await setSessionStartupContract(session.session_id, {
+    startup_mode: "new_session",
+    requires_initial_direction: false,
+    authorization_status: "granted",
+    active_instruction: firstMessage,
+    provider
+  });
 
   try {
     // Handle Codex sessions
@@ -942,17 +1503,12 @@ curl -s "http://localhost:3030/api/mailbox/$PROJECT_KEY?unread=true" | jq '.'
 
 3. When you need user input, use checkpoints (non-blocking for Codex):
 \`\`\`bash
-RESULT=$(curl -s -X POST "http://localhost:3030/api/checkpoints?blocking=false" \\
-  -H "Content-Type: application/json" \\
-  -d '{"project_dir": "'$PROJECT_KEY'", "provider": "codex", "question": "Your question", "options": ["Option 1", "Option 2"]}')
-CHECKPOINT_ID=$(echo "$RESULT" | jq -r '.checkpoint_id')
-echo "$CHECKPOINT_ID" > /tmp/agent-brain-checkpoint-id
+export AB_SESSION_ID="${session.session_id}"
+CHECKPOINT_ID=$(ab-checkpoint ask "Your question" "Option 1" "Option 2")
+ab-checkpoint wait-once "$CHECKPOINT_ID"
 \`\`\`
 
-4. Poll for response:
-\`\`\`bash
-curl -s "http://localhost:3030/api/checkpoints/$CHECKPOINT_ID/wait?timeout=30"
-\`\`\`
+4. If the wait response says \`status: "pending"\`, run \`ab-checkpoint wait-once "$CHECKPOINT_ID"\` again. Do not use a long-running local wait command.
 
 5. Before ending, save memory:
 \`\`\`bash
@@ -961,7 +1517,7 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
   -d '{"content": "<summary of work done>"}'
 \`\`\`
 
-**Important:** Never end your turn while a checkpoint is pending. Keep polling until you get a response.
+**Important:** For Codex, always use \`ab-checkpoint ask\` plus repeated \`ab-checkpoint wait-once\` calls for user-facing questions and task completion.
 `;
 
       briefing = appendSessionBindingInstructions(briefing, {
@@ -1121,9 +1677,42 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
 app.patch("/api/sessions/:id", async (req, res) => {
   const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
-  if (req.body.title !== undefined) session.title = req.body.title;
+  if (req.body.title !== undefined) {
+    const nextTitle = String(req.body.title || "").trim();
+    if (!nextTitle) return res.status(400).json({ error: "title is required" });
+    session.title = nextTitle;
+  }
   await saveSession(session);
-  res.json({ ok: true });
+
+  const displayTitle = getSessionDisplayTitle(session);
+
+  try {
+    await db.supabase
+      .from("session_checkpoints")
+      .update({ session_title: displayTitle })
+      .eq("session_id", session.session_id)
+      .eq("status", "pending");
+  } catch (_) {}
+
+  try {
+    await db.supabase
+      .from("file_locks")
+      .update({ session_title: displayTitle })
+      .eq("session_id", session.session_id)
+      .eq("status", "active");
+  } catch (_) {}
+
+  logEvent("session_renamed", session.session_id, {
+    raw_title: session.title,
+    display_title: displayTitle
+  }).catch(() => {});
+
+  res.json({
+    ok: true,
+    session_id: session.session_id,
+    raw_title: session.title,
+    title: displayTitle
+  });
 });
 
 app.post("/api/sessions/:id/archive", async (req, res) => {
@@ -1420,6 +2009,7 @@ app.post("/api/approve", async (req, res) => {
 // ── Dashboard API ──────────────────────────────────────────────────────────
 
 app.get("/api/dashboard", async (_req, res) => {
+  await maybeAutoArchiveSessions();
   const sessions = await listSessions();
   const results = [];
   const seenCC = new Map(); // "dir:claudeSessionId" → index in results
@@ -2357,6 +2947,29 @@ app.post("/api/checkpoints", async (req, res) => {
   // Log event
   logEvent("checkpoint_created", null, { id, project_dir, question_length: question.length });
 
+  if (checkpointSession.session_id) {
+    const startup = await getSessionStartupContract(checkpointSession.session_id);
+    if (startup?.requires_initial_direction && startup.authorization_status !== "granted") {
+      await setSessionStartupContract(checkpointSession.session_id, {
+        current_checkpoint_id: id,
+        provider: checkpointProvider
+      });
+    }
+    await setSessionRuntimeState(checkpointSession.session_id, {
+      state: "waiting_on_checkpoint",
+      wait_required: true,
+      checkpoint_id: id,
+      wait_kind: startup?.requires_initial_direction && startup.authorization_status !== "granted"
+        ? "startup"
+        : (question.startsWith("Task complete:") ? "completion" : "general"),
+      last_wait_result: "created",
+      response_ready: false,
+      response_text: null,
+      responded_at: null,
+      provider: checkpointProvider
+    });
+  }
+
   // Send push notification so user sees it on phone
   sendPushNotification({
     title: `${projectName}: Waiting for input`,
@@ -2418,22 +3031,44 @@ app.post("/api/checkpoints/:id/respond", async (req, res) => {
     response_length: response.length
   });
 
+  const { protocol, reminder } = await buildCheckpointProtocol(checkpoint, response);
+
+  if (checkpoint.session_id) {
+    await setSessionRuntimeState(checkpoint.session_id, {
+      state: protocol?.your_state === "AWAITING_DIRECTION" ? "awaiting_initial_direction" : "executing",
+      wait_required: false,
+      checkpoint_id: checkpoint.id,
+      wait_kind: protocol?.mode === "startup_gate" ? "startup" : "general",
+      last_wait_result: "responded",
+      response_ready: checkpoint.provider === "codex",
+      response_text: response,
+      responded_at: checkpoint.responded_at || new Date().toISOString(),
+      provider: checkpoint.provider
+    });
+  }
+
+  try {
+    await sendCheckpointFollowup({
+      checkpointId: id,
+      projectDir: checkpoint.project_dir,
+      sessionId: checkpoint.session_id,
+      provider: checkpoint.provider,
+      response,
+      reminder
+    });
+  } catch (e) {
+    console.warn("[checkpoint-followup] Failed to queue follow-up:", e.message);
+  }
+
+  if (checkpoint.provider === "codex" && checkpoint.session_id) {
+    scheduleCodexReactivation(checkpoint.session_id, checkpoint.id);
+  }
+
   // Resolve the long-poll with atomic cycle protocol for remote-controlled sessions
   const pending = pendingCheckpoints.get(id);
   if (pending) {
     clearTimeout(pending.timeout);
     pendingCheckpoints.delete(id);
-
-    // Protocol fields for atomic cycle enforcement
-    const protocol = {
-      mode: "atomic_cycle",
-      your_state: "EXECUTING",
-      required_next_action: "execute_user_instruction_then_post_checkpoint",
-      prohibit_final_until_next_checkpoint: true,
-      user_instruction: response
-    };
-
-    const reminder = "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
 
     pending.resolve({ status: "responded", response, protocol, reminder });
   }
@@ -2487,20 +3122,31 @@ app.get("/api/checkpoints/:id/status", async (req, res) => {
     checkpoint_id: id,
     status: checkpoint.status, // pending, responded, dismissed, timeout
     created_at: checkpoint.created_at,
-    updated_at: checkpoint.responded_at || checkpoint.created_at
+    updated_at: checkpoint.responded_at || checkpoint.created_at,
+    session_id: checkpoint.session_id || null,
+    provider: checkpoint.provider || null
   };
 
   // If responded, include response and protocol fields
   if (checkpoint.status === "responded" && checkpoint.response) {
     result.response = checkpoint.response;
-    result.protocol = {
-      mode: "atomic_cycle",
-      your_state: "EXECUTING",
-      required_next_action: "execute_user_instruction_then_post_checkpoint",
-      prohibit_final_until_next_checkpoint: true,
-      user_instruction: checkpoint.response
-    };
-    result.reminder = "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
+    const execution = await buildCheckpointProtocol(checkpoint, checkpoint.response);
+    result.protocol = execution.protocol;
+    result.reminder = execution.reminder;
+  } else if (checkpoint.status === "pending") {
+    const pending = await buildPendingCheckpointProtocol(checkpoint);
+    result.protocol = pending.protocol;
+    result.reminder = pending.reminder;
+    if (checkpoint.session_id) {
+      await setSessionRuntimeState(checkpoint.session_id, {
+        state: "waiting_on_checkpoint",
+        wait_required: true,
+        checkpoint_id: checkpoint.id,
+        wait_kind: pending.protocol.wait_kind,
+        last_wait_result: "pending",
+        provider: checkpoint.provider
+      });
+    }
   }
 
   res.json(result);
@@ -2535,19 +3181,20 @@ app.get("/api/checkpoints/:id/wait", async (req, res) => {
       checkpoint_id: id,
       status: checkpoint.status,
       created_at: checkpoint.created_at,
-      updated_at: checkpoint.responded_at || checkpoint.created_at
+      updated_at: checkpoint.responded_at || checkpoint.created_at,
+      session_id: checkpoint.session_id || null,
+      provider: checkpoint.provider || null
     };
 
     if (checkpoint.status === "responded" && checkpoint.response) {
       result.response = checkpoint.response;
-      result.protocol = {
-        mode: "atomic_cycle",
-        your_state: "EXECUTING",
-        required_next_action: "execute_user_instruction_then_post_checkpoint",
-        prohibit_final_until_next_checkpoint: true,
-        user_instruction: checkpoint.response
-      };
-      result.reminder = "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
+      const execution = await buildCheckpointProtocol(checkpoint, checkpoint.response);
+      result.protocol = execution.protocol;
+      result.reminder = execution.reminder;
+    } else if (checkpoint.status === "pending") {
+      const pending = await buildPendingCheckpointProtocol(checkpoint);
+      result.protocol = pending.protocol;
+      result.reminder = pending.reminder;
     }
 
     return result;
@@ -2567,6 +3214,17 @@ app.get("/api/checkpoints/:id/wait", async (req, res) => {
     return res.json(immediateResult);
   }
 
+  if (immediateResult.session_id) {
+    await setSessionRuntimeState(immediateResult.session_id, {
+      state: "waiting_on_checkpoint",
+      wait_required: true,
+      checkpoint_id: id,
+      wait_kind: immediateResult.protocol?.wait_kind || "general",
+      last_wait_result: "pending",
+      provider: immediateResult.provider
+    });
+  }
+
   // Poll every 500ms until timeout or response
   const startTime = Date.now();
   const timeoutMs = timeout * 1000;
@@ -2583,12 +3241,32 @@ app.get("/api/checkpoints/:id/wait", async (req, res) => {
     trackCheckpointPoll(id, result.session_id, result.provider);
 
     if (result.status !== "pending") {
+      if (result.session_id) {
+        await setSessionRuntimeState(result.session_id, {
+          state: result.protocol?.your_state === "AWAITING_DIRECTION" ? "awaiting_initial_direction" : "executing",
+          wait_required: false,
+          checkpoint_id: id,
+          wait_kind: result.protocol?.mode === "startup_gate" ? "startup" : "general",
+          last_wait_result: result.status,
+          provider: result.provider
+        });
+      }
       return res.json(result);
     }
   }
 
   // Timeout - return current pending status
   const finalResult = await getCheckpointStatus();
+  if (finalResult?.session_id && finalResult.status === "pending") {
+    await setSessionRuntimeState(finalResult.session_id, {
+      state: "waiting_on_checkpoint",
+      wait_required: true,
+      checkpoint_id: id,
+      wait_kind: finalResult.protocol?.wait_kind || "general",
+      last_wait_result: "pending",
+      provider: finalResult.provider
+    });
+  }
   res.json(finalResult || { checkpoint_id: id, status: "pending" });
 });
 
@@ -2698,6 +3376,12 @@ app.get("/api/checkpoints/stale", async (req, res) => {
 app.post("/api/checkpoints/:id/dismiss", async (req, res) => {
   const { id } = req.params;
 
+  const { data: existing } = await db.supabase
+    .from("session_checkpoints")
+    .select("session_id, provider")
+    .eq("id", id)
+    .single();
+
   // Update status to dismissed
   const { error } = await db.supabase
     .from("session_checkpoints")
@@ -2711,6 +3395,20 @@ app.post("/api/checkpoints/:id/dismiss", async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   logEvent("checkpoint_dismissed", null, { checkpoint_id: id });
+
+  if (existing?.session_id) {
+    await setSessionRuntimeState(existing.session_id, {
+      state: "idle",
+      wait_required: false,
+      checkpoint_id: null,
+      wait_kind: null,
+      last_wait_result: "dismissed",
+      response_ready: false,
+      response_text: null,
+      responded_at: null,
+      provider: existing.provider || null
+    });
+  }
 
   // If there's still a pending long-poll, resolve it
   const pending = pendingCheckpoints.get(id);
@@ -2873,6 +3571,16 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
     newSession.provider = provider;
     newSession.handoff_from = record.from_session_title || null;
     await saveSession(newSession);
+    await setSessionStartupContract(newSession.session_id, {
+      startup_mode: "handoff",
+      requires_initial_direction: true,
+      authorization_status: "pending",
+      continuation_instruction: buildContinuationInstruction({
+        handoffNotes: record.handoff_notes,
+        projectName: record.project_name || projectConfig.name || record.project_dir
+      }),
+      provider
+    });
 
     // Assign to the same folder as the source session, or look up project folder
     let targetFolderId = record.source_folder_id;
@@ -3302,6 +4010,318 @@ function getSessionRecap(session) {
   return [];
 }
 
+function getLatestSessionContextItems(session, maxItems = 4) {
+  if (!session) return [];
+
+  let messages = [];
+  try {
+    if (session.provider === "codex" && session.codex_session_id) {
+      messages = codexDiscovery.getSessionMessages(session.codex_session_id);
+    } else if (session.cc_project_dir && session.claude_session_id) {
+      messages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
+    }
+  } catch (_) {
+    return [];
+  }
+
+  if (!Array.isArray(messages) || messages.length === 0) return [];
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg?.role !== "assistant" || !msg.content) continue;
+    if (isNoisySessionText(msg.content)) continue;
+
+    if (session.provider === "codex") {
+      return [String(msg.content).trim()];
+    }
+
+    const items = extractSubstantiveTextItems(msg.content, maxItems);
+    if (items.length > 0) return items;
+
+    return [normalizeRecapText(msg.content, 240)];
+  }
+
+  return [];
+}
+
+function isLowSignalSessionTitle(title = "") {
+  const normalized = String(title || "").toLowerCase();
+  return (
+    !normalized ||
+    normalized === "(untitled)" ||
+    normalized.includes("test") ||
+    normalized.includes("checkpoint") ||
+    normalized.includes("good morning") ||
+    normalized.startsWith("tmp")
+  );
+}
+
+function getSessionArchiveFamily(session) {
+  if (!session) return null;
+  const projectDir = session.cc_project_dir || "__unfiled__";
+  const provider = normalizeProviderFamily(session.provider || "unknown");
+  const rawTitle = String(session.title || "").trim();
+  const displayTitle = getSessionDisplayTitle(session);
+  const normalizedTitle = rawTitle.toLowerCase();
+  const normalizedDisplay = String(displayTitle || "").toLowerCase();
+
+  if (normalizedTitle.startsWith("handoff:") || normalizedDisplay.startsWith("handoff:")) {
+    return `handoff:${projectDir}:${provider}`;
+  }
+
+  if (
+    /^\w[\w\s-]* - \d{4}-\d{2}-\d{2}$/.test(rawTitle) ||
+    session.handoff_from === "Morning Refresh"
+  ) {
+    return `daily:${projectDir}:${provider}`;
+  }
+
+  if (isLowSignalSessionTitle(rawTitle)) {
+    return `low-signal:${projectDir}:${provider}:${normalizedTitle || normalizedDisplay || "untitled"}`;
+  }
+
+  return null;
+}
+
+function getSessionTranscriptMessages(session) {
+  try {
+    if (session.provider === "codex" && session.codex_session_id) {
+      return codexDiscovery.getSessionMessages(session.codex_session_id) || [];
+    }
+    if (session.cc_project_dir && session.claude_session_id) {
+      return readClaudeCodeSession(session.cc_project_dir, session.claude_session_id) || [];
+    }
+  } catch (_) {
+    return [];
+  }
+  return [];
+}
+
+function computeSessionSignificance(session, checkpointCount = 0) {
+  const messages = getSessionTranscriptMessages(session);
+  const exchangeCount = messages.filter(m =>
+    (m?.role === "user" || m?.role === "assistant") &&
+    typeof m.content === "string" &&
+    m.content.trim()
+  ).length;
+  const toolCallCount = messages.filter(m => Array.isArray(m?.tool_calls) && m.tool_calls.length > 0).length;
+  const substantiveRecap = extractSessionRecapItems(messages, 2);
+  const recapCount = substantiveRecap.length;
+  const lowSignalTitle = isLowSignalSessionTitle(session.title);
+
+  let score = 0;
+  if (exchangeCount >= 20) score += 4;
+  else if (exchangeCount >= 10) score += 3;
+  else if (exchangeCount >= 5) score += 2;
+  else if (exchangeCount >= 3) score += 1;
+
+  if (toolCallCount >= 4) score += 2;
+  else if (toolCallCount > 0) score += 1;
+
+  if (checkpointCount >= 2) score += 2;
+  else if (checkpointCount === 1) score += 1;
+
+  if (recapCount >= 2) score += 2;
+  else if (recapCount === 1) score += 1;
+
+  if (session.handoff_from) score += 1;
+  if (lowSignalTitle) score -= 3;
+
+  const lowSignificance =
+    exchangeCount < 5 &&
+    checkpointCount <= 1 &&
+    recapCount <= 1 &&
+    (toolCallCount <= 1 || lowSignalTitle);
+
+  return {
+    score,
+    exchangeCount,
+    checkpointCount,
+    recapCount,
+    toolCallCount,
+    lowSignalTitle,
+    lowSignificance
+  };
+}
+
+function shouldProtectSessionFromAutoArchive(session, managedState, runtimeState, startupState) {
+  if (!session || session.archived) return true;
+
+  if (managedState?.pending_permission) return true;
+  if (managedState?.status === "needs_attention" || managedState?.status === "active") return true;
+
+  const runtime = runtimeState?.state || null;
+  const runtimeUpdatedAt = runtimeState?.updated_at ? new Date(runtimeState.updated_at).getTime() : null;
+  const runtimeAgeMs = runtimeUpdatedAt && !Number.isNaN(runtimeUpdatedAt)
+    ? Date.now() - runtimeUpdatedAt
+    : null;
+  const runtimeStillFresh = runtimeAgeMs !== null && runtimeAgeMs < OVERFLOW_LOW_SIGNIFICANCE_ARCHIVE_AGE_MS;
+
+  if (
+    runtime === "awaiting_initial_direction" ||
+    runtime === "executing" ||
+    (runtime === "waiting_on_checkpoint" && runtimeStillFresh)
+  ) {
+    return true;
+  }
+
+  if (startupState?.requires_initial_direction && startupState.authorization_status !== "granted") {
+    return true;
+  }
+
+  return false;
+}
+
+async function maybeAutoArchiveSessions() {
+  const now = Date.now();
+  if (now - lastAutoArchiveSweepAt < AUTO_ARCHIVE_SWEEP_INTERVAL_MS) return;
+  lastAutoArchiveSweepAt = now;
+
+  const sessions = await listSessions();
+  const activeSessions = sessions.filter(s => !s.archived);
+  if (activeSessions.length === 0) return;
+
+  const { data: checkpointRows } = await db.supabase
+    .from("session_checkpoints")
+    .select("session_id")
+    .not("session_id", "is", null);
+
+  const checkpointCounts = new Map();
+  for (const row of (checkpointRows || [])) {
+    if (!row.session_id) continue;
+    checkpointCounts.set(row.session_id, (checkpointCounts.get(row.session_id) || 0) + 1);
+  }
+
+  const candidates = [];
+
+  for (const session of activeSessions) {
+    const ageMs = now - new Date(session.updated_at).getTime();
+    if (Number.isNaN(ageMs)) continue;
+    if (ageMs < OVERFLOW_LOW_SIGNIFICANCE_ARCHIVE_AGE_MS) continue;
+
+    const [runtimeState, startupState] = await Promise.all([
+      getSessionRuntimeState(session.session_id),
+      getSessionStartupContract(session.session_id)
+    ]);
+    const managedState = getManagedSessionState(session);
+
+    if (shouldProtectSessionFromAutoArchive(session, managedState, runtimeState, startupState)) {
+      continue;
+    }
+
+    const significance = computeSessionSignificance(session, checkpointCounts.get(session.session_id) || 0);
+    candidates.push({
+      session,
+      ageMs,
+      managedState,
+      runtimeState,
+      startupState,
+      significance
+    });
+  }
+
+  const toArchive = new Map();
+
+  for (const candidate of candidates) {
+    if (candidate.ageMs >= LOW_SIGNIFICANCE_ARCHIVE_AGE_MS && candidate.significance.lowSignificance) {
+      toArchive.set(candidate.session.session_id, {
+        reason: "low_significance_older_than_1d",
+        candidate
+      });
+    }
+    if (
+      candidate.ageMs >= OVERFLOW_LOW_SIGNIFICANCE_ARCHIVE_AGE_MS &&
+      candidate.significance.lowSignalTitle &&
+      candidate.significance.score <= 2
+    ) {
+      toArchive.set(candidate.session.session_id, {
+        reason: "low_signal_title_short_lived_session",
+        candidate
+      });
+    }
+  }
+
+  const activeByProject = new Map();
+  for (const session of activeSessions) {
+    const key = session.cc_project_dir || "__unfiled__";
+    if (!activeByProject.has(key)) activeByProject.set(key, []);
+    activeByProject.get(key).push(session);
+  }
+
+  for (const [projectDir, projectSessions] of activeByProject.entries()) {
+    if (projectSessions.length <= MAX_ACTIVE_SESSIONS_PER_PROJECT) continue;
+
+    const overflowCandidates = candidates
+      .filter(c => (c.session.cc_project_dir || "__unfiled__") === projectDir)
+      .filter(c => c.significance.lowSignificance)
+      .filter(c => c.ageMs >= OVERFLOW_LOW_SIGNIFICANCE_ARCHIVE_AGE_MS)
+      .sort((a, b) => {
+        if (a.significance.score !== b.significance.score) return a.significance.score - b.significance.score;
+        return b.ageMs - a.ageMs;
+      });
+
+    let activeCount = projectSessions.length - Array.from(toArchive.keys()).filter(id =>
+      projectSessions.some(s => s.session_id === id)
+    ).length;
+
+    for (const candidate of overflowCandidates) {
+      if (activeCount <= MAX_ACTIVE_SESSIONS_PER_PROJECT) break;
+      if (toArchive.has(candidate.session.session_id)) continue;
+      toArchive.set(candidate.session.session_id, {
+        reason: "project_overflow_low_significance",
+        candidate
+      });
+      activeCount -= 1;
+    }
+  }
+
+  const duplicateFamilies = new Map();
+  for (const candidate of candidates) {
+    if (candidate.ageMs < DUPLICATE_SESSION_ARCHIVE_AGE_MS) continue;
+    const family = getSessionArchiveFamily(candidate.session);
+    if (!family) continue;
+    if (!duplicateFamilies.has(family)) duplicateFamilies.set(family, []);
+    duplicateFamilies.get(family).push(candidate);
+  }
+
+  for (const [family, familyCandidates] of duplicateFamilies.entries()) {
+    if (familyCandidates.length <= 1) continue;
+
+    const keepCount = family.startsWith("handoff:") ? 2 : 1;
+    familyCandidates.sort((a, b) => {
+      if (a.significance.score !== b.significance.score) return b.significance.score - a.significance.score;
+      return new Date(b.session.updated_at) - new Date(a.session.updated_at);
+    });
+
+    const keepIds = new Set(familyCandidates.slice(0, keepCount).map(c => c.session.session_id));
+    for (const candidate of familyCandidates) {
+      if (keepIds.has(candidate.session.session_id)) continue;
+      if (toArchive.has(candidate.session.session_id)) continue;
+      toArchive.set(candidate.session.session_id, {
+        reason: "superseded_duplicate_session",
+        candidate
+      });
+    }
+  }
+
+  for (const { reason, candidate } of toArchive.values()) {
+    await db.archiveSession(candidate.session.session_id);
+    try {
+      await logEvent("session_auto_archived", candidate.session.session_id, {
+        reason,
+        project_dir: candidate.session.cc_project_dir || null,
+        title: candidate.session.title,
+        age_ms: candidate.ageMs,
+        significance_score: candidate.significance.score,
+        exchange_count: candidate.significance.exchangeCount,
+        checkpoint_count: candidate.significance.checkpointCount,
+        recap_count: candidate.significance.recapCount,
+        tool_call_count: candidate.significance.toolCallCount
+      });
+    } catch (_) {}
+  }
+}
+
 async function buildMorningRefreshRecommendations(refreshes) {
   if (!refreshes || refreshes.length === 0) return [];
 
@@ -3451,10 +4471,10 @@ app.post("/api/morning-refresh/check", async (_req, res) => {
     // Send single notification
     if (created.length > 0) {
       const names = created.map(c => c.projectName).join(", ");
-      fetch(`https://ntfy.sh/${process.env.NTFY_TOPIC || "Agent-brain"}`, {
-        method: "POST",
-        headers: { "Title": "Morning Refresh Ready", "Priority": "3" },
-        body: `${created.length} project(s) ready: ${names}`
+      sendPushNotification({
+        title: "Morning Refresh Ready",
+        message: `${created.length} project(s) ready: ${names}`,
+        priority: 3
       }).catch(() => {});
     }
 
@@ -3568,6 +4588,16 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
     newSession.handoff_from = "Morning Refresh";
     newSession.provider = provider;
     await saveSession(newSession);
+    await setSessionStartupContract(newSession.session_id, {
+      startup_mode: "morning_refresh",
+      requires_initial_direction: true,
+      authorization_status: "pending",
+      continuation_instruction: buildContinuationInstruction({
+        handoffNotes: record.handoff_notes,
+        projectName: projectConfig.name || record.project_name || record.project_dir
+      }),
+      provider
+    });
 
     // Assign to the same folder as the source, or look up project folder
     let targetFolderId = record.source_folder_id;
@@ -3673,16 +4703,6 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
   }
 });
 
-// Dismiss a single morning refresh
-app.post("/api/morning-refresh/:id/dismiss", async (req, res) => {
-  try {
-    await handoff.markHandoffDismissed(req.params.id);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Dismiss all pending morning refreshes
 app.post("/api/morning-refresh/dismiss-all", async (req, res) => {
   try {
@@ -3691,6 +4711,16 @@ app.post("/api/morning-refresh/dismiss-all", async (req, res) => {
       await handoff.markHandoffDismissed(refresh.id);
     }
     res.json({ ok: true, dismissed: pending.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Dismiss a single morning refresh
+app.post("/api/morning-refresh/:id/dismiss", async (req, res) => {
+  try {
+    await handoff.markHandoffDismissed(req.params.id);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -4546,7 +5576,7 @@ app.get("/api/tasks/projects", async (_req, res) => {
 
   // Query unique projects from existing tasks
   try {
-    const tasks = await db.getUserTasks();
+    const tasks = await db.listUserTasks();
     const taskProjects = [...new Set(tasks.map(t => t.project).filter(Boolean))];
     // Merge and dedupe
     const all = [...new Set([...defaults, ...taskProjects])].sort();
@@ -4685,6 +5715,8 @@ app.post("/api/locks/force-release/:lockId", async (req, res) => {
 // ── HTML templates (read fresh on each request for live editing) ─────────────
 
 function readView(name) {
+  const customPath = path.join(__dirname, "views", "custom", name);
+  if (fs.existsSync(customPath)) return fs.readFileSync(customPath, "utf8");
   return fs.readFileSync(path.join(__dirname, "views", name), "utf8");
 }
 
@@ -5832,6 +6864,54 @@ async function createGitHubPR(repoFullName, branch, baseBranch, issueNumber, tas
 
 const PORT = process.env.PORT || 3030;
 
+// ── Startup Config Validation ─────────────────────────────────────────────
+(function validateConfig() {
+  const required = [
+    ["SUPABASE_URL", "Supabase project URL (e.g., https://xxx.supabase.co)"],
+    ["SUPABASE_SERVICE_ROLE_KEY", "Supabase service role key (Settings → API)"]
+  ];
+  const optional = [
+    ["ANTHROPIC_API_KEY", "AI features (briefings, classification, drafting)"],
+    ["AUTH_ENCRYPTION_KEY", "Encrypted OAuth token storage (generate with: openssl rand -hex 32)"],
+    ["NTFY_TOPIC", "Push notifications to your phone via ntfy.sh"],
+    ["GMAIL_CLIENT_ID", "Gmail/Calendar sync"],
+    ["GITHUB_TOKEN", "GitHub webhook integration"]
+  ];
+
+  let hasErrors = false;
+  for (const [key, desc] of required) {
+    if (!process.env[key]) {
+      console.error(`[config] MISSING REQUIRED: ${key} — ${desc}`);
+      hasErrors = true;
+    }
+  }
+  if (hasErrors) {
+    console.error("[config] Copy .env.example to .env and fill in required values.");
+    console.error("[config] Server will start but some features will not work.");
+  }
+
+  const missing = optional.filter(([key]) => !process.env[key]);
+  if (missing.length > 0) {
+    console.log("[config] Optional features not configured:");
+    for (const [key, desc] of missing) {
+      console.log(`[config]   ${key} — ${desc}`);
+    }
+  }
+
+  // Check projects.json
+  const projectsPath = path.join(__dirname, "projects.json");
+  if (!fs.existsSync(projectsPath)) {
+    console.log("[config] No projects.json found. Copy projects.example.json to projects.json to configure projects.");
+  }
+})();
+
+// Run auto-migrations, then pre-warm settings cache
+db.runMigrations()
+  .then(result => {
+    if (result.error) console.warn("[startup] Migration issue:", result.error);
+  })
+  .catch(e => console.warn("[startup] Migration runner failed:", e.message));
+
 // Pre-warm settings cache before starting server
 db.initSettingsCache()
   .then(() => {
@@ -5853,7 +6933,22 @@ db.initSettingsCache()
   .catch(e => console.warn("[db] Settings cache init failed:", e.message));
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Agent Brain running on http://localhost:${PORT}`);
+  const currentVersion = require("./package.json").version;
+  console.log(`Agent Brain v${currentVersion} running on http://localhost:${PORT}`);
+
+  // Check for updates (non-blocking, silent on failure)
+  fetch("https://api.github.com/repos/Lukearcnet/agent-brain-oss/releases/latest")
+    .then(r => r.json())
+    .then(data => {
+      if (data.tag_name) {
+        const latest = data.tag_name.replace(/^v/, "");
+        if (latest !== currentVersion) {
+          console.log(`[update] New version available: v${currentVersion} → v${latest}`);
+          console.log(`[update] Run: bin/ab-update`);
+        }
+      }
+    })
+    .catch(() => {}); // silent fail
 
   // Keep Mac awake (prevents sleep when idle / lid closed on power)
   // Kill any orphaned caffeinate processes from prior server instances first
@@ -5927,10 +7022,10 @@ app.listen(PORT, "0.0.0.0", () => {
 
         // Send notification
         const names = created.map(c => c.projectName).join(", ");
-        fetch(`https://ntfy.sh/${process.env.NTFY_TOPIC || "Agent-brain"}`, {
-          method: "POST",
-          headers: { "Title": "Morning Refresh Ready", "Priority": "3" },
-          body: `${created.length} project(s) ready: ${names}`
+        sendPushNotification({
+          title: "Morning Refresh Ready",
+          message: `${created.length} project(s) ready: ${names}`,
+          priority: 3
         }).catch(() => {});
 
         console.log(`[morning-refresh] Created ${created.length} refresh(es)`);

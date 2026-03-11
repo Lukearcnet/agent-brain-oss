@@ -173,6 +173,7 @@
     <button class="copy-btn" onclick="openActionMenu()" style="font-size:16px; padding:6px 10px;">&middot;&middot;&middot;</button>
   </div>
   <div class="messages" id="messages"></div>
+  <div id="session-state-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#eef3ff; padding:10px 14px; font-size:13px; color:#334155;"></div>
   <div id="checkpoint-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:linear-gradient(135deg,#f5f3ff,#ede9fe); padding:12px 14px;">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
       <span style="font-size:12px;font-weight:600;color:#fff;background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:3px 10px;border-radius:6px;">Checkpoint</span>
@@ -457,6 +458,11 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    function isNearBottom(threshold = 48) {
+      const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+      return distanceFromBottom <= threshold;
+    }
+
     function escHtml(s) {
       const div = document.createElement("div");
       div.textContent = s;
@@ -617,6 +623,7 @@
     async function loadCheckpoints() {
       if (!currentProjectDir) return;
       try {
+        const shouldStick = isNearBottom();
         const params = new URLSearchParams({
           project_dir: currentProjectDir
         });
@@ -635,6 +642,9 @@
           return false;
         });
         const bar = document.getElementById("checkpoint-bar");
+        const wasVisible = bar.style.display !== "none";
+        const previousCheckpointId = currentCheckpointId;
+        const previousQuestion = document.getElementById("checkpoint-question").textContent;
 
         if (checkpoints.length === 0) {
           bar.style.display = "none";
@@ -660,7 +670,9 @@
         }
 
         bar.style.display = "";
-        scrollToBottom();
+        if (shouldStick && (!wasVisible || previousCheckpointId !== cp.id || previousQuestion !== cp.question)) {
+          scrollToBottom();
+        }
       } catch (_) {}
     }
 
@@ -689,6 +701,44 @@
       } catch (_) {}
     }
 
+    async function loadSessionState() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID + "/runtime-state");
+        const data = await resp.json();
+        const bar = document.getElementById("session-state-bar");
+        const startup = data.startup || null;
+        const runtime = data.runtime || null;
+
+        let message = "";
+        let bg = "#eef3ff";
+        let color = "#334155";
+
+        if (startup && startup.requires_initial_direction && startup.authorization_status !== "granted") {
+          message = "Startup gate: waiting for explicit direction before any work can begin.";
+          bg = "#fff7ed";
+          color = "#9a3412";
+        } else if (runtime && runtime.response_ready) {
+          message = "Checkpoint response ready: this session can resume by consuming the stored response from Agent Brain.";
+          bg = "#ecfdf5";
+          color = "#166534";
+        } else if (runtime && runtime.wait_required && runtime.state === "waiting_on_checkpoint") {
+          message = "Checkpoint pending: Agent Brain is holding the wait state for this session.";
+          bg = "#eff6ff";
+          color = "#1d4ed8";
+        }
+
+        if (!message) {
+          bar.style.display = "none";
+          return;
+        }
+
+        bar.textContent = message;
+        bar.style.background = bg;
+        bar.style.color = color;
+        bar.style.display = "";
+      } catch (_) {}
+    }
+
     async function loadSession() {
       try {
         const resp = await fetch("/api/sessions/" + SESSION_ID);
@@ -705,6 +755,7 @@
           renderMessages(data.messages);
           lastMessageCount = data.messages.length;
         }
+        loadSessionState();
         // Load checkpoints for this project
         if (currentProjectDir) loadCheckpoints();
         // Poll any live-backed session or any session with project checkpoints.
@@ -733,6 +784,7 @@
         }
         // Also refresh checkpoints
         if (currentProjectDir) loadCheckpoints();
+        loadSessionState();
       } catch (_) {}
     }
 
@@ -748,6 +800,10 @@
 
     function updatePermissionBar(data) {
       const bar = document.getElementById("permission-bar");
+      const shouldStick = isNearBottom();
+      const wasVisible = bar.style.display !== "none";
+      const previousLabel = document.getElementById("permission-label").textContent;
+      const previousDetail = document.getElementById("permission-detail").textContent;
       if (Date.now() < permissionCooldownUntil) {
         bar.style.display = "none";
         return;
@@ -758,7 +814,9 @@
         document.getElementById("permission-label").textContent = "Approve " + toolNames + "?";
         document.getElementById("permission-detail").textContent = detail;
         bar.style.display = "";
-        scrollToBottom();
+        if (shouldStick && (!wasVisible || previousLabel !== document.getElementById("permission-label").textContent || previousDetail !== detail)) {
+          scrollToBottom();
+        }
       } else {
         bar.style.display = "none";
       }

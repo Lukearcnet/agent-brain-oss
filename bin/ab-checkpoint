@@ -3,11 +3,14 @@
 # Combines checkpoint creation and polling into foolproof commands
 #
 # Usage:
-#   ab-checkpoint cycle "question" "opt1" "opt2" ...  # Create + poll (atomic)
-#   ab-checkpoint ask "question" "opt1" "opt2" ...    # Create only (non-blocking)
-#   ab-checkpoint wait <checkpoint_id>                 # Poll until response
-#   ab-checkpoint status <checkpoint_id>               # Check status once
-#   ab-checkpoint recover                              # Resume polling saved checkpoint
+#   ab-checkpoint cycle "question" "opt1" "opt2" ...   # Create + poll until response
+#   ab-checkpoint ask "question" "opt1" "opt2" ...     # Create only (non-blocking)
+#   ab-checkpoint wait <checkpoint_id>                  # Poll until response
+#   ab-checkpoint wait-once [checkpoint_id]             # Poll once (Codex-friendly)
+#   ab-checkpoint ready                                 # Check for a server-held ready response
+#   ab-checkpoint consume                               # Fetch and clear a server-held ready response
+#   ab-checkpoint status <checkpoint_id>                # Check status once
+#   ab-checkpoint recover                               # Resume polling saved checkpoint
 #
 # Environment:
 #   AB_HOST - Agent Brain server (default: http://localhost:3030)
@@ -33,9 +36,12 @@ usage() {
 ab-checkpoint - Atomic checkpoint wrapper for Agent Brain
 
 Commands:
-  cycle "question" "opt1" "opt2" ...   Create checkpoint and poll until response (RECOMMENDED)
+  cycle "question" "opt1" "opt2" ...   Create checkpoint and poll until response
   ask "question" "opt1" "opt2" ...     Create checkpoint only (non-blocking)
   wait <checkpoint_id>                  Poll checkpoint until response
+  wait-once [checkpoint_id]             Poll exactly once (recommended for Codex)
+  ready                                 Check whether Agent Brain already holds a response for this session
+  consume                               Fetch and clear a server-held ready response for this session
   status <checkpoint_id>                Check checkpoint status once
   recover                               Resume polling a saved checkpoint (from file or session lookup)
 
@@ -52,6 +58,9 @@ Examples:
   ab-checkpoint cycle "Ready to proceed with refactor?" "Yes" "No" "Modify approach"
   ab-checkpoint ask "Task complete. What's next?"
   ab-checkpoint wait ckpt-1234567890-abc123
+  ab-checkpoint wait-once
+  AB_SESSION_ID=20260309-120514 ab-checkpoint ready
+  AB_SESSION_ID=20260309-120514 ab-checkpoint consume
   AB_SESSION_ID=20260309-120514 ab-checkpoint cycle "Question?" "A" "B"
   ab-checkpoint recover
 EOF
@@ -74,6 +83,23 @@ load_checkpoint_id() {
 # Clean up saved checkpoint
 clear_checkpoint_id() {
   rm -f "$CHECKPOINT_FILE"
+}
+
+fetch_ready_checkpoint() {
+  if [ -z "${AB_SESSION_ID:-}" ]; then
+    echo "AB_SESSION_ID is required to check ready responses." >&2
+    exit 1
+  fi
+  curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/ready-checkpoint"
+}
+
+consume_ready_checkpoint() {
+  if [ -z "${AB_SESSION_ID:-}" ]; then
+    echo "AB_SESSION_ID is required to consume ready responses." >&2
+    exit 1
+  fi
+  clear_checkpoint_id
+  curl -s -X POST "${AB_HOST}/api/sessions/${AB_SESSION_ID}/consume-ready-checkpoint"
 }
 
 # Create a checkpoint (non-blocking)
@@ -159,6 +185,20 @@ poll_checkpoint() {
   done
 }
 
+# Poll checkpoint exactly once using the server wait endpoint.
+# This avoids long-running local loops, which Codex tends to background.
+poll_checkpoint_once() {
+  local checkpoint_id="$1"
+  local response=$(curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/wait?timeout=${AB_POLL_INTERVAL}")
+  local status=$(echo "$response" | jq -r '.status // "error"')
+
+  if [ "$status" = "responded" ]; then
+    clear_checkpoint_id
+  fi
+
+  echo "$response"
+}
+
 # Get checkpoint status without blocking
 get_status() {
   local checkpoint_id="$1"
@@ -167,6 +207,16 @@ get_status() {
 
 # Recover: find and resume polling a pending checkpoint
 recover_checkpoint() {
+  if [ -n "${AB_SESSION_ID:-}" ]; then
+    local ready
+    ready=$(fetch_ready_checkpoint 2>/dev/null || true)
+    if [ -n "$ready" ] && [ "$(echo "$ready" | jq -r '.ready // false')" = "true" ]; then
+      echo "Found ready response for session $AB_SESSION_ID." >&2
+      consume_ready_checkpoint
+      return
+    fi
+  fi
+
   # Strategy 1: Check saved checkpoint file
   local saved_id=$(load_checkpoint_id)
   if [ -n "$saved_id" ]; then
@@ -203,6 +253,63 @@ recover_checkpoint() {
 
   echo "No pending checkpoint to recover." >&2
   exit 0
+}
+
+resolve_checkpoint_id() {
+  local checkpoint_id="${1:-}"
+
+  if [ -n "$checkpoint_id" ]; then
+    save_checkpoint_id "$checkpoint_id"
+    echo "$checkpoint_id"
+    return 0
+  fi
+
+  if [ -n "${AB_SESSION_ID:-}" ]; then
+    local ready
+    ready=$(fetch_ready_checkpoint 2>/dev/null || true)
+    if [ -n "$ready" ] && [ "$(echo "$ready" | jq -r '.ready // false')" = "true" ]; then
+      echo "__READY__"
+      return 0
+    fi
+  fi
+
+  local saved_id
+  saved_id=$(load_checkpoint_id)
+  if [ -n "$saved_id" ]; then
+    echo "$saved_id"
+    return 0
+  fi
+
+  if [ -n "${AB_SESSION_ID:-}" ]; then
+    local lookup
+    lookup=$(curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/pending-checkpoint")
+    local pending
+    pending=$(echo "$lookup" | jq -r '.pending // false')
+    if [ "$pending" = "true" ]; then
+      local looked_up_id
+      looked_up_id=$(echo "$lookup" | jq -r '.checkpoint_id // empty')
+      if [ -n "$looked_up_id" ]; then
+        save_checkpoint_id "$looked_up_id"
+        echo "$looked_up_id"
+        return 0
+      fi
+    fi
+  fi
+
+  echo "No checkpoint_id provided and no saved pending checkpoint found." >&2
+  exit 1
+}
+
+wait_once_or_ready() {
+  local resolved
+  resolved=$(resolve_checkpoint_id "${1:-}")
+
+  if [ "$resolved" = "__READY__" ]; then
+    fetch_ready_checkpoint
+    return 0
+  fi
+
+  poll_checkpoint_once "$resolved"
 }
 
 # Main command dispatch
@@ -247,6 +354,19 @@ case "${1:-}" in
     # Save for recovery
     save_checkpoint_id "$1"
     poll_checkpoint "$1"
+    ;;
+
+  wait-once)
+    shift
+    wait_once_or_ready "${1:-}"
+    ;;
+
+  ready)
+    fetch_ready_checkpoint
+    ;;
+
+  consume)
+    consume_ready_checkpoint
     ;;
 
   status)
