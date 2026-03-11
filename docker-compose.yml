@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  agent-brain:
+    build: .
+    ports:
+      - "3030:3030"
+    env_file:
+      - .env
+    volumes:
+      # User configuration (persists across container rebuilds)
+      - ./projects.json:/app/projects.json
+      - ./settings.json:/app/settings.json
+      # Custom view overrides
+      - ./views/custom:/app/views/custom
+      # Custom instruction overrides
+      - ./instructions/local.md:/app/instructions/local.md
+      # Upload storage
+      - ./public/uploads:/app/public/uploads
+    restart: unless-stopped

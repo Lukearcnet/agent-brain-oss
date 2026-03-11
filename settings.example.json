@@ -1,0 +1,42 @@
+{
+  "_comment": "Agent Brain Settings. These are stored in Supabase and managed via the Settings UI at /settings. This file documents the schema and defaults for reference.",
+
+  "autoApproval": {
+    "enabled": false,
+    "tools": {},
+    "blockedPatterns": []
+  },
+
+  "notifications": {
+    "_comment": "Push notification preferences (configured via Settings UI)"
+  },
+
+  "emailSynthesizer": {
+    "enabled": false,
+    "pollIntervalBusinessHours": 1800000,
+    "pollIntervalOffHours": 3600000,
+    "businessHoursStart": 8,
+    "businessHoursEnd": 18,
+    "digestTime": "08:00",
+    "classificationModel": "claude-haiku-4-5-20251001",
+    "batchSize": 15,
+    "maxBodyChars": 500,
+    "sensitiveDomains": [],
+    "sensitiveSubjectPatterns": [],
+    "notifyRespondNow": true,
+    "notifyRespondToday": true,
+    "notifyDigest": true
+  },
+
+  "calendar": {
+    "enabled": false,
+    "pollIntervalBusinessHours": 900000,
+    "pollIntervalOffHours": 3600000,
+    "businessHoursStart": 8,
+    "businessHoursEnd": 18,
+    "notifyMinutesBefore": 15,
+    "notifyEnabled": true,
+    "syncWindowDays": 14,
+    "accountColors": {}
+  }
+}

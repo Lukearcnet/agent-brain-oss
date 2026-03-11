@@ -1,0 +1,115 @@
+#!/bin/bash
+# Agent Brain Update Script
+# Usage: bin/ab-update
+#
+# Pulls latest changes, installs dependencies, and prepares for restart.
+# Your configuration files (.env, projects.json, settings.json) are preserved.
+# Database migrations run automatically on next server start.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
+
+echo "╔══════════════════════════════════════╗"
+echo "║       Agent Brain Updater           ║"
+echo "╚══════════════════════════════════════╝"
+echo ""
+
+# Get current version before update
+CURRENT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown")
+echo "Current version: v$CURRENT_VERSION"
+
+# Check for uncommitted changes
+if ! git diff --quiet 2>/dev/null; then
+  echo ""
+  echo "⚠ You have uncommitted changes. Stashing them..."
+  git stash push -m "ab-update: stashed before update $(date +%Y%m%d-%H%M%S)"
+  STASHED=true
+else
+  STASHED=false
+fi
+
+# Determine the remote to pull from
+if git remote | grep -q "^public$"; then
+  REMOTE="public"
+elif git remote | grep -q "^origin$"; then
+  REMOTE="origin"
+else
+  echo "Error: No 'origin' or 'public' remote found."
+  exit 1
+fi
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+echo "Pulling from $REMOTE/$BRANCH..."
+
+# Pull latest
+BEFORE_HASH=$(git rev-parse HEAD)
+git pull "$REMOTE" "$BRANCH" --ff-only 2>/dev/null || {
+  echo ""
+  echo "⚠ Fast-forward pull failed. You may have local commits."
+  echo "  Try: git merge $REMOTE/$BRANCH"
+  if [ "$STASHED" = true ]; then
+    echo "  (Your stashed changes can be restored with: git stash pop)"
+  fi
+  exit 1
+}
+AFTER_HASH=$(git rev-parse HEAD)
+
+# Show what changed
+if [ "$BEFORE_HASH" = "$AFTER_HASH" ]; then
+  echo "Already up to date."
+else
+  echo ""
+  echo "── Changes ──────────────────────────────────"
+  git log --oneline "$BEFORE_HASH..$AFTER_HASH"
+  echo "──────────────────────────────────────────────"
+fi
+
+# Install dependencies if package.json changed
+if git diff --name-only "$BEFORE_HASH" "$AFTER_HASH" 2>/dev/null | grep -q "package.json"; then
+  echo ""
+  echo "package.json changed — installing dependencies..."
+  npm install --omit=dev
+else
+  echo ""
+  echo "Dependencies unchanged."
+fi
+
+# Regenerate CLAUDE.md and AGENTS.md from templates
+if [ -f "instructions/generate.sh" ]; then
+  echo ""
+  echo "Regenerating instruction files..."
+  bash instructions/generate.sh
+fi
+
+# Restore stashed changes
+if [ "$STASHED" = true ]; then
+  echo ""
+  echo "Restoring your stashed changes..."
+  git stash pop || {
+    echo "⚠ Could not auto-restore stashed changes (conflict?)."
+    echo "  Your changes are saved in git stash. Run: git stash pop"
+  }
+fi
+
+# Get new version
+NEW_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown")
+
+echo ""
+echo "╔══════════════════════════════════════╗"
+echo "║       Update Complete!              ║"
+echo "╚══════════════════════════════════════╝"
+echo ""
+if [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
+  echo "  Version: v$CURRENT_VERSION → v$NEW_VERSION"
+else
+  echo "  Version: v$NEW_VERSION"
+fi
+echo ""
+echo "  Restart the server to apply changes:"
+echo "    npm start"
+echo ""
+echo "  Database migrations will run automatically on startup."
+echo ""
