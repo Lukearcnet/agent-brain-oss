@@ -10,3 +10,14 @@ fly-agent-runner/node_modules/
 # User uploads (screenshots, etc)
 public/uploads/*
 !public/uploads/.gitkeep
+
+# User view customizations
+views/custom/*
+!views/custom/.gitkeep
+
+# Generated instruction files (rebuilt by instructions/generate.sh)
+CLAUDE.md
+AGENTS.md
+
+# User-specific instruction overrides
+instructions/local.md

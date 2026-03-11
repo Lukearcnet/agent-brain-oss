@@ -57,20 +57,13 @@ curl -s -X POST http://localhost:3030/api/mailbox \
 ## Checkpoints (User Approval from Phone)
 When you need user input before proceeding (plan approval, design decisions, clarifying questions), use the checkpoint system instead of just printing a question and waiting. This lets the user respond from their phone even when away from the computer.
 
-```bash
-PROJECT_KEY=$(pwd | sed 's|/|-|g')
+Use the provider-specific checkpoint flow documented later in these instructions:
+- `Claude Code` sessions use a blocking checkpoint command.
+- `Codex` sessions use the `ab-checkpoint` wrapper with Agent Brain holding the long wait state.
 
-# Post a checkpoint — this BLOCKS until the user responds (up to 4 hours)
-RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \
-  -H "Content-Type: application/json" \
-  -d "{\"project_dir\": \"$PROJECT_KEY\", \"question\": \"<your question or plan summary here>\", \"options\": [\"Yes, proceed\", \"Modify approach\", \"Cancel\"]}")
-
-echo "$RESPONSE"
-```
-
-The curl will block until the user taps a response on their phone dashboard. The response JSON contains:
-- `status`: "responded" or "timeout"
-- `response`: the user's text response
+In both cases, checkpoint responses contain:
+- `status`: `"pending"`, `"responded"`, or `"timeout"`
+- `response`: the user's text response when available
 
 **When to use checkpoints:**
 - After creating a plan that needs approval before execution
@@ -93,18 +86,10 @@ The curl will block until the user taps a response on their phone dashboard. The
 ## Task Completion Checkpoint (CRITICAL)
 **Never end a task by simply going idle.** When you finish what you were asked to do, ALWAYS post a checkpoint:
 
-```bash
-PROJECT_KEY=$(pwd | sed 's|/|-|g')
+Use the same provider-specific checkpoint flow as above, but change the question to:
+- `Task complete: <brief summary of what was done>. What would you like me to work on next?`
 
-RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \
-  -H "Content-Type: application/json" \
-  -d "{\"project_dir\": \"$PROJECT_KEY\", \"question\": \"Task complete: <brief summary of what was done>. What would you like me to work on next?\", \"options\": [\"Continue with related work\", \"New task\", \"Done for now\"]}")
-
-# If user responds, continue working on their request
-# If timeout, save memory and end session gracefully
-```
-
-This ensures the user can direct you from their phone instead of you going idle while they're away from the computer. The checkpoint blocks for up to 4 hours, giving them time to respond.
+This ensures the user can direct you from their phone instead of you going idle while they're away from the computer.
 
 If the checkpoint times out (5 min with no response), proceed with the most conservative option or save your progress and note what you were waiting on.
 

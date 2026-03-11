@@ -2,7 +2,7 @@
 
 **Supervised agentic coding** — Claude Code is your IDE, Agent Brain is your project manager.
 
-Agent Brain provides persistent memory, cross-session communication, and mobile control for Claude Code sessions. Run AI agents on your projects while staying in the loop from your phone.
+Agent Brain provides persistent memory, cross-session communication, and mobile control for AI coding agents (Claude Code and Codex). Run agents on your projects while staying in the loop from your phone.
 
 ## Features
 
@@ -12,17 +12,27 @@ Agent Brain provides persistent memory, cross-session communication, and mobile 
 - **Checkpoints** — Agents ask for approval before making big changes
 - **Push Notifications** — Get notified when agents need your input
 - **Session Handoffs** — Clean context transfer between sessions
+- **Email & Calendar** — AI-powered email triage and calendar sync
+- **Codex Support** — Works with both Claude Code and Codex sessions
+- **Customizable** — Override views, instructions, and settings without touching core code
 
 ## Quick Start
+
+### One-Liner Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lukearcnet/agent-brain-oss/main/install.sh | bash
+```
+
+This detects Node.js, clones the repo, installs dependencies, and walks you through setup.
+
+### Manual Install
 
 ```bash
 git clone https://github.com/Lukearcnet/agent-brain-oss.git agent-brain
 cd agent-brain
-npm install
-cp .env.example .env
-cp projects.example.json projects.json
-# Edit .env and projects.json with your config
-npm start
+npm run setup    # Interactive setup wizard
+npm start        # Database migrations run automatically
 ```
 
 See [SETUP.md](SETUP.md) for detailed instructions.
@@ -31,14 +41,14 @@ See [SETUP.md](SETUP.md) for detailed instructions.
 
 - Node.js 18+
 - [Supabase](https://supabase.com) account (free tier works)
-- [Anthropic](https://anthropic.com) API key
+- [Anthropic](https://anthropic.com) API key (optional, for AI features)
 
 ## How It Works
 
-1. **Start Agent Brain** on your local machine
-2. **Configure Claude Code** to use Agent Brain for memory
-3. **Open the dashboard** on your phone via Tailscale
-4. **Run Claude Code sessions** — they automatically connect
+1. **Install Agent Brain** on your local machine (one command)
+2. **Run the setup wizard** — configures Supabase, env vars, and background service
+3. **Open the dashboard** on your phone (same WiFi or via Tailscale)
+4. **Run AI coding sessions** — they automatically connect
 5. **Approve checkpoints** from your phone when agents need decisions
 
 ## Architecture
@@ -50,7 +60,7 @@ See [SETUP.md](SETUP.md) for detailed instructions.
 └─────────────────┘     │                 │
                         │  ┌───────────┐  │
 ┌─────────────────┐     │  │  Memory   │  │
-│  Claude Code    │────▶│  ├───────────┤  │
+│     Codex       │────▶│  ├───────────┤  │
 │   Session 2     │     │  │  Mailbox  │  │
 └─────────────────┘     │  ├───────────┤  │
                         │  │Checkpoints│  │
@@ -65,57 +75,58 @@ See [SETUP.md](SETUP.md) for detailed instructions.
                         └─────────────────┘
 ```
 
-## Configuration
-
-### Environment Variables
-
-Copy `.env.example` to `.env`:
-
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=eyJ...
-SUPABASE_SERVICE_KEY=eyJ...
-NTFY_TOPIC=your-notification-topic
-PORT=3030
-```
-
-### Projects
-
-Copy `projects.example.json` to `projects.json`:
-
-```json
-{
-  "my-app": {
-    "dir": "-Users-yourname-code-my-app",
-    "name": "My App",
-    "cwd": "/Users/yourname/code/my-app"
-  }
-}
-```
-
 ## Dashboard
 
-Access at `http://localhost:3030`:
+Access at `http://localhost:3030` (or from your phone on the same WiFi):
 
-- **Sessions** — Active Claude Code sessions
-- **Memory** — Project context and history
+- **Sessions** — Active Claude Code and Codex sessions with live chat
+- **Memory** — Project context and daily logs
 - **Mailbox** — Cross-session messages
-- **Checkpoints** — Pending approvals
+- **Checkpoints** — Pending approvals from your phone
+- **Email Triage** — AI-classified email inbox
+- **Calendar** — Synced calendar events
+
+## Updating
+
+```bash
+bin/ab-update
+# Then restart the server — migrations apply automatically
+```
+
+## Customization
+
+Agent Brain is designed to be customized without conflicting with updates:
+
+- **Views**: Copy any file from `views/` to `views/custom/` and modify it. Custom views take priority.
+- **Instructions**: Create `instructions/local.md` with your preferences, then run `npm run generate`.
+- **Settings**: Configure via the Settings UI at `/settings`.
 
 ## Remote Access
 
-Use Tailscale for secure remote access:
+### Same WiFi (easiest)
+Your phone can reach Agent Brain at `http://<your-mac-ip>:3030`.
 
+### Tailscale (secure, anywhere)
 ```bash
 brew install tailscale
 tailscale up
 # Access from anywhere: http://100.x.x.x:3030
 ```
 
+### Cloudflare Tunnel (shareable, with auth)
+See [SETUP.md](SETUP.md) for Cloudflare Tunnel setup with zero-trust authentication.
+
+## Docker
+
+```bash
+cp .env.example .env
+# Edit .env with your credentials
+docker compose up -d
+```
+
 ## License
 
-MIT
+AGPL-3.0 — See [LICENSE](LICENSE) for details.
 
 ## Contributing
 

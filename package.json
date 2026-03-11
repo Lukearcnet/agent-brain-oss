@@ -1,14 +1,18 @@
 {
   "name": "agent-brain",
-  "version": "1.0.0",
-  "main": "index.js",
+  "version": "2.0.0",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
+    "setup": "bash bin/ab-setup",
+    "update": "bash bin/ab-update",
+    "generate": "bash instructions/generate.sh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": ["agent", "ai", "claude", "codex", "memory", "orchestration"],
+  "author": "Luke Blanton",
+  "license": "AGPL-3.0",
+  "description": "Supervised agentic coding — persistent memory, cross-session communication, and mobile control for AI coding agents",
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.63",
     "@anthropic-ai/sdk": "^0.78.0",
