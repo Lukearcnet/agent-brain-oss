@@ -324,9 +324,31 @@
   <script>
     let settings = null;
 
+    const DEFAULT_SETTINGS = {
+      autoApproval: { enabled: false, tools: {}, blockedPatterns: [] },
+      notifications: { enabled: false, ntfyTopic: "", ntfyServer: "https://ntfy.sh", agentBrainUrl: "" },
+      emailSynthesizer: { enabled: false },
+      calendar: { enabled: false }
+    };
+
     async function load() {
-      const res = await fetch("/api/settings");
-      settings = await res.json();
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        // Merge with defaults to ensure all fields exist
+        settings = {
+          autoApproval: Object.assign({}, DEFAULT_SETTINGS.autoApproval, data.autoApproval || {}),
+          notifications: Object.assign({}, DEFAULT_SETTINGS.notifications, data.notifications || {}),
+          emailSynthesizer: Object.assign({}, DEFAULT_SETTINGS.emailSynthesizer, data.emailSynthesizer || {}),
+          calendar: Object.assign({}, DEFAULT_SETTINGS.calendar, data.calendar || {})
+        };
+        if (!settings.autoApproval.tools) settings.autoApproval.tools = {};
+        if (!settings.autoApproval.blockedPatterns) settings.autoApproval.blockedPatterns = [];
+      } catch (e) {
+        console.warn("Failed to load settings, using defaults:", e);
+        settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+      }
       render();
     }
 

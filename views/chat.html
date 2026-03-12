@@ -215,16 +215,17 @@
         </div>
         <div id="main-actions">
           <button class="action-btn" onclick="showRename()">Rename</button>
-          <button class="action-btn" onclick="showFolderPicker()">Move to Folder</button>
+          <button class="action-btn" onclick="showFolderPicker()">Move to Project</button>
           <button class="action-btn" onclick="doHandoff()">Handoff to New Session</button>
+          <button class="action-btn" onclick="showConnectInstructions()">Connect to Agent Brain</button>
           <button class="action-btn" onclick="doArchive()" style="color:#ff3b30;">Archive</button>
         </div>
         <div id="folder-picker" style="display:none;">
-          <div style="padding:14px 16px; font-size:13px; font-weight:600; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); text-transform:uppercase; letter-spacing:0.5px;">Move to folder</div>
-          <button class="action-btn" onclick="doMoveToFolder(null)" style="color:#8e8e93;">Remove from folder</button>
+          <div style="padding:14px 16px; font-size:13px; font-weight:600; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); text-transform:uppercase; letter-spacing:0.5px;">Move to project</div>
+          <button class="action-btn" onclick="doMoveToFolder(null)" style="color:#8e8e93;">Remove from project</button>
           <div id="folder-list-picker"></div>
           <div style="display:flex; padding:12px 16px; gap:8px; border-bottom:1px solid rgba(0,0,0,0.08);">
-            <input type="text" id="new-folder-input" placeholder="New folder name..." style="flex:1; font-size:16px; padding:10px 14px; border:1px solid #d1d1d6; border-radius:10px; background:#fff; -webkit-appearance:none;">
+            <input type="text" id="new-folder-input" placeholder="New project name..." style="flex:1; font-size:16px; padding:10px 14px; border:1px solid #d1d1d6; border-radius:10px; background:#fff; -webkit-appearance:none;">
             <button onclick="doCreateFolderAndMove()" style="padding:10px 18px; background:#007aff; color:#fff; border:none; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer;">Create</button>
           </div>
         </div>
@@ -281,6 +282,55 @@
     function closeActionMenu(e) {
       if (e && e.target !== document.getElementById("action-modal")) return;
       document.getElementById("action-modal").style.display = "none";
+    }
+
+    function showConnectInstructions() {
+      closeActionMenu();
+      const host = window.location.origin;
+      const instructions = `I want you to connect to Agent Brain for checkpoints and persistent memory. Agent Brain is running at ${host}.
+
+From now on, follow these rules:
+
+1. At session start, determine your project key and load memory:
+PROJECT_KEY=$(pwd | sed 's|/|-|g')
+curl -s ${host}/api/memory/$PROJECT_KEY | jq -r '.content // "No prior memory."'
+
+2. When you need my input (plan approval, design decisions, clarifying questions), use a BLOCKING checkpoint instead of asking in chat:
+PROJECT_KEY=$(pwd | sed 's|/|-|g')
+RESPONSE=$(curl -s --max-time 14410 -X POST ${host}/api/checkpoints -H "Content-Type: application/json" -d '{"project_dir": "'$PROJECT_KEY'", "question": "Your question here", "options": ["Option 1", "Option 2"]}')
+echo "$RESPONSE"
+
+This blocks until I respond from my phone (up to 4 hours).
+
+3. When you complete a task, ALWAYS post a checkpoint asking what's next. Never go idle.
+
+4. Before ending, save your progress:
+curl -s -X PUT ${host}/api/memory/$PROJECT_KEY -H "Content-Type: application/json" -d '{"content": "<summary of what you did and what is next>"}'
+
+Start by loading memory for this project now.`;
+
+      // Show modal with instructions
+      const modal = document.createElement("div");
+      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px;";
+      modal.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:440px;width:100%;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;" onclick="event.stopPropagation()">' +
+        '<div style="padding:16px;border-bottom:1px solid #e5e5ea;font-weight:600;font-size:15px;text-align:center;">Connect Session to Agent Brain</div>' +
+        '<div style="padding:12px 16px;font-size:13px;color:#666;">Paste this into your running Claude Code session to enable checkpoints, memory, and phone control:</div>' +
+        '<textarea id="connect-instructions" readonly style="flex:1;min-height:200px;margin:0 16px;padding:12px;font-size:12px;font-family:monospace;border:1px solid #d1d1d6;border-radius:10px;background:#f9f9f9;resize:none;color:#1c1c1e;"></textarea>' +
+        '<div style="padding:12px 16px;display:flex;gap:8px;">' +
+        '  <button onclick="this.closest(\'div\').closest(\'div\').closest(\'div\').remove()" style="flex:1;padding:12px;border:1px solid #d1d1d6;border-radius:10px;background:#fff;font-size:15px;cursor:pointer;">Close</button>' +
+        '  <button id="connect-copy-btn" style="flex:1;padding:12px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Copy</button>' +
+        '</div></div>';
+      modal.onclick = () => modal.remove();
+      document.body.appendChild(modal);
+      document.getElementById("connect-instructions").value = instructions;
+      document.getElementById("connect-copy-btn").onclick = async function() {
+        const copied = await copyToClipboard(instructions);
+        if (copied) {
+          this.textContent = "Copied!";
+          this.style.background = "#34c759";
+          setTimeout(() => { this.textContent = "Copy"; this.style.background = "#007aff"; }, 2000);
+        }
+      };
     }
 
     function showRename() {
@@ -429,24 +479,40 @@
       }
     }
 
-    function copyHandoff(btn) {
-      const text = document.getElementById("handoff-prompt-text").value;
-      if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(text);
-      } else {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
+    async function copyToClipboard(text) {
+      // Use Share API on mobile (works over HTTP on iOS)
+      if (navigator.share && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+        try { await navigator.share({ text }); return true; } catch (e) { if (e.name === "AbortError") return true; }
       }
-      btn.textContent = "Copied!";
-      btn.style.background = "#34c759";
-      setTimeout(function() { btn.textContent = "Copy Briefing"; btn.style.background = "#007aff"; }, 2000);
+      // Clipboard API (needs HTTPS on iOS)
+      if (navigator.clipboard && window.isSecureContext) {
+        try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall through */ }
+      }
+      // Fallback: visible textarea for manual copy
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:80vw;height:40vh;z-index:99999;font-size:14px;padding:12px;border-radius:12px;border:2px solid #007aff;background:#1c1c1e;color:#fff;";
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99998;";
+      overlay.onclick = () => { document.body.removeChild(ta); document.body.removeChild(overlay); };
+      document.body.appendChild(overlay);
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      return false; // user needs to manually copy
+    }
+
+    async function copyHandoff(btn) {
+      const text = document.getElementById("handoff-prompt-text").value;
+      const copied = await copyToClipboard(text);
+      if (copied) {
+        btn.textContent = "Copied!";
+        btn.style.background = "#34c759";
+        setTimeout(function() { btn.textContent = "Copy Briefing"; btn.style.background = "#007aff"; }, 2000);
+      } else {
+        btn.textContent = "Select All & Copy";
+        setTimeout(function() { btn.textContent = "Copy Briefing"; }, 3000);
+      }
     }
 
     function autoResize(el) {
@@ -901,23 +967,15 @@
           else if (m.role === "assistant" && m.content) text += "Agent: " + m.content + "\n\n";
         }
         const str = text.trim();
-        // Clipboard API needs HTTPS on iOS; fall back to textarea trick
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(str);
+        const copied = await copyToClipboard(str);
+        if (copied) {
+          btn.textContent = "Copied!";
+          btn.classList.add("copied");
+          setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
         } else {
-          const ta = document.createElement("textarea");
-          ta.value = str;
-          ta.style.position = "fixed";
-          ta.style.left = "-9999px";
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
+          btn.textContent = "Select & Copy";
+          setTimeout(() => { btn.textContent = "Copy"; }, 3000);
         }
-        btn.textContent = "Copied!";
-        btn.classList.add("copied");
-        setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
       } catch (e) {
         btn.textContent = "Failed";
         setTimeout(() => { btn.textContent = "Copy"; }, 2000);

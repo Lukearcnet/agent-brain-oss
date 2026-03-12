@@ -11,13 +11,13 @@ PROJECT_KEY=$(pwd | sed 's|/|-|g')
 Then load context from previous sessions:
 ```bash
 # 1. Read project memory (may be empty for new projects — that's fine)
-curl -s http://localhost:3030/api/memory/$PROJECT_KEY | jq -r '.content // "No prior memory for this project."'
+curl -s http://localhost:3030/api/memory/$PROJECT_KEY
 
 # 2. Check for unread broadcast messages
-curl -s "http://localhost:3030/api/mailbox/broadcast?unread=true" | jq '.'
+curl -s "http://localhost:3030/api/mailbox/broadcast?unread=true"
 
 # 3. Check for project-specific messages
-curl -s "http://localhost:3030/api/mailbox/$PROJECT_KEY?unread=true" | jq '.'
+curl -s "http://localhost:3030/api/mailbox/$PROJECT_KEY?unread=true"
 ```
 If there are unread messages, read them, factor them into your work, and mark each as read:
 ```bash
@@ -48,10 +48,10 @@ curl -s -X POST http://localhost:3030/api/mailbox \
   -H "Content-Type: application/json" \
   -d "{\"from_session\": \"$PROJECT_KEY\", \"to_session\": \"broadcast\", \"subject\": \"<subject>\", \"body\": \"<body>\"}"
 
-# Target a specific project
+# Target a specific project (replace with actual project key)
 curl -s -X POST http://localhost:3030/api/mailbox \
   -H "Content-Type: application/json" \
-  -d "{\"from_session\": \"$PROJECT_KEY\", \"to_session\": \"-Users-lukeblanton-Documents-other-project\", \"subject\": \"<subject>\", \"body\": \"<body>\"}"
+  -d "{\"from_session\": \"$PROJECT_KEY\", \"to_session\": \"<target-project-key>\", \"subject\": \"<subject>\", \"body\": \"<body>\"}"
 ```
 
 ## Checkpoints (User Approval from Phone)
@@ -94,7 +94,10 @@ This ensures the user can direct you from their phone instead of you going idle 
 If the checkpoint times out (5 min with no response), proceed with the most conservative option or save your progress and note what you were waiting on.
 
 ## Pre-Review Self-Validation (IMPORTANT)
-Before asking the user to review your work or posting a "task complete" checkpoint, run these mechanical checks to catch obvious breakage. This applies to ALL projects.
+Before asking the user to review your work or posting a "task complete" checkpoint, run ALL applicable steps below. This applies to ALL projects.
+
+### Step 1: Mechanical Checks
+Run these to catch obvious breakage:
 
 ```bash
 # 1. Syntax check all modified JS files (skip if no JS changes)
@@ -124,11 +127,29 @@ git diff --name-only
 npm test 2>/dev/null || echo "No test script configured"
 ```
 
+### Step 2: Self-Reflection Pass
+After mechanical checks pass, re-read your own changes and look for issues that automated checks miss:
+
+1. **Run `git diff` and read every changed hunk.** Don't skim — actually trace the logic.
+2. **For each changed file, ask yourself:**
+   - Does this change break any callers or imports that depend on the old behavior?
+   - Are there edge cases I didn't handle (nulls, empty arrays, missing keys, race conditions)?
+   - Did I leave any debugging code, hardcoded values, or TODO placeholders?
+   - If I changed a function signature, did I update all call sites?
+3. **For multi-file changes (3+ files):** check that the files are internally consistent — e.g., if you added a new field to a database call, is it also handled in the route handler and the view?
+4. **Fix anything you find** before proceeding. Do NOT just note it — actually fix it.
+
+### Step 3: Completion Summary
+Include the following in your "task complete" checkpoint message:
+- Which mechanical checks you ran and their results
+- Whether the self-reflection pass found (and fixed) any issues
+- A brief list of files changed and what each change does
+
 **Rules:**
 - Do NOT skip validation just because you're confident
 - If any check fails, fix it before asking for review
 - If a check is not applicable (e.g., no JS files changed), skip it
-- Log which checks you ran and their results in your checkpoint message
+- The self-reflection pass is NOT optional — it catches bugs that syntax checks miss
 - For iOS/Swift projects: use `xcodebuild -scheme <scheme> build` instead of node checks
 
 ## Memory Sections (Optimization)
@@ -138,16 +159,16 @@ When reading project memory, you can request only the sections you need to reduc
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 
 # List available sections (discovery)
-curl -s "http://localhost:3030/api/memory/$PROJECT_KEY?list=true" | jq '.sections'
+curl -s "http://localhost:3030/api/memory/$PROJECT_KEY?list=true"
 
 # Read only specific sections (comma-separated slugs)
-curl -s "http://localhost:3030/api/memory/$PROJECT_KEY?sections=architecture,next-steps" | jq -r '.content'
+curl -s "http://localhost:3030/api/memory/$PROJECT_KEY?sections=architecture,next-steps"
 
 # Task-based filter: let Haiku pick relevant sections for your task
-curl -s "http://localhost:3030/api/memory/$PROJECT_KEY?task=fix+email+bug" | jq -r '.content'
+curl -s "http://localhost:3030/api/memory/$PROJECT_KEY?task=fix+email+bug"
 
 # Read full memory (default, backward compatible)
-curl -s "http://localhost:3030/api/memory/$PROJECT_KEY" | jq -r '.content'
+curl -s "http://localhost:3030/api/memory/$PROJECT_KEY"
 ```
 
 **When to use each filter:**

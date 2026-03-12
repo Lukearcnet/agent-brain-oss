@@ -670,10 +670,17 @@
       }
     }
 
-    function copyCommand(cmd) {
-      navigator.clipboard.writeText(cmd).then(function() {
+    async function copyCommand(cmd) {
+      if (navigator.share && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+        try { await navigator.share({ text: cmd }); return; } catch (e) { if (e.name === "AbortError") return; }
+      }
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(cmd);
         alert("Copied to clipboard");
-      });
+        return;
+      }
+      // Fallback: prompt with text
+      prompt("Copy this command:", cmd);
     }
 
     async function spawnFixSession(checkType, findingIndex, btn) {

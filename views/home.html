@@ -492,16 +492,16 @@
         </div>
         <div id="main-actions">
           <button class="modal-btn" onclick="showRename()">Rename</button>
-          <button class="modal-btn" onclick="showFolderPicker()">Move to Folder</button>
+          <button class="modal-btn" onclick="showFolderPicker()">Move to Project</button>
           <button class="modal-btn" onclick="doArchive()">Archive</button>
           <button class="modal-btn danger" onclick="doDelete()">Delete</button>
         </div>
         <div id="folder-picker" style="display:none;">
-          <div style="padding:14px 16px; font-size:13px; font-weight:600; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); text-transform:uppercase; letter-spacing:0.5px;">Move to folder</div>
-          <button class="modal-btn" onclick="doMoveToFolder(null)" style="color:#8e8e93;">Remove from folder</button>
+          <div style="padding:14px 16px; font-size:13px; font-weight:600; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); text-transform:uppercase; letter-spacing:0.5px;">Move to project</div>
+          <button class="modal-btn" onclick="doMoveToFolder(null)" style="color:#8e8e93;">Remove from project</button>
           <div id="folder-list-picker"></div>
           <div class="rename-row active" style="display:flex;">
-            <input type="text" id="new-folder-input" placeholder="New folder name...">
+            <input type="text" id="new-folder-input" placeholder="New project name...">
             <button onclick="doCreateFolderAndMove()">Create</button>
           </div>
         </div>
@@ -545,8 +545,8 @@
           <input type="text" id="folder-rename-input" placeholder="New name...">
           <button onclick="doRenameFolder()">Save</button>
         </div>
-        <button class="modal-btn" onclick="showFolderRename()">Rename Folder</button>
-        <button class="modal-btn danger" onclick="doDeleteFolder()">Delete Folder</button>
+        <button class="modal-btn" onclick="showFolderRename()">Rename Project</button>
+        <button class="modal-btn danger" onclick="doDeleteFolder()">Delete Project</button>
       </div>
       <button class="modal-cancel" onclick="closeFolderModal()">Cancel</button>
     </div>

@@ -41,7 +41,7 @@ npm run setup
 ```
 
 The wizard walks you through:
-- Supabase URL and service role key
+- Supabase URL and secret key (or legacy service role key)
 - API keys (Anthropic, ntfy)
 - Project configuration
 - Supabase connection test
@@ -63,9 +63,9 @@ If you installed the background service during setup, Agent Brain is already run
 1. Go to [supabase.com](https://supabase.com) and create a free account
 2. Create a new project (any name, any region)
 3. Wait for it to provision (~2 minutes)
-4. Go to **Settings → API** and note:
-   - Project URL (like `https://abcdef.supabase.co`)
-   - `service_role` secret key
+4. Go to **Settings → API Keys** and note:
+   - Project URL (like `https://abcdef.supabase.co`) — also shown in the **Connect** dialog
+   - Secret key (starts with `sb_secret_...`) — or legacy `service_role` key if shown
 
 ### 5. Enable Auto-Migrations (One-Time)
 

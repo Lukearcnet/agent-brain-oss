@@ -63,16 +63,17 @@ echo "  - $PROJECT_DIR/CLAUDE.md"
 echo "  - $PROJECT_DIR/AGENTS.md"
 
 # Also generate global CLAUDE.md (without project context, but with local overrides)
+# Create the directory if it doesn't exist — this is critical for new users
 GLOBAL_DIR="$HOME/.claude"
-if [ -d "$GLOBAL_DIR" ]; then
-  echo "# Agent Brain Integration
+mkdir -p "$GLOBAL_DIR"
+echo "# Agent Brain Integration
 $CLAUDE_CONTENT$LOCAL_SECTION" > "$GLOBAL_DIR/CLAUDE.md"
-  echo "  - $GLOBAL_DIR/CLAUDE.md (global)"
-fi
+echo "  - $GLOBAL_DIR/CLAUDE.md (global)"
 
 # Generate global AGENTS.md for Codex
 CODEX_GLOBAL_DIR="$HOME/.codex"
-if [ -d "$CODEX_GLOBAL_DIR" ]; then
+if [ -d "$CODEX_GLOBAL_DIR" ] || command -v codex &>/dev/null; then
+  mkdir -p "$CODEX_GLOBAL_DIR"
   echo "# Agent Brain Integration
 $AGENTS_CONTENT$LOCAL_SECTION" > "$CODEX_GLOBAL_DIR/AGENTS.md"
   echo "  - $CODEX_GLOBAL_DIR/AGENTS.md (global)"

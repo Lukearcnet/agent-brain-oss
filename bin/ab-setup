@@ -33,11 +33,12 @@ if [ "${SKIP_ENV:-}" != "true" ]; then
   echo "── Step 1: Environment Configuration ──────────"
   echo ""
   echo "You'll need a Supabase project. Create one free at: https://supabase.com"
-  echo "Find your keys at: Settings → API"
+  echo "Find your keys at: Settings → API Keys"
+  echo "  (Use the Secret key — starts with sb_secret_ — or legacy service_role key)"
   echo ""
 
   read -p "  Supabase URL (https://xxx.supabase.co): " SUPABASE_URL
-  read -p "  Supabase Service Role Key: " SUPABASE_KEY
+  read -p "  Supabase Secret Key (sb_secret_... or service_role key): " SUPABASE_KEY
   echo ""
 
   echo "  Optional (press Enter to skip):"
@@ -53,6 +54,7 @@ if [ "${SKIP_ENV:-}" != "true" ]; then
 
 # ── Required ──────────────────────────────────────────────────────────────
 SUPABASE_URL=$SUPABASE_URL
+# Secret key (sb_secret_...) or legacy service_role key — from Settings → API Keys
 SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_KEY
 
 # Encryption key for OAuth tokens
@@ -158,14 +160,92 @@ echo ""
 echo "── Step 5: Instruction Files ─────────────────"
 if [ -f "instructions/generate.sh" ]; then
   bash instructions/generate.sh
+  # Verify CLAUDE.md was placed globally
+  if [ -f "$HOME/.claude/CLAUDE.md" ]; then
+    echo "✓ Claude Code will auto-adopt Agent Brain in all future sessions"
+  else
+    echo "⚠ Global CLAUDE.md not created. Creating now..."
+    mkdir -p "$HOME/.claude"
+    cp "$PROJECT_DIR/CLAUDE.md" "$HOME/.claude/CLAUDE.md" 2>/dev/null || echo "  Failed — copy CLAUDE.md to ~/.claude/ manually"
+  fi
 else
   echo "⚠ instructions/generate.sh not found"
 fi
 
-# ── Step 6: Background Service (macOS LaunchAgent) ────────────────────────
+# ── Step 6: Claude Code Hooks ──────────────────────────────────────────────
 
 echo ""
-echo "── Step 6: Background Service ────────────────"
+echo "── Step 6: Claude Code Hooks ─────────────────"
+
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+HOOK_SCRIPT="$PROJECT_DIR/hooks/permission-hook.sh"
+MSG_HOOK_SCRIPT="$PROJECT_DIR/hooks/message-check-hook.sh"
+
+# Make hook scripts executable
+chmod +x "$HOOK_SCRIPT" 2>/dev/null
+chmod +x "$MSG_HOOK_SCRIPT" 2>/dev/null
+
+if [ -f "$CLAUDE_SETTINGS" ]; then
+  # Check if hooks are already configured
+  if python3 -c "
+import json, sys
+with open('$CLAUDE_SETTINGS') as f:
+    d = json.load(f)
+hooks = d.get('hooks', {})
+if 'PermissionRequest' in hooks or 'PreToolUse' in hooks:
+    sys.exit(0)
+sys.exit(1)
+" 2>/dev/null; then
+    echo "✓ Hooks already configured in settings.json"
+  else
+    # Merge hooks into existing settings
+    python3 -c "
+import json
+with open('$CLAUDE_SETTINGS') as f:
+    d = json.load(f)
+d.setdefault('hooks', {})
+d['hooks']['PreToolUse'] = [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$MSG_HOOK_SCRIPT', 'timeout': 5}]}]
+d['hooks']['PermissionRequest'] = [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$HOOK_SCRIPT', 'timeout': 120}]}]
+with open('$CLAUDE_SETTINGS', 'w') as f:
+    json.dump(d, f, indent=2)
+print('done')
+" 2>/dev/null
+    if [ $? -eq 0 ]; then
+      echo "✓ Hooks configured — Agent Brain will handle permissions from your phone"
+    else
+      echo "⚠ Could not auto-configure hooks. Add manually to $CLAUDE_SETTINGS:"
+      echo "    \"hooks\": {"
+      echo "      \"PreToolUse\": [{\"matcher\": \"\", \"hooks\": [{\"type\": \"command\", \"command\": \"$MSG_HOOK_SCRIPT\", \"timeout\": 5}]}],"
+      echo "      \"PermissionRequest\": [{\"matcher\": \"\", \"hooks\": [{\"type\": \"command\", \"command\": \"$HOOK_SCRIPT\", \"timeout\": 120}]}]"
+      echo "    }"
+    fi
+  fi
+else
+  # Create settings.json with hooks
+  mkdir -p "$HOME/.claude"
+  python3 -c "
+import json
+d = {
+    'hooks': {
+        'PreToolUse': [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$MSG_HOOK_SCRIPT', 'timeout': 5}]}],
+        'PermissionRequest': [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$HOOK_SCRIPT', 'timeout': 120}]}]
+    }
+}
+with open('$CLAUDE_SETTINGS', 'w') as f:
+    json.dump(d, f, indent=2)
+print('done')
+" 2>/dev/null
+  if [ $? -eq 0 ]; then
+    echo "✓ Created $CLAUDE_SETTINGS with Agent Brain hooks"
+  else
+    echo "⚠ Could not create settings.json. See SETUP.md for manual hook configuration."
+  fi
+fi
+
+# ── Step 7: Background Service (macOS LaunchAgent) ────────────────────────
+
+echo ""
+echo "── Step 7: Background Service ─────────────────"
 
 if [ "$(uname)" = "Darwin" ]; then
   PLIST_PATH="$HOME/Library/LaunchAgents/com.agentbrain.server.plist"
@@ -242,6 +322,37 @@ else
   echo "  Start manually with: npm start"
 fi
 
+# ── Step 8: Phone Access (Tailscale) ─────────────────────────────────────
+
+echo ""
+echo "── Step 8: Phone Access ──────────────────────"
+
+LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+if [ "$LOCAL_IP" != "localhost" ]; then
+  echo "  Same WiFi: http://$LOCAL_IP:3030"
+fi
+
+if command -v tailscale &>/dev/null; then
+  TS_IP=$(tailscale ip -4 2>/dev/null || echo "")
+  if [ -n "$TS_IP" ]; then
+    echo "✓ Tailscale connected — access from anywhere: http://$TS_IP:3030"
+  else
+    echo "✓ Tailscale installed but not connected"
+    echo "  Run: tailscale up"
+    echo "  Then access Agent Brain from anywhere via your Tailscale IP"
+  fi
+else
+  echo ""
+  echo "  For phone access from anywhere, install Tailscale (free):"
+  if [ "$(uname)" = "Darwin" ]; then
+    echo "    brew install tailscale && tailscale up"
+  else
+    echo "    curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up"
+  fi
+  echo "  Then install the Tailscale app on your phone."
+  echo "  Access Agent Brain from anywhere: http://<tailscale-ip>:3030"
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────
 
 echo ""
@@ -250,17 +361,12 @@ echo "║       Setup Complete!                    ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
-# Show local IP for phone access
-LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 echo "  Dashboard: http://localhost:3030"
 if [ "$LOCAL_IP" != "localhost" ]; then
   echo "  From phone (same WiFi): http://$LOCAL_IP:3030"
 fi
 echo ""
 echo "  Database migrations run automatically on startup."
-echo ""
-echo "  For remote phone access (away from WiFi):"
-echo "    See SETUP.md for Tailscale or Cloudflare Tunnel setup"
 echo ""
 echo "  To customize Agent Brain:"
 echo "    1. Copy instructions/local.example.md → instructions/local.md"
