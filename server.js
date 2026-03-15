@@ -5259,9 +5259,41 @@ app.post("/api/ai-assistant", async (req, res) => {
     const now = new Date();
     const timeContext = `Current time: ${now.toLocaleString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })}`;
 
+    // Load top contacts for name resolution
+    let contactsContext = "";
+    try {
+      // Load named contacts sorted by frequency; also search for specific names from prompt
+      const [freqResp, searchResp] = await Promise.all([
+        fetch("http://localhost:3030/api/email/contacts?limit=200"),
+        // Extract potential name from prompt and search for it
+        (async () => {
+          const nameMatch = prompt.match(/(?:[Tt]o|[Ee]mail|[Mm]essage|[Ii]nvite|[Ss]end|[Cc]c|[Ww]ith)\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*)/);
+          if (!nameMatch) return null;
+          return fetch(`http://localhost:3030/api/email/contacts?q=${encodeURIComponent(nameMatch[1])}&limit=10`);
+        })(),
+      ]);
+
+      const contactSet = new Map();
+      if (freqResp.ok) {
+        const contacts = await freqResp.json();
+        contacts.filter(c => c.name).forEach(c => contactSet.set(c.email, c));
+      }
+      if (searchResp && searchResp.ok) {
+        const searched = await searchResp.json();
+        searched.filter(c => c.name).forEach(c => contactSet.set(c.email, c));
+      }
+
+      if (contactSet.size > 0) {
+        const contactLines = [...contactSet.values()]
+          .map(c => `${c.name} <${c.email}>`)
+          .join("\n");
+        contactsContext = `\n\nKnown contacts (use these to resolve names to email addresses — ALWAYS use these when a name matches):\n${contactLines}`;
+      }
+    } catch (e) { /* contacts unavailable, proceed without */ }
+
     const systemPrompt = `You are an AI assistant that helps draft emails and calendar events. Parse the user's natural language request and output structured JSON.
 
-${timeContext}
+${timeContext}${contactsContext}
 
 Output ONLY valid JSON matching one of these schemas:
 

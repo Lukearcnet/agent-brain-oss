@@ -231,6 +231,21 @@
     .frow .fg { flex: 1; }
     .fcheck { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #202124; cursor: pointer; margin-bottom: 8px; }
     .fcheck input { width: 18px; height: 18px; accent-color: #1a73e8; }
+    .fg-stack { position: relative; }
+    .att-suggest {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+      background: #fff; border: 1px solid rgba(132,111,82,0.18); border-radius: 14px;
+      box-shadow: 0 18px 32px rgba(73,52,31,0.12); overflow: hidden; display: none;
+    }
+    .att-suggest.open { display: block; }
+    .att-suggest-item {
+      width: 100%; border: none; background: #fff; text-align: left; padding: 10px 12px;
+      cursor: pointer; font: inherit; display: flex; flex-direction: column; gap: 2px;
+    }
+    .att-suggest-item + .att-suggest-item { border-top: 1px solid #f1f3f4; }
+    .att-suggest-item:active { background: #e8f0fe; }
+    .att-suggest-name { font-size: 13px; font-weight: 600; color: #202124; }
+    .att-suggest-email { font-size: 12px; color: #5f6368; }
     .fbtns { display: flex; gap: 10px; margin-top: 16px; }
     .btn { flex: 1; padding: 12px; font-size: 15px; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; }
     .btn-x { background: #f1f3f4; color: #202124; }
@@ -418,9 +433,10 @@
     <label class="fcheck"><input type="checkbox" id="f-allday" onchange="toggleAllDay()"> All day</label>
     <div class="fg"><label class="fl">Location</label><input class="fi" id="f-loc" placeholder="Add location"></div>
     <div class="fg"><label class="fl">Description</label><textarea class="fi" id="f-desc" placeholder="Add description" rows="2" style="resize:vertical"></textarea></div>
-    <div class="fg">
+    <div class="fg fg-stack">
       <label class="fl">Attendees <span style="font-weight:400;color:#9aa0a6">(comma-separated emails)</span></label>
-      <input class="fi" id="f-attendees" placeholder="john@example.com, jane@example.com">
+      <input class="fi" id="f-attendees" placeholder="john@example.com, jane@example.com" autocomplete="off" autocapitalize="none" autocorrect="off" inputmode="email" oninput="handleAttendeeInput()" onfocus="handleAttendeeFocus()" onblur="queueHideAttendeeSuggestions()">
+      <div class="att-suggest" id="att-suggest"></div>
     </div>
     <label class="fcheck"><input type="checkbox" id="f-meet"> Add Google Meet</label>
     <div class="fbtns" id="mdl-btns">
@@ -488,6 +504,90 @@ let editingEvent = null;       // event being edited (null = new)
 // ── Helpers ────────────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 function esc(s) { const e = document.createElement('span'); e.textContent = s || ''; return e.innerHTML; }
+
+// ── Contact autocomplete for attendees ────────────────────────────────────────
+let masterContacts = [];
+let contactsLoaded = false;
+let contactsLoadPromise = null;
+let contactHideTimer = null;
+
+async function loadMasterContacts() {
+  if (contactsLoaded) return masterContacts;
+  if (contactsLoadPromise) return contactsLoadPromise;
+  contactsLoadPromise = fetch('/api/email/contacts?limit=250')
+    .then(async (resp) => {
+      if (!resp.ok) throw new Error('Failed to load contacts');
+      masterContacts = await resp.json();
+      contactsLoaded = true;
+      return masterContacts;
+    })
+    .catch((err) => { console.error('Load contacts:', err); return []; })
+    .finally(() => { contactsLoadPromise = null; });
+  return contactsLoadPromise;
+}
+
+function attendeeTokenParts() {
+  const input = document.getElementById('f-attendees');
+  const segments = (input.value || '').split(',');
+  const token = segments[segments.length - 1].trim().toLowerCase();
+  const used = new Set(segments.slice(0, -1).map(p => p.trim().toLowerCase()).filter(Boolean));
+  return { token, used };
+}
+
+function getAttendeeMatches() {
+  const { token, used } = attendeeTokenParts();
+  const pool = masterContacts.filter(c => !used.has(c.email.toLowerCase()));
+  if (!token) return pool.slice(0, 6);
+  return pool.filter(c => `${c.name} ${c.email}`.toLowerCase().includes(token)).slice(0, 6);
+}
+
+function hideAttendeeSuggestions() {
+  const el = document.getElementById('att-suggest');
+  if (el) { el.classList.remove('open'); el.innerHTML = ''; }
+}
+
+function renderAttendeeSuggestions() {
+  const el = document.getElementById('att-suggest');
+  if (!el) return;
+  const matches = getAttendeeMatches();
+  if (!matches.length) { hideAttendeeSuggestions(); return; }
+  el.innerHTML = matches.map(c => `
+    <button class="att-suggest-item" type="button" onclick="applyAttendeeSuggestion(decodeURIComponent('${encodeURIComponent(c.email)}'))">
+      <span class="att-suggest-name">${esc(c.name || c.email)}</span>
+      <span class="att-suggest-email">${esc(c.email)}</span>
+    </button>
+  `).join('');
+  el.classList.add('open');
+}
+
+async function handleAttendeeFocus() {
+  clearTimeout(contactHideTimer);
+  await loadMasterContacts();
+  renderAttendeeSuggestions();
+}
+
+async function handleAttendeeInput() {
+  clearTimeout(contactHideTimer);
+  await loadMasterContacts();
+  renderAttendeeSuggestions();
+}
+
+function queueHideAttendeeSuggestions() {
+  contactHideTimer = setTimeout(() => hideAttendeeSuggestions(), 120);
+}
+
+function applyAttendeeSuggestion(email) {
+  clearTimeout(contactHideTimer);
+  const input = document.getElementById('f-attendees');
+  const segments = input.value.split(',');
+  segments[segments.length - 1] = ` ${email}`;
+  input.value = segments
+    .map((part, i) => i === 0 ? part.trim() : ` ${part.trim()}`)
+    .filter(Boolean)
+    .join(', ') + ', ';
+  hideAttendeeSuggestions();
+  input.focus();
+}
 function dk(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 function same(a,b) { return dk(a)===dk(b); }
 function clr(e) { return e.email_accounts?.calendar_color || '#1a73e8'; }
