@@ -267,9 +267,9 @@ CREATE TABLE ai_monitor_briefings (
 
 ### Integration with Agent Brain
 
-1. **Read** project memory via `GET /api/memory/-Users-lukeblanton-agent-brain` to inject as context for Claude filtering
+1. **Read** project memory via `GET /api/memory/$PROJECT_KEY` to inject as context for Claude filtering
 2. **Store** each briefing in `ai_monitor_briefings` for history and review
-3. **Write** each briefing to the daily log via `POST /api/memory/-Users-lukeblanton-agent-brain/daily` — future Claude Code sessions see "what's new in AI" automatically
+3. **Write** each briefing to the daily log via `POST /api/memory/$PROJECT_KEY/daily` — future Claude Code sessions see "what's new in AI" automatically
 4. Agent Brain cron reads the latest briefing and incorporates it into session context
 
 ### Running
@@ -282,7 +282,7 @@ node services/ai-monitor/index.js --run-now
 node services/ai-monitor/index.js
 
 # Or via system cron (alternative to node-cron)
-# 0 7,18 * * * cd /Users/lukeblanton/agent-brain && node services/ai-monitor/index.js --run-now
+# 0 7,18 * * * cd /path/to/agent-brain && node services/ai-monitor/index.js --run-now
 ```
 
 For production, recommend running via `pm2` or `launchd` (macOS) to keep the node-cron process alive.

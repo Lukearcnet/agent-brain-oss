@@ -175,8 +175,8 @@ These are NOT in the near-term plan. Listed here so we don't forget them.
 
 ## Reference
 
-- **Q&A document:** `/Users/lukeblanton/agent-brain/Q&A on Agent Brain Pivot.docx`
-- **Product roadmap (earlier research):** `/Users/lukeblanton/agent-brain/PRODUCT_ROADMAP.md`
+- **Q&A document:** `./Q&A on Agent Brain Pivot.docx`
+- **Product roadmap (earlier research):** `./PRODUCT_ROADMAP.md`
 - **Current codebase:** Single-file `server.js` (~1,750 lines) + `AgentBrainHelper.app`
 - **Claude JSONL location:** `~/.claude/projects/<encoded-path>/<session-id>.jsonl`
 - **Anthropic Remote Control (shipped Feb 25, 2026):** CLI-only, requires `claude remote-control` or `/rc`, per-session, no aggregated supervision, no auto-approve policies

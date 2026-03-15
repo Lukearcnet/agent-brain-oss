@@ -200,7 +200,7 @@ CREATE INDEX idx_facts_active ON memory_facts (project_dir, superseded_by) WHERE
 -- Delivered via PreToolUse hook that checks for pending messages on every tool call
 CREATE TABLE session_messages (
   id TEXT PRIMARY KEY,
-  project_dir TEXT NOT NULL,               -- target project directory key (e.g. "-Users-lukeblanton-agent-brain")
+  project_dir TEXT NOT NULL,               -- target project directory key (e.g. "-Users-yourname-agent-brain")
   content TEXT NOT NULL,                   -- message text from user
   sender TEXT NOT NULL DEFAULT 'user',     -- "user" or project key of sending session
   status TEXT NOT NULL DEFAULT 'pending',  -- pending → delivered → expired

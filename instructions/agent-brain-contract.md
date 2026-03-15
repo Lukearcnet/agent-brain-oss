@@ -193,6 +193,44 @@ curl -s "http://localhost:3030/api/memory/$PROJECT_KEY"
 - `## Known Issues` — bugs, limitations, workarounds
 - `## Next Steps` — what to work on next
 
+## Google Workspace CLI (gws)
+The `gws` CLI is available for interacting with Google Workspace (Gmail, Calendar, Drive, Docs, Sheets, Chat, etc.). All output is structured JSON.
+
+**Ensure PATH includes gws:**
+```bash
+export PATH="$HOME/.npm-global/bin:$PATH"
+```
+
+**Common commands:**
+```bash
+# Email
+gws gmail +triage                    # Unread inbox summary
+gws gmail +send --to "a@b.com" --subject "Subject" --body "Body"
+gws gmail +reply --message-id MSG_ID --body "Reply text"
+
+# Calendar
+gws calendar +agenda                 # Upcoming events
+gws calendar +insert --summary "Meeting" --start "2024-01-15T10:00:00" --end "2024-01-15T11:00:00"
+
+# Drive
+gws drive files list --params '{"pageSize": 10}'
+gws drive +upload --file ./report.pdf
+
+# Sheets
+gws sheets +read --spreadsheet-id SHEET_ID --range 'Sheet1!A1:C10'
+gws sheets +append --spreadsheet-id SHEET_ID --range 'Sheet1!A1' --values '[["a","b","c"]]'
+
+# Docs
+gws docs +write --document-id DOC_ID --text "Content to append"
+```
+
+**Notes:**
+- Auth must be set up first: `gws auth setup` (interactive, one-time)
+- Check auth status: `gws auth status`
+- Use single quotes around Sheets ranges (bash interprets `!`)
+- All responses are JSON — pipe to `jq` for filtering
+- If gws is not installed or auth is not configured, skip GSuite operations gracefully
+
 ## Key Rules
 - ALWAYS read memory at session start — it contains critical context from prior sessions
 - ALWAYS write memory before ending — the next session depends on it
