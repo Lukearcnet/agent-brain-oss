@@ -436,7 +436,7 @@ async function buildPendingCheckpointProtocol(checkpoint) {
     },
     reminder: checkpoint?.provider === "codex"
       ? "CHECKPOINT STILL PENDING (CODEX): Do not summarize or switch tasks. You may call `ab-checkpoint wait-once` again for a short poll, but Agent Brain is now holding the long wait for this session and will preserve the response for later recovery."
-      : "CHECKPOINT STILL PENDING: Do not summarize or stop. Continue waiting on the blocking checkpoint."
+      : "CHECKPOINT STILL PENDING: Do not summarize or stop. Continue waiting on the blocking checkpoint (agent_brain_checkpoint MCP tool or curl)."
   };
 }
 
@@ -521,7 +521,7 @@ async function buildCheckpointProtocol(checkpoint, response) {
         },
         reminder: checkpoint.provider === "codex"
           ? "STARTUP GATE STILL LOCKED (CODEX): Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint with `ab-checkpoint ask`, then keep polling with `ab-checkpoint wait-once` until the user gives a concrete task."
-          : "STARTUP GATE STILL LOCKED: Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint and wait for a concrete task."
+          : "STARTUP GATE STILL LOCKED: Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint (agent_brain_checkpoint MCP tool preferred) and wait for a concrete task."
       };
     }
 
@@ -536,7 +536,7 @@ async function buildCheckpointProtocol(checkpoint, response) {
         },
         reminder: checkpoint.provider === "codex"
           ? "STARTUP GATE CLEARED (CODEX): The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint with `ab-checkpoint ask` and keep polling with `ab-checkpoint wait-once`."
-          : "STARTUP GATE CLEARED: The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint."
+          : "STARTUP GATE CLEARED: The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint (agent_brain_checkpoint MCP tool preferred)."
       };
     }
 
@@ -575,7 +575,7 @@ async function buildCheckpointProtocol(checkpoint, response) {
         },
         reminder: checkpoint.provider === "codex"
           ? "STARTUP GATE CLEARED (CODEX): The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint with `ab-checkpoint ask` and keep polling with `ab-checkpoint wait-once`."
-          : "STARTUP GATE CLEARED: The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint."
+          : "STARTUP GATE CLEARED: The user explicitly chose to continue previous work. Execute only the carried-over task, then post the next checkpoint (agent_brain_checkpoint MCP tool preferred)."
       };
     }
 
@@ -614,7 +614,7 @@ async function buildCheckpointProtocol(checkpoint, response) {
       },
       reminder: checkpoint.provider === "codex"
         ? "STARTUP GATE STILL LOCKED (CODEX): Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint with `ab-checkpoint ask`, then keep polling with `ab-checkpoint wait-once` until the user gives a concrete task."
-        : "STARTUP GATE STILL LOCKED: Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint and wait for a concrete task."
+        : "STARTUP GATE STILL LOCKED: Do NOT start work from project memory or prior next steps. Post a narrower follow-up checkpoint (agent_brain_checkpoint MCP tool preferred) and wait for a concrete task."
     };
   }
 
@@ -771,7 +771,7 @@ function getCheckpointExecutionReminder(provider) {
   if (provider === "codex") {
     return "ATOMIC CYCLE PROTOCOL (CODEX): You are now in EXECUTING state. Execute the user's instruction, then POST the next checkpoint with `ab-checkpoint ask`. You may try `ab-checkpoint wait-once` once for an immediate reply, but Agent Brain owns the long wait. If the session resumes later, run `ab-checkpoint consume` (or `ab-checkpoint wait-once` with no id) before doing anything else.";
   }
-  return "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
+  return "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results using the agent_brain_checkpoint MCP tool (preferred) or curl fallback, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
 }
 
 async function sendCheckpointFollowup({ checkpointId, projectDir, sessionId, provider, response, reminder }) {
