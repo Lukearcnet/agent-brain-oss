@@ -1788,6 +1788,13 @@ app.post("/api/folders", async (req, res) => {
   const name = (req.body.name || "").trim();
   if (!name) return res.status(400).json({ error: "Name required" });
   const folders = await createFolder(name);
+  // Propagate: add to in-memory PROJECT_NAMES so getProjectName() picks it up
+  // This ensures checkpoints/sessions for this project show the correct name
+  if (!Object.values(PROJECT_NAMES).includes(name)) {
+    // Generate a plausible dir key from the folder name (lowercase, hyphenated)
+    const dirKey = "-Users-" + (process.env.USER || "user") + "-" + name.toLowerCase().replace(/\s+/g, "-");
+    PROJECT_NAMES[dirKey] = name;
+  }
   res.json(folders);
 });
 
@@ -1963,7 +1970,7 @@ app.post("/api/codex-sessions/:sessionId/adopt", async (req, res) => {
     let projectFolder = folders.find(f => f.name === projectConfig.name);
     if (!projectFolder) {
       // Create folder for this project
-      const { data, error } = await db.supabase.from("session_folders").insert({ name: projectConfig.name }).select().single();
+      const { data, error } = await db.supabase.from("folders").insert({ id: "f_" + Date.now(), name: projectConfig.name }).select().single();
       if (!error && data) projectFolder = data;
     }
     if (projectFolder) {
@@ -2266,7 +2273,7 @@ app.post("/api/hooks/permission-request", async (req, res) => {
         let targetFolder = folders.find(f => f.name === projectConfig.name);
         if (!targetFolder) {
           // Create folder for this project
-          const { data, error } = await db.supabase.from("session_folders").insert({ name: projectConfig.name }).select().single();
+          const { data, error } = await db.supabase.from("folders").insert({ id: "f_" + Date.now(), name: projectConfig.name }).select().single();
           if (!error && data) targetFolder = data;
         }
         if (targetFolder) {
@@ -3681,7 +3688,7 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
       if (projectFolder) targetFolderId = projectFolder.id;
       else {
         // Create folder for this project
-        const { data, error } = await db.supabase.from("session_folders").insert({ name: projectConfig.name }).select().single();
+        const { data, error } = await db.supabase.from("folders").insert({ id: "f_" + Date.now(), name: projectConfig.name }).select().single();
         if (!error && data) targetFolderId = data.id;
       }
     }
@@ -4697,7 +4704,7 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
       const projectFolder = folders.find(f => f.name === projectConfig.name);
       if (projectFolder) targetFolderId = projectFolder.id;
       else {
-        const { data, error } = await db.supabase.from("session_folders").insert({ name: projectConfig.name }).select().single();
+        const { data, error } = await db.supabase.from("folders").insert({ id: "f_" + Date.now(), name: projectConfig.name }).select().single();
         if (!error && data) targetFolderId = data.id;
       }
     }
@@ -4996,7 +5003,7 @@ curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \\
     );
     if (!targetFolder) {
       // Create the AI Cron Monitor folder if it doesn't exist
-      const { data, error } = await db.supabase.from("session_folders").insert({ name: "AI Cron Monitor" }).select().single();
+      const { data, error } = await db.supabase.from("folders").insert({ id: "f_" + Date.now(), name: "AI Cron Monitor" }).select().single();
       if (!error && data) targetFolder = data;
     }
     if (targetFolder) {
@@ -5563,7 +5570,7 @@ curl -s -X POST http://localhost:3030/api/maintenance/findings/mark-fixed \\
       f.name === "System Health" || f.name === "system-health"
     );
     if (!targetFolder) {
-      const { data, error } = await db.supabase.from("session_folders").insert({ name: "System Health" }).select().single();
+      const { data, error } = await db.supabase.from("folders").insert({ id: "f_" + Date.now(), name: "System Health" }).select().single();
       if (!error && data) targetFolder = data;
     }
     if (targetFolder) {
@@ -5687,26 +5694,26 @@ app.post("/api/tasks/reorder", async (req, res) => {
 
 // Get available projects for tagging
 app.get("/api/tasks/projects", async (_req, res) => {
-  // Default projects
-  const defaults = [
-    "Agent Brain",
-    "Email Synthesizer",
-    "AI Cron Monitor",
-    "News Dashboard",
-    "Insiders MVP",
-    "Arc Social"
-  ];
-
-  // Query unique projects from existing tasks
+  // Derive project list dynamically from:
+  // 1. Folder names (created in Sessions tab)
+  // 2. Project names from projects.json (PROJECT_KEYWORDS)
+  // 3. Unique project names from existing tasks
+  // No hardcoded defaults — keeps repo shareable
   try {
-    const tasks = await db.listUserTasks();
+    const [folders, tasks] = await Promise.all([
+      db.loadFolders(),
+      db.listUserTasks(),
+    ]);
+    const folderNames = folders.map(f => f.name).filter(Boolean);
+    const projectJsonNames = [...new Set(Object.values(PROJECT_KEYWORDS).map(p => p.name).filter(Boolean))];
     const taskProjects = [...new Set(tasks.map(t => t.project).filter(Boolean))];
-    // Merge and dedupe
-    const all = [...new Set([...defaults, ...taskProjects])].sort();
+    const all = [...new Set([...folderNames, ...projectJsonNames, ...taskProjects])].sort();
     res.json(all);
   } catch (err) {
     console.error("[tasks/projects] Error:", err.message);
-    res.json(defaults);
+    // Fallback: just project names from projects.json
+    const fallback = [...new Set(Object.values(PROJECT_KEYWORDS).map(p => p.name).filter(Boolean))].sort();
+    res.json(fallback);
   }
 });
 

@@ -90,6 +90,26 @@
       padding: 2px 8px;
       border-radius: 10px;
     }
+    .task-group-add {
+      background: none;
+      border: 1.5px solid #c7c7cc;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      font-size: 15px;
+      font-weight: 600;
+      color: #8e8e93;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: auto;
+      line-height: 1;
+    }
+    .task-group-add:hover {
+      border-color: #007aff;
+      color: #007aff;
+    }
 
     /* Task card */
     .task-card {
@@ -110,6 +130,7 @@
       padding-left: 44px;
       background: #fafafa;
     }
+
 
     .task-checkbox {
       width: 22px;
@@ -145,10 +166,25 @@
       font-size: 15px;
       color: #1c1c1e;
       line-height: 1.4;
+      cursor: text;
     }
     .task-text.completed {
       text-decoration: line-through;
       color: #8e8e93;
+    }
+    .task-text:hover {
+      background: #f8f8f8;
+      border-radius: 4px;
+    }
+    .task-edit-input {
+      width: 100%;
+      font-size: 15px;
+      line-height: 1.4;
+      border: 1px solid #007aff;
+      border-radius: 6px;
+      padding: 4px 8px;
+      outline: none;
+      font-family: inherit;
     }
     .task-project {
       display: inline-block;
@@ -211,6 +247,44 @@
       background: #c7c7cc;
     }
 
+    /* Inline add task (per-project) */
+    .inline-add-row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 16px;
+      border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    }
+    .inline-add-input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      font-family: inherit;
+    }
+    .inline-add-input:focus { border-color: #007aff; }
+    .inline-add-btn {
+      background: #007aff;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .inline-cancel-btn {
+      background: #e0e0e0;
+      color: #333;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
     /* Empty state */
     .empty-state {
       text-align: center;
@@ -219,7 +293,7 @@
     }
     .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.4; }
 
-    /* Delete button on swipe/long-press */
+    /* Delete button on hover */
     .task-delete {
       background: #ff3b30;
       color: #fff;
@@ -315,6 +389,7 @@
         max-width: none;
         min-width: 0;
       }
+
     }
   </style>
 </head>
@@ -346,7 +421,6 @@
     let tasks = [];
     let projects = [];
     let activeFilter = 'all';
-
     async function loadProjects() {
       const res = await fetch('/api/tasks/projects');
       projects = await res.json();
@@ -436,12 +510,24 @@
         filtered = tasks.filter(t => t.project === activeFilter);
       }
 
-      // Group by project
+      // Separate parent tasks and subtasks
+      const parentTasks = filtered.filter(t => !t.parent_id);
+      const subtasksByParent = {};
+      filtered.filter(t => t.parent_id).forEach(t => {
+        if (!subtasksByParent[t.parent_id]) subtasksByParent[t.parent_id] = [];
+        subtasksByParent[t.parent_id].push(t);
+      });
+
+      // Sort subtasks by sort_order ascending (first created = lowest sort_order = top)
+      for (const parentId in subtasksByParent) {
+        subtasksByParent[parentId].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      }
+
+      // Group parents by project
       const grouped = {};
       const noProject = [];
 
-      filtered.forEach(t => {
-        if (t.parent_id) return; // Handle subtasks later
+      parentTasks.forEach(t => {
         if (t.project) {
           if (!grouped[t.project]) grouped[t.project] = [];
           grouped[t.project].push(t);
@@ -457,13 +543,14 @@
       Object.entries(grouped).forEach(([project, projectTasks]) => {
         const incomplete = projectTasks.filter(t => !t.completed).length;
         html += `
-          <div class="task-group">
+          <div class="task-group" data-project-group="${escapeAttr(project)}">
             <div class="task-group-header">
-              ${project}
+              ${escapeHtml(project)}
               <span class="task-group-count">${incomplete} remaining</span>
+              <button class="task-group-add" onclick="showInlineAdd('${escapeAttr(project)}')" title="Add task to ${escapeAttr(project)}">+</button>
             </div>
             <div class="task-card">
-              ${projectTasks.map(t => renderTask(t)).join('')}
+              ${projectTasks.map(t => renderTask(t, false, subtasksByParent[t.id])).join('')}
             </div>
           </div>
         `;
@@ -472,16 +559,19 @@
       // Tasks without project
       if (noProject.length > 0) {
         html += `
-          <div class="task-group">
-            <div class="task-group-header">Uncategorized</div>
+          <div class="task-group" data-project-group="">
+            <div class="task-group-header">
+              Uncategorized
+              <button class="task-group-add" onclick="showInlineAdd('')" title="Add uncategorized task">+</button>
+            </div>
             <div class="task-card">
-              ${noProject.map(t => renderTask(t)).join('')}
+              ${noProject.map(t => renderTask(t, false, subtasksByParent[t.id])).join('')}
             </div>
           </div>
         `;
       }
 
-      if (filtered.length === 0) {
+      if (parentTasks.length === 0 && noProject.length === 0) {
         html = `
           <div class="empty-state">
             <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -493,38 +583,36 @@
       }
 
       container.innerHTML = html;
-
-      // Add subtasks
-      filtered.forEach(t => {
-        if (!t.parent_id) return;
-        const parentEl = document.querySelector(`[data-task-id="${t.parent_id}"]`);
-        if (parentEl) {
-          parentEl.insertAdjacentHTML('afterend', renderTask(t, true));
-        }
-      });
     }
 
-    function renderTask(task, isSubtask = false) {
+    function renderTask(task, isSubtask = false, subtasks = []) {
       const completedClass = task.completed ? 'completed' : '';
       const checkedClass = task.completed ? 'checked' : '';
       const subtaskClass = isSubtask ? 'subtask' : '';
       const projectTag = task.project && !isSubtask ?
-        `<span class="task-project ${projectClass(task.project)}">${task.project}</span>` : '';
+        `<span class="task-project ${projectClass(task.project)}">${escapeHtml(task.project)}</span>` : '';
       // Only show add subtask button for parent tasks (not subtasks)
       const addSubtaskBtn = !isSubtask ?
         `<button class="task-add-subtask" onclick="event.stopPropagation(); showSubtaskInput('${task.id}')" title="Add subtask">+</button>` : '';
 
-      return `
+      let html = `
         <div class="task-item ${subtaskClass}" data-task-id="${task.id}">
           <div class="task-checkbox ${checkedClass}" onclick="toggleTask('${task.id}')"></div>
           <div class="task-content">
-            <div class="task-text ${completedClass}">${escapeHtml(task.content)}</div>
+            <div class="task-text ${completedClass}" onclick="startEdit('${task.id}')">${escapeHtml(task.content)}</div>
             ${projectTag}
           </div>
           ${addSubtaskBtn}
           <button class="task-delete" onclick="deleteTask('${task.id}')">Delete</button>
         </div>
       `;
+
+      // Render subtasks inline, already sorted by sort_order
+      if (subtasks && subtasks.length > 0) {
+        html += subtasks.map(st => renderTask(st, true)).join('');
+      }
+
+      return html;
     }
 
     function escapeHtml(text) {
@@ -532,6 +620,107 @@
       div.textContent = text;
       return div.innerHTML;
     }
+
+    function escapeAttr(text) {
+      return text.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    // ── Inline Editing ──────────────────────────────────────────────────────
+
+    function startEdit(taskId) {
+      const task = tasks.find(t => t.id === taskId);
+      if (!task) return;
+
+      const taskEl = document.querySelector(`[data-task-id="${taskId}"] .task-text`);
+      if (!taskEl) return;
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'task-edit-input';
+      input.value = task.content;
+
+      input.onblur = () => saveEdit(taskId, input.value);
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { render(); }
+      };
+
+      taskEl.replaceWith(input);
+      input.focus();
+      input.select();
+    }
+
+    async function saveEdit(taskId, newContent) {
+      newContent = newContent.trim();
+      const task = tasks.find(t => t.id === taskId);
+      if (!task || !newContent || newContent === task.content) {
+        render();
+        return;
+      }
+
+      await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newContent })
+      });
+
+      task.content = newContent;
+      render();
+    }
+
+    // ── Inline Add (per-project) ────────────────────────────────────────────
+
+    function showInlineAdd(project) {
+      // Remove any existing inline add rows
+      document.querySelectorAll('.inline-add-row').forEach(el => el.remove());
+
+      const groupEl = document.querySelector(`[data-project-group="${CSS.escape(project)}"] .task-card`);
+      if (!groupEl) return;
+
+      const row = document.createElement('div');
+      row.className = 'inline-add-row';
+      row.innerHTML = `
+        <input type="text" class="inline-add-input" placeholder="Add task to ${escapeHtml(project || 'Uncategorized')}..." autofocus>
+        <button class="inline-add-btn" onclick="inlineAddTask('${escapeAttr(project)}')">Add</button>
+        <button class="inline-cancel-btn" onclick="this.closest('.inline-add-row').remove()">Cancel</button>
+      `;
+
+      // Insert at top of the card
+      groupEl.insertBefore(row, groupEl.firstChild);
+
+      const input = row.querySelector('input');
+      input.focus();
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') inlineAddTask(project);
+        if (e.key === 'Escape') row.remove();
+      };
+    }
+
+    async function inlineAddTask(project) {
+      const row = document.querySelector('.inline-add-row');
+      if (!row) return;
+
+      const input = row.querySelector('input');
+      const content = input.value.trim();
+      if (!content) { input.focus(); return; }
+
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content,
+          project: project || null,
+          sortOrder: tasks.filter(t => !t.parent_id && t.project === (project || null)).length
+        })
+      });
+
+      const task = await res.json();
+      tasks.push(task);
+      row.remove();
+      render();
+    }
+
+    // ── Core Actions ────────────────────────────────────────────────────────
 
     async function toggleTask(id) {
       const task = tasks.find(t => t.id === id);
@@ -548,8 +737,6 @@
     }
 
     async function deleteTask(id) {
-      if (!confirm('Delete this task?')) return;
-
       await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
       tasks = tasks.filter(t => t.id !== id && t.parent_id !== id);
       render();
@@ -562,6 +749,14 @@
       const parentEl = document.querySelector(`[data-task-id="${parentId}"]`);
       if (!parentEl) return;
 
+      // Find the last subtask of this parent to insert after it
+      const subtasks = document.querySelectorAll(`[data-task-id]`);
+      let insertAfter = parentEl;
+      subtasks.forEach(el => {
+        const t = tasks.find(t => t.id === el.dataset.taskId);
+        if (t && t.parent_id === parentId) insertAfter = el;
+      });
+
       const inputRow = document.createElement('div');
       inputRow.className = 'subtask-input-row';
       inputRow.innerHTML = `
@@ -569,7 +764,7 @@
         <button class="subtask-add-btn" onclick="addSubtask('${parentId}')">Add</button>
         <button class="subtask-cancel-btn" onclick="this.closest('.subtask-input-row').remove()">Cancel</button>
       `;
-      parentEl.insertAdjacentElement('afterend', inputRow);
+      insertAfter.insertAdjacentElement('afterend', inputRow);
 
       const input = inputRow.querySelector('input');
       input.focus();
@@ -619,7 +814,7 @@
         body: JSON.stringify({
           content,
           project: select.value || null,
-          sortOrder: tasks.length
+          sortOrder: tasks.filter(t => !t.parent_id).length
         })
       });
 
