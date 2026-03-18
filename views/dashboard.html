@@ -1141,6 +1141,7 @@
     <a href="/" class="nav-pill" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600;">Dashboard</a>
     <a href="/chat" class="nav-pill">Sessions</a>
     <a href="/tasks" class="nav-pill">Tasks</a>
+    <a href="/apps" class="nav-pill">Apps</a>
     <a href="/email-triage" class="nav-pill">Email</a>
     <a href="/calendar" class="nav-pill">Calendar</a>
     <a href="/briefings" class="nav-pill">AI Brief</a>
@@ -1228,6 +1229,26 @@
       const d = document.createElement("div");
       d.textContent = s;
       return d.innerHTML;
+    }
+
+    function renderCheckpointMarkdown(text) {
+      // Lightweight markdown for checkpoint questions
+      let html = esc(text);
+      // Convert literal \n to actual newlines (from JSON-escaped strings)
+      html = html.replace(/\\n/g, '\n');
+      // Bold: **text**
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      // Italic: *text* (but not inside bold)
+      html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+      // Inline code: `text`
+      html = html.replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:13px;">$1</code>');
+      // Numbered lists: lines starting with "1. ", "2. " etc
+      html = html.replace(/^(\d+)\.\s+(.+)$/gm, '<div style="padding-left:16px;">$1. $2</div>');
+      // Bullet lists: lines starting with "- "
+      html = html.replace(/^-\s+(.+)$/gm, '<div style="padding-left:16px;">&bull; $1</div>');
+      // Newlines to <br>
+      html = html.replace(/\n/g, '<br>');
+      return html;
     }
 
     async function handlePermission(sessionId, action, btn) {
@@ -1421,7 +1442,7 @@
         html += '    </div>';
 
         // Combined context + checkpoint text with expand option
-        html += '    <div id="ckpt-question-' + cp.id + '" style="font-size:14px;color:#1c1c1e;line-height:1.5;white-space:pre-wrap;max-height:' + (isQuestionExpanded ? 'none' : '300px') + ';overflow-y:auto;">' + esc(questionText) + '</div>';
+        html += '    <div id="ckpt-question-' + cp.id + '" style="font-size:14px;color:#1c1c1e;line-height:1.5;max-height:' + (isQuestionExpanded ? 'none' : '300px') + ';overflow-y:auto;">' + renderCheckpointMarkdown(questionText) + '</div>';
         if (isLongQuestion) {
           html += '    <button onclick="toggleQuestionExpand(\'' + cp.id + '\')" style="background:none;border:none;color:#007aff;font-size:13px;padding:4px 0;cursor:pointer;">' + (isQuestionExpanded ? 'Show Less' : 'Show Full Message') + '</button>';
         }
