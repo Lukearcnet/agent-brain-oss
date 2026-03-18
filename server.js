@@ -2875,7 +2875,7 @@ const pendingCheckpoints = new Map(); // id → { resolve, timeout }
 // Use ?blocking=false for Codex-style polling (returns immediately with checkpoint_id)
 // Default is blocking (Claude Code style - waits up to 4 hours)
 app.post("/api/checkpoints", async (req, res) => {
-  let { project_dir, question, options, session_label, provider, session_id } = req.body;
+  let { project_dir, question, options, session_label, provider, session_id, replaces } = req.body;
   const blocking = req.query.blocking !== "false"; // Default to blocking
 
   // Auto-resolve fields from session_id when possible (reduces LLM burden)
@@ -2970,8 +2970,54 @@ app.post("/api/checkpoints", async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
+  // Auto-dismiss old checkpoint if this is a repost
+  if (replaces) {
+    const { error: dismissErr } = await db.supabase
+      .from("session_checkpoints")
+      .update({ status: "superseded", responded_at: new Date().toISOString() })
+      .eq("id", replaces)
+      .eq("status", "pending");
+    if (!dismissErr) {
+      // Cancel any pending long-poll for the old checkpoint
+      const pending = pendingCheckpoints.get(replaces);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        pending.resolve({ status: "superseded", message: "Replaced by new checkpoint.", replaced_by: id });
+        pendingCheckpoints.delete(replaces);
+      }
+      console.log(`[checkpoint] Auto-superseded ${replaces} → ${id}`);
+    }
+  } else if (project_dir) {
+    // Even without explicit replaces, auto-supersede any other pending checkpoints
+    // from the same project+session to prevent clutter
+    const sessionFilter = session_id || (checkpointSession && checkpointSession.session_id);
+    if (sessionFilter) {
+      const { data: staleCheckpoints } = await db.supabase
+        .from("session_checkpoints")
+        .select("id")
+        .eq("status", "pending")
+        .eq("session_id", sessionFilter)
+        .neq("id", id);
+      if (staleCheckpoints && staleCheckpoints.length > 0) {
+        for (const stale of staleCheckpoints) {
+          await db.supabase
+            .from("session_checkpoints")
+            .update({ status: "superseded", responded_at: new Date().toISOString() })
+            .eq("id", stale.id);
+          const pending = pendingCheckpoints.get(stale.id);
+          if (pending) {
+            clearTimeout(pending.timeout);
+            pending.resolve({ status: "superseded", message: "Replaced by new checkpoint.", replaced_by: id });
+            pendingCheckpoints.delete(stale.id);
+          }
+          console.log(`[checkpoint] Auto-superseded stale ${stale.id} → ${id}`);
+        }
+      }
+    }
+  }
+
   // Log event
-  logEvent("checkpoint_created", null, { id, project_dir, question_length: question.length });
+  logEvent("checkpoint_created", null, { id, project_dir, question_length: question.length, replaces: replaces || null });
 
   if (checkpointSession.session_id) {
     const startup = await getSessionStartupContract(checkpointSession.session_id);

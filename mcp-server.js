@@ -159,12 +159,14 @@ async function main() {
       question: z.string().describe("The question or status to present to the user"),
       options: z.array(z.string()).optional().describe("Response options (e.g. ['Yes, proceed', 'Modify approach', 'Cancel'])"),
       session_id: z.string().optional().describe("Agent Brain session ID to attach this checkpoint to"),
+      replaces: z.string().optional().describe("ID of a previous checkpoint this one replaces (auto-dismisses the old one to prevent dashboard clutter)"),
     },
-    async ({ project, question, options, session_id }) => {
+    async ({ project, question, options, session_id, replaces }) => {
       try {
         const body = { project_dir: project, question };
         if (options) body.options = options;
         if (session_id) body.session_id = session_id;
+        if (replaces) body.replaces = replaces;
 
         const res = await request("POST", "/api/checkpoints", body);
         if (res.status !== 200 && res.status !== 201) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data)}`);
