@@ -1,6 +1,15 @@
-## Checkpoints (Claude Code Blocking Mode)
-Claude Code sessions can use the blocking checkpoint flow directly.
+## Checkpoints (Claude Code — MCP Preferred)
+Claude Code sessions should use the `agent_brain_checkpoint` MCP tool for checkpoints. This is auto-approved and doesn't require JSON escaping.
 
+**MCP (preferred):** Call `agent_brain_checkpoint` with:
+- `project`: your project key (e.g. `-Users-lukeblanton-myproject`)
+- `question`: your question or status update
+- `options`: array of response options (optional)
+- `session_id`: Agent Brain session ID if known (optional)
+
+The MCP tool blocks until the user responds or the checkpoint times out (4 hours).
+
+**Curl fallback** (if MCP tools are not available):
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \

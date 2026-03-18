@@ -9,7 +9,14 @@
     "generate": "bash instructions/generate.sh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["agent", "ai", "claude", "codex", "memory", "orchestration"],
+  "keywords": [
+    "agent",
+    "ai",
+    "claude",
+    "codex",
+    "memory",
+    "orchestration"
+  ],
   "author": "Luke Blanton",
   "license": "AGPL-3.0",
   "description": "Supervised agentic coding — persistent memory, cross-session communication, and mobile control for AI coding agents",
@@ -17,6 +24,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.63",
     "@anthropic-ai/sdk": "^0.78.0",
     "@google-cloud/pubsub": "^5.3.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@supabase/supabase-js": "^2.98.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",

@@ -2,13 +2,35 @@
 
 Every {{PROVIDER}} session is connected to Agent Brain (http://localhost:3030) for persistent memory and cross-session communication. This applies to ALL projects.
 
+## MCP Tools (Claude Code Only)
+Claude Code sessions have access to Agent Brain MCP tools (`agent_brain_*`) that replace the curl commands below. **If MCP tools are available, prefer them over curl** — they're typed, auto-approved, and don't require manual JSON escaping.
+
+Available MCP tools:
+- `agent_brain_memory_read` — Read project memory (params: `project`, optional `sections` or `task`)
+- `agent_brain_memory_write` — Write project memory (params: `project`, `content`)
+- `agent_brain_memory_sections` — List available memory sections (params: `project`)
+- `agent_brain_daily_log` — Append daily log entry (params: `project`, `content`)
+- `agent_brain_checkpoint` — Post checkpoint to user's phone (params: `project`, `question`, optional `options`, `session_id`)
+- `agent_brain_mailbox_check` — Check for unread messages (params: `project`)
+- `agent_brain_mailbox_send` — Send cross-session message (params: `from_session`, `to_session`, `subject`, `body`)
+- `agent_brain_mailbox_mark_read` — Mark message as read (params: `message_id`)
+- `agent_brain_contacts_search` — Search contacts (params: optional `query`, `limit`)
+- `agent_brain_calendar_agenda` — Get upcoming events (params: optional `days`)
+- `agent_brain_email_triage` — Get emails needing attention (params: optional `account`, `since`)
+- `agent_brain_ai_assistant` — Draft emails/events with AI (params: `prompt`)
+- `agent_brain_health` — Check if Agent Brain is running
+
+The project key for MCP tools is the same as for curl: your working directory with `/` replaced by `-` (e.g. `-Users-lukeblanton-myproject`).
+
+**Codex sessions** do not support MCP — use the curl commands below instead.
+
 ## At Session Start
 Determine your project key from the current working directory (replace `/` with `-`):
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 ```
 
-Then load context from previous sessions:
+Then load context from previous sessions. **Claude Code with MCP:** use `agent_brain_memory_read`, `agent_brain_mailbox_check`. **Codex or curl fallback:**
 ```bash
 # 1. Read project memory (may be empty for new projects — that's fine)
 curl -s http://localhost:3030/api/memory/$PROJECT_KEY
@@ -25,7 +47,7 @@ curl -s -X POST http://localhost:3030/api/mailbox/<message_id>/read
 ```
 
 ## Before Session End or Context Compaction
-Always save your progress so the next session picks up where you left off:
+Always save your progress so the next session picks up where you left off. **Claude Code with MCP:** use `agent_brain_memory_write` and `agent_brain_daily_log`. **Codex or curl fallback:**
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 
@@ -41,7 +63,7 @@ curl -s -X POST http://localhost:3030/api/memory/$PROJECT_KEY/daily \
 ```
 
 ## Cross-Session Communication
-Send messages to other sessions or leave notes for yourself:
+Send messages to other sessions or leave notes for yourself. **Claude Code with MCP:** use `agent_brain_mailbox_send`. **Codex or curl fallback:**
 ```bash
 # Broadcast (all sessions see it)
 curl -s -X POST http://localhost:3030/api/mailbox \
@@ -58,8 +80,8 @@ curl -s -X POST http://localhost:3030/api/mailbox \
 When you need user input before proceeding (plan approval, design decisions, clarifying questions), use the checkpoint system instead of just printing a question and waiting. This lets the user respond from their phone even when away from the computer.
 
 Use the provider-specific checkpoint flow documented later in these instructions:
-- `Claude Code` sessions use a blocking checkpoint command.
-- `Codex` sessions use the `ab-checkpoint` wrapper with Agent Brain holding the long wait state.
+- `Claude Code` sessions: use the `agent_brain_checkpoint` MCP tool (preferred) or the blocking curl command.
+- `Codex` sessions: use the `ab-checkpoint` wrapper with Agent Brain holding the long wait state.
 
 In both cases, checkpoint responses contain:
 - `status`: `"pending"`, `"responded"`, or `"timeout"`
@@ -153,7 +175,9 @@ Include the following in your "task complete" checkpoint message:
 - For iOS/Swift projects: use `xcodebuild -scheme <scheme> build` instead of node checks
 
 ## Memory Sections (Optimization)
-When reading project memory, you can request only the sections you need to reduce context size:
+When reading project memory, you can request only the sections you need to reduce context size.
+
+**Claude Code with MCP:** use `agent_brain_memory_read` with optional `sections` or `task` params, or `agent_brain_memory_sections` to list available sections. **Codex or curl fallback:**
 
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')

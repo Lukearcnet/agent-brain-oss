@@ -638,7 +638,9 @@ function appendSessionBindingInstructions(briefing, { sessionId, provider, sessi
     ? `export AB_SESSION_ID="${sessionId}"
 CHECKPOINT_ID=$(ab-checkpoint ask "Your question" "Option 1" "Option 2")
 ab-checkpoint wait-once "$CHECKPOINT_ID"`
-    : `curl -s -X POST http://localhost:3030/api/checkpoints \\
+    : `# Preferred: use agent_brain_checkpoint MCP tool with session_id: "${sessionId}"
+# Fallback curl:
+curl -s -X POST http://localhost:3030/api/checkpoints \\
   -H "Content-Type: application/json" \\
   -d '{"project_dir":"'$PROJECT_KEY'","session_id":"${sessionId}","question":"Your question","options":["Option 1","Option 2"]}'`;
 
@@ -885,6 +887,9 @@ function checkToolPolicy(toolName, toolInput) {
     const filePath = toolInput.file_path || toolInput.command || "";
     if (HOOK_WHITELIST_PATHS.some(p => filePath.includes(p))) return "auto";
   }
+
+  // Auto-approve Agent Brain MCP tools (mcp__agent-brain__*)
+  if (toolName.startsWith("mcp__agent-brain__")) return "auto";
 
   const tier = aa.tools[toolName];
   if (!tier || tier === "ask") return "ask";
@@ -1593,13 +1598,18 @@ You are connected to Agent Brain (http://localhost:3030). At session start:
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 \`\`\`
 
-2. Load project memory and check mailbox:
+2. Load project memory and check mailbox — use MCP tools if available:
+   - \`agent_brain_memory_read\` (project: $PROJECT_KEY)
+   - \`agent_brain_mailbox_check\` (project: $PROJECT_KEY)
+   Or via curl:
 \`\`\`bash
 curl -s http://localhost:3030/api/memory/$PROJECT_KEY | jq -r '.content // "No prior memory."'
 curl -s "http://localhost:3030/api/mailbox/$PROJECT_KEY?unread=true" | jq '.'
 \`\`\`
 
 3. When you need user input, use checkpoints (blocks up to 4 hours):
+   - **Preferred:** \`agent_brain_checkpoint\` MCP tool (project: $PROJECT_KEY, question: "...", options: [...])
+   - **Fallback:** curl:
 \`\`\`bash
 RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \\
   -H "Content-Type: application/json" \\
@@ -1607,14 +1617,14 @@ RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoint
 echo "$RESPONSE"
 \`\`\`
 
-4. Before ending, save memory:
+4. Before ending, save memory — \`agent_brain_memory_write\` MCP tool or curl:
 \`\`\`bash
 curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
   -H "Content-Type: application/json" \\
   -d '{"content": "<summary of work done>"}'
 \`\`\`
 
-**Important:** Always post a checkpoint asking what's next instead of going idle after completing a task.
+**Important:** Always post a checkpoint asking what's next instead of going idle after completing a task. Prefer MCP tools over curl when available.
 `;
 
     briefing = appendSessionBindingInstructions(briefing, {
@@ -5760,6 +5770,97 @@ app.post("/api/locks/force-release/:lockId", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Apps Registry ────────────────────────────────────────────────────────────
+
+const APPS_FILE = path.join(__dirname, "apps.json");
+
+function loadApps() {
+  try {
+    if (fs.existsSync(APPS_FILE)) return JSON.parse(fs.readFileSync(APPS_FILE, "utf8"));
+  } catch (e) { /* ignore */ }
+  return [];
+}
+
+function saveApps(apps) {
+  fs.writeFileSync(APPS_FILE, JSON.stringify(apps, null, 2));
+}
+
+// List all apps
+app.get("/api/apps", (_req, res) => {
+  const apps = loadApps();
+  // Enrich with project data from projects.json
+  let projects = {};
+  try { projects = JSON.parse(fs.readFileSync(path.join(__dirname, "projects.json"), "utf8")); } catch(e) {}
+  for (const app of apps) {
+    // Check if any project points to this app
+    for (const [key, proj] of Object.entries(projects)) {
+      if (proj.name === app.name || (app.project_key && proj.dir === app.project_key)) {
+        app.project_key = proj.dir;
+        app.repo_url = app.repo_url || proj.repo_url;
+        break;
+      }
+    }
+  }
+  res.json(apps);
+});
+
+// Health check all apps
+app.get("/api/apps/health", async (_req, res) => {
+  const apps = loadApps();
+  const results = {};
+  const checks = apps.map(async (app) => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const r = await fetch(app.url, { signal: controller.signal, method: "HEAD" });
+      clearTimeout(timeout);
+      results[app.id] = r.ok || r.status < 500;
+    } catch (e) {
+      results[app.id] = false;
+    }
+  });
+  await Promise.all(checks);
+  res.json(results);
+});
+
+// Add new app
+app.post("/api/apps", (req, res) => {
+  const apps = loadApps();
+  const { name, url, description, icon, color } = req.body;
+  if (!name || !url) return res.status(400).json({ error: "name and url required" });
+  const app = {
+    id: "app-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+    name, url, description: description || "", icon: icon || "", color: color || "#6366f1",
+    created: new Date().toISOString()
+  };
+  apps.push(app);
+  saveApps(apps);
+  res.json(app);
+});
+
+// Update app
+app.put("/api/apps/:id", (req, res) => {
+  const apps = loadApps();
+  const idx = apps.findIndex(a => a.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "not found" });
+  const { name, url, description, icon, color } = req.body;
+  if (name) apps[idx].name = name;
+  if (url) apps[idx].url = url;
+  if (description !== undefined) apps[idx].description = description;
+  if (icon !== undefined) apps[idx].icon = icon;
+  if (color !== undefined) apps[idx].color = color;
+  saveApps(apps);
+  res.json(apps[idx]);
+});
+
+// Delete app
+app.delete("/api/apps/:id", (req, res) => {
+  let apps = loadApps();
+  apps = apps.filter(a => a.id !== req.params.id);
+  saveApps(apps);
+  res.json({ ok: true });
+});
+
 // ── HTML templates (read fresh on each request for live editing) ─────────────
 
 function readView(name) {
@@ -5792,6 +5893,7 @@ app.get("/briefings", (_req, res) => res.type("html").send(readView("briefings.h
 app.get("/tasks", (_req, res) => res.type("html").send(readView("tasks.html")));
 app.get("/system", (_req, res) => res.type("html").send(readView("system.html")));
 app.get("/maintenance", (_req, res) => res.type("html").send(readView("maintenance.html")));
+app.get("/apps", (_req, res) => res.type("html").send(readView("apps.html")));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
