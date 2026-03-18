@@ -1439,6 +1439,9 @@
         if (cp.rename_safe && cp.resolved_session_id) {
           html += '      <button style="border:none;background:#eef2ff;color:#4338ca;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;cursor:pointer;" onclick="renameCheckpointSession(\'' + esc(cp.resolved_session_id).replace(/'/g, "\\'") + '\', \'' + esc(cp.resolved_session_raw_title || cp.resolved_session_title || "").replace(/'/g, "\\'") + '\', this)">Rename</button>';
         }
+        if (cp.resolved_session_id) {
+          html += '      <a href="/chat/' + esc(cp.resolved_session_id) + '" style="border:none;background:#f0fdf4;color:#16a34a;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;text-decoration:none;display:inline-block;" title="View session chat">Chat</a>';
+        }
         html += '    </div>';
 
         // Combined context + checkpoint text with expand option

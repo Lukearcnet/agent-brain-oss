@@ -137,8 +137,27 @@ function getProjectName(projectDir) {
   for (const [dir, name] of Object.entries(PROJECT_NAMES)) {
     if (projectDir.includes(dir.replace(/-/g, "-"))) return name;
   }
-  // Fallback: use last path segment, prettified
-  const parts = projectDir.replace(/^-/, "").split("-");
+  // Also check with filesystem path format (Codex stores /Users/... not -Users-...)
+  const encodedDir = projectDir.replace(/\//g, "-");
+  if (PROJECT_NAMES[encodedDir]) return PROJECT_NAMES[encodedDir];
+  for (const [dir, name] of Object.entries(PROJECT_NAMES)) {
+    if (encodedDir.includes(dir)) return name;
+  }
+  // Fallback: extract directory name from path (handle both / and - encoded separators)
+  const isFilesystemPath = projectDir.includes("/");
+  if (isFilesystemPath) {
+    const dirName = projectDir.replace(/\/+$/, "").split("/").pop() || projectDir;
+    return dirName.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  }
+  // Encoded path: -Users-lukeblanton-project-name → extract after last known prefix
+  // Find the home directory portion and take everything after it
+  const decoded = projectDir.replace(/^-/, "");
+  const homeMatch = decoded.match(/^Users-[^-]+-(.+)$/i);
+  if (homeMatch) {
+    // "tatanka-ios" or "agent-brain" → prettify with title case
+    return homeMatch[1].split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  }
+  const parts = decoded.split("-");
   const last = parts[parts.length - 1];
   return last.charAt(0).toUpperCase() + last.slice(1);
 }
