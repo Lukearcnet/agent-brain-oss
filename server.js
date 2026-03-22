@@ -1113,8 +1113,79 @@ function listClaudeCodeSessions() {
   return results.slice(0, 50); // Cap at 50
 }
 
-function readClaudeCodeSession(projectDir, sessionId) {
+// ── JSONL continuation detection ─────────────────────────────────────────────
+// When Claude Code compacts context, it creates a new JSONL file with a new UUID.
+// The old file stays but becomes stale. We detect the newest JSONL and resolve to it.
+
+// Cache: projectDir:sessionId -> { uuid, resolvedAt }
+const jsonlResolutionCache = new Map();
+const JSONL_CACHE_TTL = 30000; // 30 seconds
+
+function detectContinuationJSONL(projectDir, oldSessionId) {
+  // Check cache first
+  const cacheKey = projectDir + ":" + oldSessionId;
+  const cached = jsonlResolutionCache.get(cacheKey);
+  if (cached && Date.now() - cached.resolvedAt < JSONL_CACHE_TTL) {
+    return cached.uuid;
+  }
+
+  const dirPath = path.join(CLAUDE_SESSIONS_DIR, projectDir);
+  if (!fs.existsSync(dirPath)) return null;
+
+  // Get the mtime of the old JSONL (if it exists) to compare
+  const oldPath = path.join(CLAUDE_SESSIONS_DIR, projectDir, oldSessionId + ".jsonl");
+  let oldMtime = 0;
+  try { oldMtime = fs.statSync(oldPath).mtimeMs; } catch (_) {}
+
+  try {
+    const files = fs.readdirSync(dirPath)
+      .filter(f => f.endsWith(".jsonl") && f !== oldSessionId + ".jsonl");
+
+    if (files.length === 0) return null;
+
+    // Find the most recently modified JSONL that's newer than the old one
+    const withStats = files.map(f => {
+      const fp = path.join(dirPath, f);
+      try { return { file: f, mtime: fs.statSync(fp).mtimeMs }; }
+      catch (_) { return null; }
+    }).filter(Boolean).sort((a, b) => b.mtime - a.mtime);
+
+    // Use the most recently modified JSONL if it's newer than the stored one
+    if (withStats.length > 0 && withStats[0].mtime > oldMtime) {
+      const newUuid = withStats[0].file.replace(".jsonl", "");
+      jsonlResolutionCache.set(cacheKey, { uuid: newUuid, resolvedAt: Date.now() });
+      console.log(`[jsonl-detect] Continuation found: ${oldSessionId.slice(0,8)}.. → ${newUuid.slice(0,8)}..`);
+      return newUuid;
+    }
+  } catch (e) {
+    console.error("[jsonl-detect] Error scanning for continuations:", e.message);
+  }
+  return null;
+}
+
+function resolveJSONLSessionId(projectDir, sessionId) {
   const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, sessionId + ".jsonl");
+
+  if (fs.existsSync(filePath)) {
+    // File exists — but is it stale? If it hasn't been modified in 30+ minutes,
+    // check if there's a newer JSONL that might be a continuation.
+    try {
+      const stat = fs.statSync(filePath);
+      const ageMs = Date.now() - stat.mtimeMs;
+      if (ageMs > 1800000) { // 30 minutes
+        const continuation = detectContinuationJSONL(projectDir, sessionId);
+        if (continuation) return continuation;
+      }
+    } catch (_) {}
+    return sessionId;
+  }
+  // Stored JSONL missing — look for continuation
+  return detectContinuationJSONL(projectDir, sessionId) || sessionId;
+}
+
+function readClaudeCodeSession(projectDir, sessionId) {
+  const resolvedId = resolveJSONLSessionId(projectDir, sessionId);
+  const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, resolvedId + ".jsonl");
   if (!fs.existsSync(filePath)) return null;
   const content = fs.readFileSync(filePath, "utf8");
   const lines = content.trim().split("\n");
@@ -1122,10 +1193,24 @@ function readClaudeCodeSession(projectDir, sessionId) {
   for (const line of lines) {
     try {
       const obj = JSON.parse(line);
+      const ts = obj.timestamp || null;
       if (obj.type === "user" && obj.message) {
         const txt = typeof obj.message.content === "string" ? obj.message.content : "";
         if (txt && !obj.toolUseResult) {
-          messages.push({ role: "user", content: txt });
+          // Filter out system noise that isn't actual user-typed content
+          if (txt.startsWith("<task-notification>")) continue;
+          if (txt.startsWith("<system-reminder>")) continue;
+          if (txt.startsWith("<available-deferred-tools>")) continue;
+          // Collapse long system-like messages (handoff briefings, context summaries)
+          if (txt.startsWith("# Session Handoff Briefing")) {
+            messages.push({ role: "system_context", content: "Session Handoff Briefing", timestamp: ts });
+            continue;
+          }
+          if (txt.startsWith("This session is being continued")) {
+            messages.push({ role: "system_context", content: "Context restored from previous conversation", timestamp: ts });
+            continue;
+          }
+          messages.push({ role: "user", content: txt, timestamp: ts });
         }
       } else if (obj.type === "assistant" && obj.message) {
         const contentBlocks = obj.message.content || [];
@@ -1138,10 +1223,10 @@ function readClaudeCodeSession(projectDir, sessionId) {
           }
         }
         if (toolCalls.length > 0) {
-          messages.push({ role: "tool_use", tools: toolCalls });
+          messages.push({ role: "tool_use", tools: toolCalls, timestamp: ts });
         }
         if (text.trim()) {
-          messages.push({ role: "assistant", content: text });
+          messages.push({ role: "assistant", content: text, timestamp: ts });
         }
       } else if (obj.type === "user" && obj.toolUseResult) {
         // Tool result — skip for display (too noisy)
@@ -1167,7 +1252,8 @@ function injectIntoClaudeDesktop(message) {
 
 // Check if a CC session has a pending permission prompt
 function checkPendingPermission(projectDir, sessionId) {
-  const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, sessionId + ".jsonl");
+  const resolvedId = resolveJSONLSessionId(projectDir, sessionId);
+  const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, resolvedId + ".jsonl");
   if (!fs.existsSync(filePath)) return null;
 
   const stat = fs.statSync(filePath);
@@ -1253,7 +1339,8 @@ function checkPendingPermission(projectDir, sessionId) {
 
 // Get full session state: needs_attention / active / idle
 function getSessionState(projectDir, sessionId) {
-  const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, sessionId + ".jsonl");
+  const resolvedId = resolveJSONLSessionId(projectDir, sessionId);
+  const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, resolvedId + ".jsonl");
   if (!fs.existsSync(filePath)) return { status: "idle", permission: null, current_tool: null, last_activity: null };
 
   const stat = fs.statSync(filePath);
@@ -1443,8 +1530,51 @@ app.get("/api/sessions/:id", async (req, res) => {
 
   // If this is a linked CC session, read messages live from JSONL
   if (session.cc_project_dir && session.claude_session_id) {
+    // Check if JSONL has been continued (context compaction creates new file)
+    const resolvedId = resolveJSONLSessionId(session.cc_project_dir, session.claude_session_id);
+    if (resolvedId !== session.claude_session_id) {
+      console.log(`[session] Updating claude_session_id for ${session.session_id}: ${session.claude_session_id.slice(0,8)}.. → ${resolvedId.slice(0,8)}..`);
+      session.claude_session_id = resolvedId;
+      saveSession(session).catch(e => console.error("[session] Failed to persist updated claude_session_id:", e.message));
+    }
     const liveMessages = readClaudeCodeSession(session.cc_project_dir, session.claude_session_id);
-    if (liveMessages) session.messages = liveMessages;
+    if (liveMessages) {
+      // Interleave checkpoint responses from Supabase (user's phone replies)
+      try {
+        const { data: checkpoints } = await db.supabase
+          .from("session_checkpoints")
+          .select("question, response, responded_at, created_at")
+          .eq("session_id", session.session_id)
+          .eq("status", "responded")
+          .order("responded_at", { ascending: true });
+
+        if (checkpoints && checkpoints.length > 0) {
+          // Add checkpoint Q&A as messages with timestamps
+          for (const cp of checkpoints) {
+            liveMessages.push({
+              role: "checkpoint_question",
+              content: cp.question,
+              timestamp: cp.created_at
+            });
+            liveMessages.push({
+              role: "checkpoint_response",
+              content: cp.response,
+              timestamp: cp.responded_at
+            });
+          }
+          // Sort all messages by timestamp (messages without timestamps stay in original order)
+          const withTs = liveMessages.filter(m => m.timestamp);
+          const withoutTs = liveMessages.filter(m => !m.timestamp);
+          withTs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+          session.messages = [...withoutTs, ...withTs];
+        } else {
+          session.messages = liveMessages;
+        }
+      } catch (e) {
+        console.error("[chat] Failed to load checkpoint responses:", e.message);
+        session.messages = liveMessages;
+      }
+    }
   }
   // If this is a Codex session, read messages from Codex SQLite
   else if (session.provider === "codex" && session.codex_session_id) {

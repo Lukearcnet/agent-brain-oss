@@ -535,6 +535,43 @@ Start by loading memory for this project now.`;
       return div.innerHTML;
     }
 
+    function addSystemContext(text) {
+      const div = document.createElement("div");
+      div.style.cssText = "text-align:center;font-size:12px;color:#8e8e93;padding:8px 16px;font-style:italic;";
+      div.textContent = text;
+      messagesEl.appendChild(div);
+    }
+
+    function addCheckpointQuestion(text) {
+      const div = document.createElement("div");
+      div.className = "msg assistant";
+      div.style.cssText += ";border-left:3px solid #ff9f0a;padding-left:12px;";
+      const label = document.createElement("div");
+      label.style.cssText = "font-size:11px;color:#ff9f0a;font-weight:600;margin-bottom:4px;";
+      label.textContent = "📋 Checkpoint";
+      div.appendChild(label);
+      const content = document.createElement("div");
+      content.innerHTML = simpleMd(text);
+      div.appendChild(content);
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    function addCheckpointResponse(text) {
+      const div = document.createElement("div");
+      div.className = "msg user";
+      div.style.cssText += ";border-left:3px solid #30d158;padding-left:12px;";
+      const label = document.createElement("div");
+      label.style.cssText = "font-size:11px;color:#30d158;font-weight:600;margin-bottom:4px;";
+      label.textContent = "📱 Response from phone";
+      div.appendChild(label);
+      const content = document.createElement("div");
+      content.textContent = text;
+      div.appendChild(content);
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    }
+
     function addUserMsg(text) {
       const div = document.createElement("div");
       div.className = "msg user";
@@ -614,7 +651,13 @@ Start by loading memory for this project now.`;
 
       for (const m of messages) {
         if (m.role === "system") continue;
-        if (m.role === "user") {
+        if (m.role === "system_context") {
+          addSystemContext(m.content);
+        } else if (m.role === "checkpoint_question") {
+          addCheckpointQuestion(m.content);
+        } else if (m.role === "checkpoint_response") {
+          addCheckpointResponse(m.content);
+        } else if (m.role === "user") {
           addUserMsg(m.content);
         } else if (m.role === "tool_use") {
           // Claude Code tool use blocks
@@ -964,6 +1007,8 @@ Start by loading memory for this project now.`;
         for (const m of (data.messages || [])) {
           if (m.role === "system") continue;
           if (m.role === "user") text += "You: " + m.content + "\n\n";
+          else if (m.role === "checkpoint_question") text += "Agent (checkpoint): " + m.content + "\n\n";
+          else if (m.role === "checkpoint_response") text += "You (phone): " + m.content + "\n\n";
           else if (m.role === "assistant" && m.content) text += "Agent: " + m.content + "\n\n";
         }
         const str = text.trim();
