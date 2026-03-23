@@ -1898,44 +1898,49 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
 });
 
 app.patch("/api/sessions/:id", async (req, res) => {
-  const session = await loadSession(req.params.id);
-  if (!session) return res.status(404).json({ error: "Session not found" });
-  if (req.body.title !== undefined) {
-    const nextTitle = String(req.body.title || "").trim();
-    if (!nextTitle) return res.status(400).json({ error: "title is required" });
-    session.title = nextTitle;
+  try {
+    const session = await loadSession(req.params.id);
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    if (req.body.title !== undefined) {
+      const nextTitle = String(req.body.title || "").trim();
+      if (!nextTitle) return res.status(400).json({ error: "title is required" });
+      session.title = nextTitle;
+    }
+    await saveSession(session);
+
+    const displayTitle = getSessionDisplayTitle(session);
+
+    try {
+      await db.supabase
+        .from("session_checkpoints")
+        .update({ session_title: displayTitle })
+        .eq("session_id", session.session_id)
+        .eq("status", "pending");
+    } catch (_) {}
+
+    try {
+      await db.supabase
+        .from("file_locks")
+        .update({ session_title: displayTitle })
+        .eq("session_id", session.session_id)
+        .eq("status", "active");
+    } catch (_) {}
+
+    logEvent("session_renamed", session.session_id, {
+      raw_title: session.title,
+      display_title: displayTitle
+    }).catch(() => {});
+
+    res.json({
+      ok: true,
+      session_id: session.session_id,
+      raw_title: session.title,
+      title: displayTitle
+    });
+  } catch (err) {
+    console.error("[api] PATCH /api/sessions/:id error:", err.message);
+    res.status(500).json({ error: err.message || "Rename failed" });
   }
-  await saveSession(session);
-
-  const displayTitle = getSessionDisplayTitle(session);
-
-  try {
-    await db.supabase
-      .from("session_checkpoints")
-      .update({ session_title: displayTitle })
-      .eq("session_id", session.session_id)
-      .eq("status", "pending");
-  } catch (_) {}
-
-  try {
-    await db.supabase
-      .from("file_locks")
-      .update({ session_title: displayTitle })
-      .eq("session_id", session.session_id)
-      .eq("status", "active");
-  } catch (_) {}
-
-  logEvent("session_renamed", session.session_id, {
-    raw_title: session.title,
-    display_title: displayTitle
-  }).catch(() => {});
-
-  res.json({
-    ok: true,
-    session_id: session.session_id,
-    raw_title: session.title,
-    title: displayTitle
-  });
 });
 
 app.post("/api/sessions/:id/archive", async (req, res) => {
