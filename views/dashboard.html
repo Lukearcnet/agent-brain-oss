@@ -1148,6 +1148,14 @@
     <a href="/orchestrator" class="nav-pill">Orchestrator</a>
   </div>
 
+  <div id="setup-banner" style="display:none;padding:12px 16px;margin:8px 16px;background:linear-gradient(135deg,#f59e0b22,#f59e0b11);border:1px solid #f59e0b44;border-radius:12px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span style="font-size:16px;">⚠️</span>
+      <strong style="color:#f59e0b;font-size:14px;">Setup Incomplete</strong>
+    </div>
+    <div id="setup-issues" style="font-size:13px;color:#a3a3a3;line-height:1.6;"></div>
+  </div>
+
   <div id="morning-refresh-section" style="padding:0 16px;"></div>
 
   <div id="dashboard"></div>
@@ -1209,6 +1217,26 @@
   </div>
 
   <script>
+    // Check setup completeness on load
+    (async () => {
+      try {
+        const resp = await fetch("/api/health");
+        const health = await resp.json();
+        if (health.setup) {
+          const issues = [];
+          if (health.setup.migrations === "missing") issues.push("Database migrations not run — restart the server to apply");
+          if (health.setup.projects === "missing") issues.push("projects.json missing — run <code>npm run setup</code> or create manually");
+          if (health.setup.projects === "empty") issues.push("projects.json is empty — add your projects to see sessions");
+          if (health.setup.hooks === "not_configured") issues.push("Claude Code hooks not installed — run <code>npm run setup</code> (Step 6)");
+          if (health.setup.instructions === "missing") issues.push("CLAUDE.md not generated — run <code>npm run generate</code>");
+          if (issues.length > 0) {
+            document.getElementById("setup-issues").innerHTML = issues.map(i => "• " + i).join("<br>");
+            document.getElementById("setup-banner").style.display = "block";
+          }
+        }
+      } catch (_) {}
+    })();
+
     const cooldowns = {};
     let lastData = null;
 

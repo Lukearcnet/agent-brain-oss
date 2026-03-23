@@ -1509,6 +1509,54 @@ app.get("/api/health", async (_req, res) => {
     status.status = "degraded";
   }
 
+  // Setup completeness checks (for dashboard banner)
+  const setup = {};
+
+  // Check migrations
+  try {
+    const { data } = await db.supabase.from("schema_migrations").select("filename").limit(1);
+    setup.migrations = data ? "ok" : "missing";
+  } catch {
+    setup.migrations = "missing";
+  }
+
+  // Check projects.json
+  try {
+    const projects = require("./projects.json");
+    const projectCount = Object.keys(projects).length;
+    setup.projects = projectCount > 0 ? "ok" : "empty";
+  } catch {
+    setup.projects = "missing";
+  }
+
+  // Check Claude Code hooks
+  try {
+    const settingsPath = path.join(process.env.HOME || "", ".claude", "settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+      const hooks = settings.hooks || {};
+      setup.hooks = (hooks.PermissionRequest || hooks.PreToolUse) ? "ok" : "not_configured";
+    } else {
+      setup.hooks = "not_configured";
+    }
+  } catch {
+    setup.hooks = "not_configured";
+  }
+
+  // Check CLAUDE.md exists globally
+  try {
+    const claudeMdPath = path.join(process.env.HOME || "", ".claude", "CLAUDE.md");
+    setup.instructions = fs.existsSync(claudeMdPath) ? "ok" : "missing";
+  } catch {
+    setup.instructions = "missing";
+  }
+
+  status.setup = setup;
+  const setupIssues = Object.values(setup).filter(v => v !== "ok");
+  if (setupIssues.length > 0 && status.status === "ok") {
+    status.status = "setup_incomplete";
+  }
+
   res.json(status);
 });
 

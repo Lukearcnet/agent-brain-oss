@@ -33,13 +33,38 @@ if [ "${SKIP_ENV:-}" != "true" ]; then
   echo "── Step 1: Environment Configuration ──────────"
   echo ""
   echo "You'll need a Supabase project. Create one free at: https://supabase.com"
-  echo "Find your keys at: Settings → API Keys"
-  echo "  (Use the Secret key — starts with sb_secret_ — or legacy service_role key)"
+  echo ""
+  echo "  Where to find your credentials in Supabase Dashboard:"
+  echo "    1. Go to Settings → API"
+  echo "    2. Project URL: copy the URL at the top (https://xxxxx.supabase.co)"
+  echo "    3. Service Role Key: under 'Project API keys', click Reveal on 'service_role'"
+  echo "       (This is a long JWT starting with 'eyJ...' — copy the FULL key)"
+  echo "       ⚠ Do NOT use the 'anon' key — it won't have write permissions"
   echo ""
 
   read -p "  Supabase URL (https://xxx.supabase.co): " SUPABASE_URL
-  read -p "  Supabase Secret Key (sb_secret_... or service_role key): " SUPABASE_KEY
+  read -p "  Supabase Secret Key: " SUPABASE_KEY
   echo ""
+
+  # Validate Supabase URL format
+  if ! echo "$SUPABASE_URL" | grep -qE '^https://[a-zA-Z0-9_-]+\.supabase\.co/?$'; then
+    echo "  ⚠ URL doesn't look like a standard Supabase URL (expected https://xxx.supabase.co)"
+    echo "    Make sure you copied the full Project URL from Settings → API"
+    echo ""
+  fi
+
+  # Validate Supabase key format and length
+  KEY_LEN=${#SUPABASE_KEY}
+  if [ "$KEY_LEN" -lt 100 ]; then
+    echo "  ⚠ Key looks too short ($KEY_LEN chars). Supabase service_role keys are usually 200+ characters."
+    echo "    Make sure you copied the FULL key from Settings → API → service_role (not the anon key)."
+    echo "    The key should start with 'eyJ' (it's a JWT token)."
+    echo ""
+  elif ! echo "$SUPABASE_KEY" | grep -qE '^eyJ'; then
+    echo "  ⚠ Key doesn't start with 'eyJ' — make sure this is the service_role key, not the anon key."
+    echo "    Find it at: Settings → API → service_role (click 'Reveal' to see the full key)"
+    echo ""
+  fi
 
   echo "  Optional (press Enter to skip):"
   read -p "  Anthropic API Key (for AI features): " ANTHROPIC_KEY
@@ -63,6 +88,9 @@ AUTH_ENCRYPTION_KEY=$AUTH_KEY
 # ── Optional ──────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY=${ANTHROPIC_KEY:-}
 NTFY_TOPIC=${NTFY_TOPIC:-}
+
+# Agent Brain URL (auto-detected; change if using a custom domain)
+AB_URL=http://localhost:3030
 
 # Uncomment and fill in for additional features:
 # GMAIL_CLIENT_ID=
@@ -139,17 +167,47 @@ set +a
 
 if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
   echo "  Testing Supabase connection..."
+
+  # Test 1: Basic connectivity (GET)
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
     "$SUPABASE_URL/rest/v1/" \
     -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
     -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" 2>/dev/null || echo "000")
 
   if [ "$HTTP_CODE" = "200" ]; then
-    echo "✓ Supabase connection successful"
+    echo "  ✓ Supabase API reachable"
+  elif [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+    echo "  ✗ Authentication failed (HTTP $HTTP_CODE)"
+    echo "    Your API key was rejected. Make sure you're using the service_role key (not anon key)."
+    echo "    Find it at: Supabase Dashboard → Settings → API → service_role → Reveal"
+  elif [ "$HTTP_CODE" = "000" ]; then
+    echo "  ✗ Could not reach Supabase at $SUPABASE_URL"
+    echo "    Check your SUPABASE_URL — it should be https://xxxxx.supabase.co"
   else
-    echo "⚠ Supabase connection returned HTTP $HTTP_CODE"
-    echo "  Check your SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env"
+    echo "  ⚠ Supabase returned HTTP $HTTP_CODE"
+    echo "    Check your SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env"
   fi
+
+  # Test 2: Write capability (POST to RPC — tests service_role permissions)
+  if [ "$HTTP_CODE" = "200" ]; then
+    WRITE_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+      "$SUPABASE_URL/rest/v1/rpc/exec_sql" \
+      -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+      -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"query":"SELECT 1"}' 2>/dev/null || echo "000")
+
+    if [ "$WRITE_CODE" = "200" ] || [ "$WRITE_CODE" = "204" ]; then
+      echo "  ✓ Database RPC working (migrations will run automatically)"
+    elif [ "$WRITE_CODE" = "404" ]; then
+      echo "  ⚠ exec_sql RPC not found — you'll need to run bootstrap SQL on first start"
+      echo "    The server will show instructions if needed."
+    else
+      echo "  ⚠ Database RPC returned HTTP $WRITE_CODE (may need bootstrap SQL)"
+    fi
+  fi
+
+  echo ""
 else
   echo "⚠ Supabase credentials not set — skipping connection test"
 fi
@@ -336,6 +394,11 @@ if command -v tailscale &>/dev/null; then
   TS_IP=$(tailscale ip -4 2>/dev/null || echo "")
   if [ -n "$TS_IP" ]; then
     echo "✓ Tailscale connected — access from anywhere: http://$TS_IP:3030"
+    # Update AB_URL in .env so generated instructions use the Tailscale IP
+    if grep -q '^AB_URL=' .env 2>/dev/null; then
+      sed -i.bak "s|^AB_URL=.*|AB_URL=http://$TS_IP:3030|" .env && rm -f .env.bak
+      echo "  Updated AB_URL in .env to http://$TS_IP:3030"
+    fi
   else
     echo "✓ Tailscale installed but not connected"
     echo "  Run: tailscale up"

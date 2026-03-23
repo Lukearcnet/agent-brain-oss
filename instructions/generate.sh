@@ -5,10 +5,20 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Read templates
-CONTRACT=$(cat "$SCRIPT_DIR/agent-brain-contract.md")
-CLAUDE_SPECIFIC=$(cat "$SCRIPT_DIR/claude-specific.md")
-CODEX_SPECIFIC=$(cat "$SCRIPT_DIR/codex-specific.md")
+# Read AB_URL from .env (default: http://localhost:3030)
+AB_URL="http://localhost:3030"
+if [ -f "$PROJECT_DIR/.env" ]; then
+  ENV_URL=$(grep -E '^AB_URL=' "$PROJECT_DIR/.env" 2>/dev/null | sed 's/^AB_URL=//' | tr -d '"' | tr -d "'")
+  if [ -n "$ENV_URL" ]; then
+    AB_URL="$ENV_URL"
+    echo "Using AB_URL from .env: $AB_URL"
+  fi
+fi
+
+# Read templates and substitute AB_URL
+CONTRACT=$(cat "$SCRIPT_DIR/agent-brain-contract.md" | sed "s|http://localhost:3030|$AB_URL|g")
+CLAUDE_SPECIFIC=$(cat "$SCRIPT_DIR/claude-specific.md" | sed "s|http://localhost:3030|$AB_URL|g")
+CODEX_SPECIFIC=$(cat "$SCRIPT_DIR/codex-specific.md" | sed "s|http://localhost:3030|$AB_URL|g")
 
 # Read local overrides (user-specific, gitignored)
 LOCAL_OVERRIDES=""
