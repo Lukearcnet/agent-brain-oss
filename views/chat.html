@@ -547,12 +547,19 @@ Start by loading memory for this project now.`;
       div.className = "msg assistant";
       div.style.cssText += ";border-left:3px solid #ff9f0a;padding-left:12px;";
       const label = document.createElement("div");
-      label.style.cssText = "font-size:11px;color:#ff9f0a;font-weight:600;margin-bottom:4px;";
-      label.textContent = "📋 Checkpoint";
+      label.style.cssText = "font-size:11px;color:#ff9f0a;font-weight:600;margin-bottom:4px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;";
+      label.innerHTML = '<span class="ckpt-arrow" style="display:inline-block;transition:transform 0.2s;">▼</span> 📋 Checkpoint';
       div.appendChild(label);
       const content = document.createElement("div");
       content.innerHTML = simpleMd(text);
+      content.style.cssText = "overflow:hidden;transition:max-height 0.25s ease,opacity 0.2s;";
       div.appendChild(content);
+      label.onclick = function(e) {
+        e.stopPropagation();
+        const collapsed = content.style.display === "none";
+        content.style.display = collapsed ? "" : "none";
+        label.querySelector(".ckpt-arrow").style.transform = collapsed ? "" : "rotate(-90deg)";
+      };
       messagesEl.appendChild(div);
       scrollToBottom();
     }
@@ -562,12 +569,19 @@ Start by loading memory for this project now.`;
       div.className = "msg user";
       div.style.cssText += ";border-left:3px solid #30d158;padding-left:12px;";
       const label = document.createElement("div");
-      label.style.cssText = "font-size:11px;color:#30d158;font-weight:600;margin-bottom:4px;";
-      label.textContent = "📱 Response from phone";
+      label.style.cssText = "font-size:11px;color:#30d158;font-weight:600;margin-bottom:4px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;";
+      label.innerHTML = '<span class="ckpt-arrow" style="display:inline-block;transition:transform 0.2s;">▼</span> 📱 Response from phone';
       div.appendChild(label);
       const content = document.createElement("div");
       content.textContent = text;
+      content.style.cssText = "overflow:hidden;transition:max-height 0.25s ease,opacity 0.2s;";
       div.appendChild(content);
+      label.onclick = function(e) {
+        e.stopPropagation();
+        const collapsed = content.style.display === "none";
+        content.style.display = collapsed ? "" : "none";
+        label.querySelector(".ckpt-arrow").style.transform = collapsed ? "" : "rotate(-90deg)";
+      };
       messagesEl.appendChild(div);
       scrollToBottom();
     }
