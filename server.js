@@ -3197,8 +3197,42 @@ app.post("/api/checkpoints", async (req, res) => {
       console.log(`[checkpoint] Auto-superseded ${replaces} → ${id}`);
     }
   }
-  // Note: auto-supersede by session removed — it caused cross-session clobbering when
-  // multiple Claude terminals share a project. Use the explicit `replaces` parameter instead.
+
+  // Content-aware dedup: when the same session retries a checkpoint (e.g., after MCP
+  // connection drop during server restart), supersede older pending checkpoints that
+  // have similar question text. This is narrower than the old session-wide auto-supersede:
+  // it only matches when both session_id AND question content overlap.
+  const resolvedSessionId = checkpointSession && checkpointSession.session_id;
+  if (!replaces && resolvedSessionId) {
+    const { data: sameSess } = await db.supabase
+      .from("session_checkpoints")
+      .select("id, question")
+      .eq("status", "pending")
+      .eq("session_id", resolvedSessionId)
+      .neq("id", id);
+    if (sameSess && sameSess.length > 0) {
+      // Check for content overlap: if >60% of words match, treat as a retry
+      const newWords = new Set(question.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+      for (const old of sameSess) {
+        const oldWords = new Set((old.question || "").toLowerCase().split(/\s+/).filter(w => w.length > 3));
+        const overlap = [...newWords].filter(w => oldWords.has(w)).length;
+        const similarity = newWords.size > 0 ? overlap / Math.max(newWords.size, oldWords.size) : 0;
+        if (similarity > 0.5) {
+          await db.supabase
+            .from("session_checkpoints")
+            .update({ status: "superseded", responded_at: new Date().toISOString() })
+            .eq("id", old.id);
+          const pending = pendingCheckpoints.get(old.id);
+          if (pending) {
+            clearTimeout(pending.timeout);
+            pending.resolve({ status: "superseded", message: "Replaced by retry.", replaced_by: id });
+            pendingCheckpoints.delete(old.id);
+          }
+          console.log(`[checkpoint] Dedup-superseded ${old.id} → ${id} (similarity: ${(similarity * 100).toFixed(0)}%)`);
+        }
+      }
+    }
+  }
 
   // Log event
   logEvent("checkpoint_created", null, { id, project_dir, question_length: question.length, replaces: replaces || null });
