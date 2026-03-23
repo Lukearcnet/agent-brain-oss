@@ -47,7 +47,7 @@ PROJECT_CONTEXT="
 - Views are vanilla HTML in views/ directory (no framework)
 - Templates loaded dynamically via readView() — changes take effect without restart
 - Hook system for permission approval from phone
-- Checkpoint system for user approval from phone (4-hour timeout)
+- Checkpoint system for user approval from phone (24-hour timeout)
 - Push notifications via ntfy.sh"
 
 # Append local overrides section if present

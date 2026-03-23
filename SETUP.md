@@ -179,7 +179,7 @@ User config is mounted as volumes — survives container rebuilds.
 - Check server logs for `[migrations]` messages
 
 **Checkpoints timeout:**
-- Default timeout is 4 hours
+- Default timeout is 24 hours
 - Check your network allows long-poll connections
 
 ## What's Next?

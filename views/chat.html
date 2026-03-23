@@ -297,10 +297,10 @@ curl -s ${host}/api/memory/$PROJECT_KEY | jq -r '.content // "No prior memory."'
 
 2. When you need my input (plan approval, design decisions, clarifying questions), use a BLOCKING checkpoint instead of asking in chat:
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
-RESPONSE=$(curl -s --max-time 14410 -X POST ${host}/api/checkpoints -H "Content-Type: application/json" -d '{"project_dir": "'$PROJECT_KEY'", "question": "Your question here", "options": ["Option 1", "Option 2"]}')
+RESPONSE=$(curl -s --max-time 86410 -X POST ${host}/api/checkpoints -H "Content-Type: application/json" -d '{"project_dir": "'$PROJECT_KEY'", "question": "Your question here", "options": ["Option 1", "Option 2"]}')
 echo "$RESPONSE"
 
-This blocks until I respond from my phone (up to 4 hours).
+This blocks until I respond from my phone (up to 24 hours).
 
 3. When you complete a task, ALWAYS post a checkpoint asking what's next. Never go idle.
 

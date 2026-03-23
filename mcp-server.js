@@ -29,7 +29,7 @@ function request(method, path, body) {
       path: url.pathname + url.search,
       headers: { "Content-Type": "application/json" },
       timeout: method === "POST" && path.includes("/checkpoints") && !path.includes("/respond")
-        ? 14400000  // 4 hours for blocking checkpoint
+        ? 86400000  // 24 hours for blocking checkpoint
         : 30000,
     };
 

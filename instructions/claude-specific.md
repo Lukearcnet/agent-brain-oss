@@ -7,12 +7,12 @@ Claude Code sessions should use the `agent_brain_checkpoint` MCP tool for checkp
 - `options`: array of response options (optional)
 - `session_id`: Agent Brain session ID if known (optional)
 
-The MCP tool blocks until the user responds or the checkpoint times out (4 hours).
+The MCP tool blocks until the user responds or the checkpoint times out (24 hours).
 
 **Curl fallback** (if MCP tools are not available):
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
-RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \
+RESPONSE=$(curl -s --max-time 86410 -X POST http://localhost:3030/api/checkpoints \
   -H "Content-Type: application/json" \
   -d "{\"project_dir\": \"$PROJECT_KEY\", \"question\": \"<your question or plan summary here>\", \"options\": [\"Yes, proceed\", \"Modify approach\", \"Cancel\"]}")
 echo "$RESPONSE"

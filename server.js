@@ -1804,11 +1804,11 @@ curl -s http://localhost:3030/api/memory/$PROJECT_KEY | jq -r '.content // "No p
 curl -s "http://localhost:3030/api/mailbox/$PROJECT_KEY?unread=true" | jq '.'
 \`\`\`
 
-3. When you need user input, use checkpoints (blocks up to 4 hours):
+3. When you need user input, use checkpoints (blocks up to 24 hours):
    - **Preferred:** \`agent_brain_checkpoint\` MCP tool (project: $PROJECT_KEY, question: "...", options: [...])
    - **Fallback:** curl:
 \`\`\`bash
-RESPONSE=$(curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \\
+RESPONSE=$(curl -s --max-time 86410 -X POST http://localhost:3030/api/checkpoints \\
   -H "Content-Type: application/json" \\
   -d '{"project_dir": "'$PROJECT_KEY'", "question": "Your question", "options": ["Option 1", "Option 2"]}')
 echo "$RESPONSE"
@@ -3082,7 +3082,7 @@ const pendingCheckpoints = new Map(); // id → { resolve, timeout }
 
 // Claude posts a checkpoint (question/decision point)
 // Use ?blocking=false for Codex-style polling (returns immediately with checkpoint_id)
-// Default is blocking (Claude Code style - waits up to 4 hours)
+// Default is blocking (Claude Code style - waits up to 24 hours)
 app.post("/api/checkpoints", async (req, res) => {
   let { project_dir, question, options, session_label, provider, session_id, replaces } = req.body;
   const blocking = req.query.blocking !== "false"; // Default to blocking
@@ -3241,7 +3241,7 @@ app.post("/api/checkpoints", async (req, res) => {
   // Long-poll: wait up to 4 hours for blocking response
   // If no response, return timeout BUT keep checkpoint pending in DB
   // User can still respond later from the phone UI
-  const TIMEOUT_MS = 14400000; // 4 hours
+  const TIMEOUT_MS = 86400000; // 24 hours
 
   const responsePromise = new Promise((resolve) => {
     const timeout = setTimeout(() => {
@@ -3743,6 +3743,24 @@ app.get("/api/checkpoints", async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   const enriched = await enrichCheckpointRows(data || []);
   const filtered = provider ? enriched.filter(cp => normalizeProviderFamily(cp.provider) === normalizeProviderFamily(provider)) : enriched;
+
+  // Dedup pending checkpoints: for each (session_id, project_dir) group,
+  // only show the most recent pending one. Prevents stale checkpoint clutter
+  // without the cross-session clobbering that write-time supersede caused.
+  if (req.query.all !== "true") {
+    const seen = new Set();
+    const deduped = [];
+    for (const cp of filtered) {
+      if (cp.status === "pending" && cp.session_id) {
+        const key = `${cp.session_id}::${cp.project_dir}`;
+        if (seen.has(key)) continue; // skip older duplicates (results are newest-first)
+        seen.add(key);
+      }
+      deduped.push(cp);
+    }
+    return res.json(deduped);
+  }
+
   res.json(filtered);
 });
 
@@ -5126,7 +5144,7 @@ Focus on practical value - what specific part of Agent Brain would this improve,
 
 When posting checkpoints, add "session_label": "AI Cron" to identify this as an AI Cron session:
 \`\`\`bash
-curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \\
+curl -s --max-time 86410 -X POST http://localhost:3030/api/checkpoints \\
   -H "Content-Type: application/json" \\
   -d '{"project_dir": "${AGENT_BRAIN_PROJECT_DIR}", "session_label": "AI Cron", "question": "...", "options": [...]}'
 \`\`\``
@@ -5685,7 +5703,7 @@ Fix this maintenance issue. Steps:
 
 When posting checkpoints, add "session_label": "System Health" to identify this session:
 \`\`\`bash
-curl -s --max-time 14410 -X POST http://localhost:3030/api/checkpoints \\
+curl -s --max-time 86410 -X POST http://localhost:3030/api/checkpoints \\
   -H "Content-Type: application/json" \\
   -d '{"project_dir": "${AGENT_BRAIN_PROJECT_DIR}", "session_label": "System Health", "question": "...", "options": [...]}'
 \`\`\`

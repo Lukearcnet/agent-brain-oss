@@ -17,13 +17,13 @@
 #   AB_SESSION_ID - Agent Brain session ID (auto-resolves provider/project_dir)
 #   AB_PROVIDER - Provider override (claude/codex)
 #   AB_POLL_INTERVAL - Seconds between polls (default: 30)
-#   AB_TIMEOUT - Max wait time in seconds (default: 14400 = 4 hours)
+#   AB_TIMEOUT - Max wait time in seconds (default: 86400 = 24 hours)
 
 set -e
 
 AB_HOST="${AB_HOST:-http://localhost:3030}"
 AB_POLL_INTERVAL="${AB_POLL_INTERVAL:-30}"
-AB_TIMEOUT="${AB_TIMEOUT:-14400}"
+AB_TIMEOUT="${AB_TIMEOUT:-86400}"
 
 # Determine project key from current directory
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
@@ -52,7 +52,7 @@ Environment variables:
   AB_PROVIDER      Provider override (claude/codex)
   AB_HOST          Server URL (default: http://localhost:3030)
   AB_POLL_INTERVAL Poll interval in seconds (default: 30)
-  AB_TIMEOUT       Max wait in seconds (default: 14400)
+  AB_TIMEOUT       Max wait in seconds (default: 86400)
 
 Examples:
   ab-checkpoint cycle "Ready to proceed with refactor?" "Yes" "No" "Modify approach"

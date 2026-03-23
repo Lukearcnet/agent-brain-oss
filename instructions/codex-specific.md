@@ -1,5 +1,5 @@
 ## Checkpoints (Codex Server-Held Wait Mode)
-Use the `ab-checkpoint` wrapper for all Codex checkpoints. Do NOT rely on the Codex session itself to hold a 4-hour wait loop.
+Use the `ab-checkpoint` wrapper for all Codex checkpoints. Do NOT rely on the Codex session itself to hold a 24-hour wait loop.
 
 ### Create checkpoint
 ```bash

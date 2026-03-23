@@ -102,7 +102,7 @@ In both cases, checkpoint responses contain:
 **CRITICAL: Checkpoints vs AskUserQuestion**
 - **NEVER use AskUserQuestion** for design decisions, approach selection, or clarifying questions
 - AskUserQuestion times out after 90 seconds and requires the user at the computer
-- Checkpoints wait up to 4 hours and the user can respond from their phone
+- Checkpoints wait up to 24 hours and the user can respond from their phone
 - If you're tempted to ask "which approach?" or "what do you prefer?" — USE A CHECKPOINT
 
 ## Task Completion Checkpoint (CRITICAL)
