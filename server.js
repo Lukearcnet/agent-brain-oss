@@ -3196,35 +3196,9 @@ app.post("/api/checkpoints", async (req, res) => {
       }
       console.log(`[checkpoint] Auto-superseded ${replaces} → ${id}`);
     }
-  } else if (project_dir && session_id) {
-    // Only auto-supersede when session_id was explicitly provided by the caller.
-    // When session_id is resolved (not explicit), two different Claude sessions in
-    // the same project could resolve to the same AB session and clobber each other.
-    const sessionFilter = session_id;
-    if (sessionFilter) {
-      const { data: staleCheckpoints } = await db.supabase
-        .from("session_checkpoints")
-        .select("id")
-        .eq("status", "pending")
-        .eq("session_id", sessionFilter)
-        .neq("id", id);
-      if (staleCheckpoints && staleCheckpoints.length > 0) {
-        for (const stale of staleCheckpoints) {
-          await db.supabase
-            .from("session_checkpoints")
-            .update({ status: "superseded", responded_at: new Date().toISOString() })
-            .eq("id", stale.id);
-          const pending = pendingCheckpoints.get(stale.id);
-          if (pending) {
-            clearTimeout(pending.timeout);
-            pending.resolve({ status: "superseded", message: "Replaced by new checkpoint.", replaced_by: id });
-            pendingCheckpoints.delete(stale.id);
-          }
-          console.log(`[checkpoint] Auto-superseded stale ${stale.id} → ${id}`);
-        }
-      }
-    }
   }
+  // Note: auto-supersede by session removed — it caused cross-session clobbering when
+  // multiple Claude terminals share a project. Use the explicit `replaces` parameter instead.
 
   // Log event
   logEvent("checkpoint_created", null, { id, project_dir, question_length: question.length, replaces: replaces || null });
