@@ -3196,10 +3196,11 @@ app.post("/api/checkpoints", async (req, res) => {
       }
       console.log(`[checkpoint] Auto-superseded ${replaces} → ${id}`);
     }
-  } else if (project_dir) {
-    // Even without explicit replaces, auto-supersede any other pending checkpoints
-    // from the same project+session to prevent clutter
-    const sessionFilter = session_id || (checkpointSession && checkpointSession.session_id);
+  } else if (project_dir && session_id) {
+    // Only auto-supersede when session_id was explicitly provided by the caller.
+    // When session_id is resolved (not explicit), two different Claude sessions in
+    // the same project could resolve to the same AB session and clobber each other.
+    const sessionFilter = session_id;
     if (sessionFilter) {
       const { data: staleCheckpoints } = await db.supabase
         .from("session_checkpoints")
