@@ -243,60 +243,73 @@ MSG_HOOK_SCRIPT="$PROJECT_DIR/hooks/message-check-hook.sh"
 chmod +x "$HOOK_SCRIPT" 2>/dev/null
 chmod +x "$MSG_HOOK_SCRIPT" 2>/dev/null
 
+# Default tool policies — auto-approve safe tools so users aren't prompted 20+ times
+DEFAULT_TOOL_POLICIES='["Bash","Edit","Glob","Grep","Read","Task","Write","TodoRead","WebFetch","MultiEdit","TodoWrite","WebSearch","NotebookEdit","mcp__agent-brain"]'
+
 if [ -f "$CLAUDE_SETTINGS" ]; then
-  # Check if hooks are already configured
-  if python3 -c "
+  # Merge hooks and tool policies into existing settings
+  python3 -c "
 import json, sys
+
 with open('$CLAUDE_SETTINGS') as f:
     d = json.load(f)
+
+changed = False
+
+# Merge hooks if not already configured
 hooks = d.get('hooks', {})
-if 'PermissionRequest' in hooks or 'PreToolUse' in hooks:
-    sys.exit(0)
-sys.exit(1)
-" 2>/dev/null; then
-    echo "✓ Hooks already configured in settings.json"
-  else
-    # Merge hooks into existing settings
-    python3 -c "
-import json
-with open('$CLAUDE_SETTINGS') as f:
-    d = json.load(f)
-d.setdefault('hooks', {})
-d['hooks']['PreToolUse'] = [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$MSG_HOOK_SCRIPT', 'timeout': 5}]}]
-d['hooks']['PermissionRequest'] = [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$HOOK_SCRIPT', 'timeout': 120}]}]
-with open('$CLAUDE_SETTINGS', 'w') as f:
-    json.dump(d, f, indent=2)
-print('done')
+if 'PermissionRequest' not in hooks or 'PreToolUse' not in hooks:
+    d.setdefault('hooks', {})
+    d['hooks']['PreToolUse'] = [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$MSG_HOOK_SCRIPT', 'timeout': 5}]}]
+    d['hooks']['PermissionRequest'] = [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$HOOK_SCRIPT', 'timeout': 120}]}]
+    changed = True
+    print('  ✓ Hooks configured — Agent Brain will handle permissions from your phone')
+else:
+    print('  ✓ Hooks already configured')
+
+# Merge tool policies (add defaults without removing user's existing ones)
+default_tools = json.loads('$DEFAULT_TOOL_POLICIES')
+existing_allow = d.get('permissions', {}).get('allow', [])
+new_tools = [t for t in default_tools if t not in existing_allow]
+if new_tools:
+    d.setdefault('permissions', {})
+    d['permissions']['allow'] = existing_allow + new_tools
+    changed = True
+    print(f'  ✓ Tool policies configured ({len(new_tools)} tools auto-approved)')
+    print(f'    Auto-approved: {', '.join(new_tools)}')
+else:
+    print('  ✓ Tool policies already configured')
+
+if changed:
+    with open('$CLAUDE_SETTINGS', 'w') as f:
+        json.dump(d, f, indent=2)
 " 2>/dev/null
-    if [ $? -eq 0 ]; then
-      echo "✓ Hooks configured — Agent Brain will handle permissions from your phone"
-    else
-      echo "⚠ Could not auto-configure hooks. Add manually to $CLAUDE_SETTINGS:"
-      echo "    \"hooks\": {"
-      echo "      \"PreToolUse\": [{\"matcher\": \"\", \"hooks\": [{\"type\": \"command\", \"command\": \"$MSG_HOOK_SCRIPT\", \"timeout\": 5}]}],"
-      echo "      \"PermissionRequest\": [{\"matcher\": \"\", \"hooks\": [{\"type\": \"command\", \"command\": \"$HOOK_SCRIPT\", \"timeout\": 120}]}]"
-      echo "    }"
-    fi
+  if [ $? -ne 0 ]; then
+    echo "⚠ Could not auto-configure settings. Add manually to $CLAUDE_SETTINGS"
   fi
 else
-  # Create settings.json with hooks
+  # Create settings.json with hooks and tool policies
   mkdir -p "$HOME/.claude"
   python3 -c "
 import json
+default_tools = json.loads('$DEFAULT_TOOL_POLICIES')
 d = {
     'hooks': {
         'PreToolUse': [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$MSG_HOOK_SCRIPT', 'timeout': 5}]}],
         'PermissionRequest': [{'matcher': '', 'hooks': [{'type': 'command', 'command': '$HOOK_SCRIPT', 'timeout': 120}]}]
+    },
+    'permissions': {
+        'allow': default_tools
     }
 }
 with open('$CLAUDE_SETTINGS', 'w') as f:
     json.dump(d, f, indent=2)
-print('done')
 " 2>/dev/null
   if [ $? -eq 0 ]; then
-    echo "✓ Created $CLAUDE_SETTINGS with Agent Brain hooks"
+    echo "✓ Created $CLAUDE_SETTINGS with hooks and tool policies"
+    echo "  Auto-approved tools: Bash, Edit, Glob, Grep, Read, Task, Write, and more"
   else
-    echo "⚠ Could not create settings.json. See SETUP.md for manual hook configuration."
+    echo "⚠ Could not create settings.json. See SETUP.md for manual configuration."
   fi
 fi
 
