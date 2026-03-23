@@ -3744,23 +3744,9 @@ app.get("/api/checkpoints", async (req, res) => {
   const enriched = await enrichCheckpointRows(data || []);
   const filtered = provider ? enriched.filter(cp => normalizeProviderFamily(cp.provider) === normalizeProviderFamily(provider)) : enriched;
 
-  // Dedup pending checkpoints: for each (session_id, project_dir) group,
-  // only show the most recent pending one. Prevents stale checkpoint clutter
-  // without the cross-session clobbering that write-time supersede caused.
-  if (req.query.all !== "true") {
-    const seen = new Set();
-    const deduped = [];
-    for (const cp of filtered) {
-      if (cp.status === "pending" && cp.session_id) {
-        const key = `${cp.session_id}::${cp.project_dir}`;
-        if (seen.has(key)) continue; // skip older duplicates (results are newest-first)
-        seen.add(key);
-      }
-      deduped.push(cp);
-    }
-    return res.json(deduped);
-  }
-
+  // Note: read-time dedup was removed — multiple Claude terminals sharing
+  // the same project resolve to the same session_id, so dedup hid one
+  // terminal's checkpoints. Show all pending checkpoints instead.
   res.json(filtered);
 });
 
