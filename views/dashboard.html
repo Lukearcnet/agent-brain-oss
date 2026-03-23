@@ -1470,13 +1470,7 @@
         if (cp.resolved_session_id) {
           html += '      <a href="/chat/' + esc(cp.resolved_session_id) + '" style="border:none;background:#f0fdf4;color:#16a34a;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;text-decoration:none;display:inline-block;" title="View session chat">Chat</a>';
         }
-        // Collapse/expand toggle
-        const isCollapsed = collapsedCheckpoints[cp.id];
-        html += '      <button onclick="toggleCheckpointCollapse(\'' + cp.id + '\')" id="ckpt-toggle-' + cp.id + '" style="border:none;background:#f3f4f6;color:#6b7280;font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;cursor:pointer;margin-left:auto;" title="' + (isCollapsed ? 'Expand checkpoint' : 'Collapse checkpoint') + '">' + (isCollapsed ? '▼' : '▲') + '</button>';
         html += '    </div>';
-
-        // Collapsible body wrapper
-        html += '    <div id="ckpt-body-' + cp.id + '"' + (isCollapsed ? ' style="display:none;"' : '') + '>';
 
         // Combined context + checkpoint text with expand option
         html += '    <div id="ckpt-question-' + cp.id + '" style="font-size:14px;color:#1c1c1e;line-height:1.5;max-height:' + (isQuestionExpanded ? 'none' : '300px') + ';overflow-y:auto;">' + renderCheckpointMarkdown(questionText) + '</div>';
@@ -1506,8 +1500,6 @@
         html += '      <button class="btn-deny" style="flex:none;padding:10px 14px;" onclick="dismissCheckpoint(\'' + cp.id + '\', this)">Dismiss</button>';
         html += '    </div>';
         html += '  </div>';
-
-        html += '    </div>'; // close ckpt-body
         html += '</div>';
       }
       html += '</div>';
@@ -1567,20 +1559,6 @@
           }
         });
       });
-    }
-
-    const collapsedCheckpoints = {};
-    function toggleCheckpointCollapse(checkpointId) {
-      const body = document.getElementById('ckpt-body-' + checkpointId);
-      const toggle = document.getElementById('ckpt-toggle-' + checkpointId);
-      if (!body) return;
-      const isCollapsed = body.style.display === 'none';
-      body.style.display = isCollapsed ? '' : 'none';
-      if (toggle) {
-        toggle.textContent = isCollapsed ? '▲' : '▼';
-        toggle.title = isCollapsed ? 'Collapse checkpoint' : 'Expand checkpoint';
-      }
-      collapsedCheckpoints[checkpointId] = !isCollapsed;
     }
 
     function toggleQuestionExpand(checkpointId) {
