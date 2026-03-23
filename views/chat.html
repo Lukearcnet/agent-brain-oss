@@ -178,12 +178,15 @@
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
       <span style="font-size:12px;font-weight:600;color:#fff;background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:3px 10px;border-radius:6px;">Checkpoint</span>
       <span style="font-size:12px;color:#8e8e93;" id="checkpoint-time"></span>
+      <span id="checkpoint-collapse-btn" onclick="toggleCheckpointBar()" style="margin-left:auto;font-size:12px;color:#6366f1;font-weight:600;cursor:pointer;padding:2px 8px;background:#e8e4fc;border-radius:6px;user-select:none;">▲ Hide</span>
     </div>
-    <div style="font-size:14px; color:#1c1c1e; margin-bottom:10px; white-space:pre-wrap; max-height:200px; overflow-y:auto;" id="checkpoint-question"></div>
-    <div id="checkpoint-options" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
-    <div style="display:flex;gap:8px;">
-      <textarea id="checkpoint-input" placeholder="Type a response..." style="flex:1;border:1px solid #e5e5ea;border-radius:10px;padding:10px 14px;font-size:15px;font-family:inherit;resize:none;min-height:44px;outline:none;"></textarea>
-      <button onclick="respondToCheckpoint()" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-size:15px;font-weight:600;cursor:pointer;">Send</button>
+    <div id="checkpoint-body">
+      <div style="font-size:14px; color:#1c1c1e; margin-bottom:10px; white-space:pre-wrap; max-height:200px; overflow-y:auto;" id="checkpoint-question"></div>
+      <div id="checkpoint-options" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+      <div style="display:flex;gap:8px;">
+        <textarea id="checkpoint-input" placeholder="Type a response..." style="flex:1;border:1px solid #e5e5ea;border-radius:10px;padding:10px 14px;font-size:15px;font-family:inherit;resize:none;min-height:44px;outline:none;"></textarea>
+        <button onclick="respondToCheckpoint()" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-size:15px;font-weight:600;cursor:pointer;">Send</button>
+      </div>
     </div>
   </div>
   <div id="permission-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#f0f4ff; padding:10px 14px;">
@@ -797,6 +800,15 @@ Start by loading memory for this project now.`;
           scrollToBottom();
         }
       } catch (_) {}
+    }
+
+    function toggleCheckpointBar() {
+      const body = document.getElementById("checkpoint-body");
+      const btn = document.getElementById("checkpoint-collapse-btn");
+      if (!body) return;
+      const isHidden = body.style.display === "none";
+      body.style.display = isHidden ? "" : "none";
+      btn.textContent = isHidden ? "▲ Hide" : "▼ Show";
     }
 
     async function respondToCheckpoint() {
