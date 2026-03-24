@@ -1487,6 +1487,20 @@ async function moveToFolder(sessionId, folderId) {
 
 // ── API routes ───────────────────────────────────────────────────────────────
 
+// Token usage tracking endpoint
+const tokenTracker = require("./lib/token-tracker");
+
+app.get("/api/tokens/usage", (req, res) => {
+  try {
+    const period = req.query.period || "all"; // day, week, month, all
+    const usage = tokenTracker.getAggregatedUsage(period);
+    res.json(usage);
+  } catch (err) {
+    console.error("[api] Token usage error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Health check endpoint for monitoring
 app.get("/api/health", async (_req, res) => {
   const status = {

@@ -1168,6 +1168,8 @@
 
   <div id="ai-outbox-section" style="padding:0 16px;"></div>
 
+  <div id="token-tracker-section" style="padding:0 16px;"></div>
+
   <div class="footer">
     <a href="/chat">Browse All Sessions &rarr;</a>
   </div>
@@ -2612,6 +2614,113 @@
       btn.disabled = false;
     }
 
+    // ── Token Tracker ──────────────────────────────────────────────────────
+    var tokenPeriod = "week";
+
+    function formatTokens(n) {
+      if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+      return String(n);
+    }
+
+    async function refreshTokenTracker() {
+      try {
+        var resp = await fetch("/api/tokens/usage?period=" + tokenPeriod);
+        var data = await resp.json();
+        renderTokenTracker(data);
+      } catch (_) {}
+    }
+
+    function renderTokenTracker(data) {
+      var el = document.getElementById("token-tracker-section");
+      if (!el) return;
+
+      var claude = data.claude || {};
+      var codex = data.codex || {};
+      var daily = data.daily || [];
+
+      var claudeTotal = (claude.input_tokens || 0) + (claude.output_tokens || 0) + (claude.cache_creation_tokens || 0) + (claude.cache_read_tokens || 0);
+      var codexTotal = codex.total_tokens || 0;
+      var grandTotal = claudeTotal + codexTotal;
+
+      // Period toggle buttons
+      var periods = ["day", "week", "month", "all"];
+      var periodLabels = { day: "Today", week: "7 Days", month: "30 Days", all: "All Time" };
+
+      var html = '<div class="section" style="margin-top:12px;">';
+      html += '<div class="section-header" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">';
+      html += '  <span style="font-size:15px;font-weight:700;color:#1c1c1e;">Token Usage</span>';
+      html += '  <div style="margin-left:auto;display:flex;gap:4px;">';
+      for (var i = 0; i < periods.length; i++) {
+        var p = periods[i];
+        var active = p === tokenPeriod;
+        html += '<button onclick="tokenPeriod=\'' + p + '\';refreshTokenTracker()" style="border:none;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;'
+          + (active ? 'background:#6366f1;color:#fff;' : 'background:#f3f4f6;color:#6b7280;')
+          + '">' + periodLabels[p] + '</button>';
+      }
+      html += '  </div>';
+      html += '</div>';
+
+      // Summary cards
+      html += '<div style="display:flex;gap:8px;margin-bottom:12px;">';
+      // Claude card
+      html += '<div style="flex:1;background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-radius:12px;padding:12px;">';
+      html += '  <div style="font-size:11px;font-weight:600;color:#7c3aed;text-transform:uppercase;letter-spacing:0.5px;">Claude Code</div>';
+      html += '  <div style="font-size:22px;font-weight:700;color:#4c1d95;margin-top:4px;">' + formatTokens(claudeTotal) + '</div>';
+      html += '  <div style="font-size:11px;color:#7c3aed;margin-top:2px;">' + (claude.session_count || 0) + ' sessions &middot; ' + formatTokens(claude.message_count || 0) + ' msgs</div>';
+      html += '</div>';
+      // Codex card
+      html += '<div style="flex:1;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-radius:12px;padding:12px;">';
+      html += '  <div style="font-size:11px;font-weight:600;color:#16a34a;text-transform:uppercase;letter-spacing:0.5px;">Codex</div>';
+      html += '  <div style="font-size:22px;font-weight:700;color:#14532d;margin-top:4px;">' + formatTokens(codexTotal) + '</div>';
+      html += '  <div style="font-size:11px;color:#16a34a;margin-top:2px;">' + (codex.session_count || 0) + ' sessions</div>';
+      html += '</div>';
+      html += '</div>';
+
+      // Bar chart
+      if (daily.length > 0) {
+        var maxTokens = Math.max.apply(null, daily.map(function(d) { return d.claude_tokens + d.codex_tokens; }));
+        if (maxTokens === 0) maxTokens = 1;
+
+        html += '<div style="background:#fff;border-radius:12px;border:1px solid #e5e5ea;padding:12px;overflow-x:auto;">';
+        html += '<div style="display:flex;align-items:flex-end;gap:3px;height:100px;min-width:' + (daily.length * 24) + 'px;">';
+
+        for (var j = 0; j < daily.length; j++) {
+          var day = daily[j];
+          var total = day.claude_tokens + day.codex_tokens;
+          var pct = total / maxTokens;
+          var barH = Math.max(2, Math.round(pct * 90));
+          var claudePct = total > 0 ? day.claude_tokens / total : 0;
+          var codexPct = total > 0 ? day.codex_tokens / total : 0;
+          var claudeH = Math.round(claudePct * barH);
+          var codexH = barH - claudeH;
+          var label = day.date.slice(5); // MM-DD
+
+          html += '<div style="flex:1;min-width:18px;display:flex;flex-direction:column;align-items:center;gap:0;" title="' + day.date + ': ' + formatTokens(total) + ' tokens">';
+          if (codexH > 0) {
+            html += '<div style="width:100%;max-width:28px;height:' + codexH + 'px;background:linear-gradient(180deg,#22c55e,#16a34a);border-radius:4px 4px 0 0;"></div>';
+          }
+          html += '<div style="width:100%;max-width:28px;height:' + claudeH + 'px;background:linear-gradient(180deg,#818cf8,#6366f1);' + (codexH > 0 ? '' : 'border-radius:4px 4px 0 0;') + 'border-radius:' + (codexH > 0 ? '0 0 4px 4px' : '4px 4px 0 0') + ';"></div>';
+          html += '<div style="font-size:9px;color:#9ca3af;margin-top:4px;white-space:nowrap;">' + label + '</div>';
+          html += '</div>';
+        }
+
+        html += '</div>';
+
+        // Legend
+        html += '<div style="display:flex;gap:12px;margin-top:8px;justify-content:center;">';
+        html += '  <div style="display:flex;align-items:center;gap:4px;"><div style="width:10px;height:10px;border-radius:3px;background:#6366f1;"></div><span style="font-size:11px;color:#6b7280;">Claude</span></div>';
+        html += '  <div style="display:flex;align-items:center;gap:4px;"><div style="width:10px;height:10px;border-radius:3px;background:#22c55e;"></div><span style="font-size:11px;color:#6b7280;">Codex</span></div>';
+        html += '</div>';
+
+        html += '</div>';
+      }
+
+      html += '</div>';
+      el.innerHTML = html;
+    }
+
     // Initial load
     refresh();
     refreshOutbox();
@@ -2620,9 +2729,11 @@
     refreshMorningRefresh();
     refreshMaintenance();
     refreshTerminals();
+    refreshTokenTracker();
     setInterval(refreshMaintenance, 60000); // Refresh maintenance every minute
     setInterval(refreshTerminals, 10000); // Refresh terminals every 10 seconds
     setInterval(refreshOutbox, 15000); // Refresh outbox every 15 seconds
+    setInterval(refreshTokenTracker, 60000); // Refresh token tracker every minute
 
     // Register service worker for PWA
     if ("serviceWorker" in navigator) {
