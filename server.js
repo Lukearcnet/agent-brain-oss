@@ -658,6 +658,7 @@ function appendSessionBindingInstructions(briefing, { sessionId, provider, sessi
 CHECKPOINT_ID=$(ab-checkpoint ask "Your question" "Option 1" "Option 2")
 ab-checkpoint wait-once "$CHECKPOINT_ID"`
     : `# Preferred: use agent_brain_checkpoint MCP tool with session_id: "${sessionId}"
+# Also include claude_session_id (your CC UUID from transcript path) for terminal-specific binding
 # Fallback curl:
 curl -s -X POST http://localhost:3030/api/checkpoints \\
   -H "Content-Type: application/json" \\
@@ -683,7 +684,8 @@ This keeps checkpoints attached to the correct Agent Brain session instead of on
 `;
 }
 
-async function resolveCheckpointSession({ projectDir, provider, sessionId, sessionLabel }) {
+async function resolveCheckpointSession({ projectDir, provider, sessionId, sessionLabel, claudeSessionId }) {
+  // Priority 1: Exact AB session_id lookup
   if (sessionId) {
     const direct = await loadSession(sessionId);
     if (direct && direct.cc_project_dir === projectDir && sessionMatchesProviderFamily(direct, provider)) {
@@ -694,8 +696,22 @@ async function resolveCheckpointSession({ projectDir, provider, sessionId, sessi
     }
   }
 
-  const sessions = await listSessions();
-  const matching = sessions
+  // Fetch sessions list once for Priority 2 and 3
+  const allSessions = await listSessions();
+
+  // Priority 2: Lookup by Claude Code's unique session UUID (terminal-specific)
+  if (claudeSessionId) {
+    const byCC = allSessions.find(s => s.claude_session_id === claudeSessionId && s.cc_project_dir === projectDir);
+    if (byCC) {
+      return {
+        session_id: byCC.session_id,
+        session_title: getSessionDisplayTitle(byCC)
+      };
+    }
+  }
+
+  // Priority 3: Fallback to project-dir matching (legacy behavior)
+  const matching = allSessions
     .filter(s => s.cc_project_dir === projectDir)
     .filter(s => sessionMatchesProviderFamily(s, provider))
     .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
@@ -3084,7 +3100,7 @@ const pendingCheckpoints = new Map(); // id → { resolve, timeout }
 // Use ?blocking=false for Codex-style polling (returns immediately with checkpoint_id)
 // Default is blocking (Claude Code style - waits up to 24 hours)
 app.post("/api/checkpoints", async (req, res) => {
-  let { project_dir, question, options, session_label, provider, session_id, replaces } = req.body;
+  let { project_dir, question, options, session_label, provider, session_id, replaces, claude_session_id } = req.body;
   const blocking = req.query.blocking !== "false"; // Default to blocking
 
   // Auto-resolve fields from session_id when possible (reduces LLM burden)
@@ -3122,7 +3138,8 @@ app.post("/api/checkpoints", async (req, res) => {
         projectDir: project_dir,
         provider: checkpointProvider,
         sessionId: session_id,
-        sessionLabel: session_label
+        sessionLabel: session_label,
+        claudeSessionId: claude_session_id
       });
 
   // Get friendly project name:

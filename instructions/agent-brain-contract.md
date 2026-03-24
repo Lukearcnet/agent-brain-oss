@@ -10,7 +10,7 @@ Available MCP tools:
 - `agent_brain_memory_write` — Write project memory (params: `project`, `content`)
 - `agent_brain_memory_sections` — List available memory sections (params: `project`)
 - `agent_brain_daily_log` — Append daily log entry (params: `project`, `content`)
-- `agent_brain_checkpoint` — Post checkpoint to user's phone (params: `project`, `question`, optional `options`, `session_id`)
+- `agent_brain_checkpoint` — Post checkpoint to user's phone (params: `project`, `question`, optional `options`, `session_id`, `claude_session_id`)
 - `agent_brain_mailbox_check` — Check for unread messages (params: `project`)
 - `agent_brain_mailbox_send` — Send cross-session message (params: `from_session`, `to_session`, `subject`, `body`)
 - `agent_brain_mailbox_mark_read` — Mark message as read (params: `message_id`)

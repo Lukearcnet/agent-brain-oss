@@ -159,13 +159,15 @@ async function main() {
       question: z.string().describe("The question or status to present to the user"),
       options: z.array(z.string()).optional().describe("Response options (e.g. ['Yes, proceed', 'Modify approach', 'Cancel'])"),
       session_id: z.string().optional().describe("Agent Brain session ID to attach this checkpoint to"),
+      claude_session_id: z.string().optional().describe("Claude Code's unique session UUID (from transcript path). Ensures checkpoint is attached to the correct terminal when multiple terminals share a project."),
       replaces: z.string().optional().describe("ID of a previous checkpoint this one replaces (auto-dismisses the old one to prevent dashboard clutter)"),
     },
-    async ({ project, question, options, session_id, replaces }) => {
+    async ({ project, question, options, session_id, claude_session_id, replaces }) => {
       try {
         const body = { project_dir: project, question };
         if (options) body.options = options;
         if (session_id) body.session_id = session_id;
+        if (claude_session_id) body.claude_session_id = claude_session_id;
         if (replaces) body.replaces = replaces;
 
         const res = await request("POST", "/api/checkpoints", body);

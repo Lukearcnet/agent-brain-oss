@@ -6,15 +6,18 @@ Claude Code sessions should use the `agent_brain_checkpoint` MCP tool for checkp
 - `question`: your question or status update
 - `options`: array of response options (optional)
 - `session_id`: Agent Brain session ID if known (optional)
+- `claude_session_id`: your Claude Code session UUID — extract from your transcript path (`~/.claude/projects/<project>/<UUID>.jsonl`). **Include this to ensure your checkpoint is attached to the correct terminal**, especially when multiple terminals share the same project.
 
 The MCP tool blocks until the user responds or the checkpoint times out (24 hours).
 
 **Curl fallback** (if MCP tools are not available):
 ```bash
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
+# Extract your Claude Code session UUID from the transcript path
+CC_SESSION_ID=$(ls -t ~/.claude/projects/$PROJECT_KEY/*.jsonl 2>/dev/null | head -1 | xargs basename .jsonl 2>/dev/null)
 RESPONSE=$(curl -s --max-time 86410 -X POST http://localhost:3030/api/checkpoints \
   -H "Content-Type: application/json" \
-  -d "{\"project_dir\": \"$PROJECT_KEY\", \"question\": \"<your question or plan summary here>\", \"options\": [\"Yes, proceed\", \"Modify approach\", \"Cancel\"]}")
+  -d "{\"project_dir\": \"$PROJECT_KEY\", \"claude_session_id\": \"$CC_SESSION_ID\", \"question\": \"<your question or plan summary here>\", \"options\": [\"Yes, proceed\", \"Modify approach\", \"Cancel\"]}")
 echo "$RESPONSE"
 ```
 
