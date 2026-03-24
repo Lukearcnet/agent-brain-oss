@@ -1359,6 +1359,14 @@ function getSessionState(projectDir, sessionId) {
   const filePath = path.join(CLAUDE_SESSIONS_DIR, projectDir, resolvedId + ".jsonl");
   if (!fs.existsSync(filePath)) return { status: "idle", permission: null, current_tool: null, last_activity: null };
 
+  // If the resolved JSONL is a continuation (different from original sessionId),
+  // only show active/recent status if THIS session actually owns that JSONL.
+  // This prevents old sessions from appearing active just because they share a project directory.
+  const isContinuation = resolvedId !== sessionId;
+  const ownFile = path.join(CLAUDE_SESSIONS_DIR, projectDir, sessionId + ".jsonl");
+  const ownStat = fs.existsSync(ownFile) ? fs.statSync(ownFile) : null;
+  const ownAgeMs = ownStat ? Date.now() - ownStat.mtimeMs : Infinity;
+
   const stat = fs.statSync(filePath);
   const lastActivity = stat.mtime.toISOString();
   const ageMs = Date.now() - stat.mtimeMs;
@@ -1367,6 +1375,13 @@ function getSessionState(projectDir, sessionId) {
   const perm = checkPendingPermission(projectDir, sessionId);
   if (perm && perm.pending) {
     return { status: "needs_attention", permission: perm, current_tool: null, last_activity: lastActivity };
+  }
+
+  // If this session resolved via continuation, only show as active if its OWN
+  // JSONL is recent (< 6 hours) — meaning it was the session that was actually continued.
+  // Old sessions whose JNSONLs are stale should show as idle, not inherit the active status.
+  if (isContinuation && ownAgeMs > 21600000) {
+    return { status: "idle", permission: null, current_tool: null, last_activity: ownStat ? ownStat.mtime.toISOString() : null };
   }
 
   // Active if JSONL modified in last 2 minutes
