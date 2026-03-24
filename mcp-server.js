@@ -170,9 +170,44 @@ async function main() {
         if (claude_session_id) body.claude_session_id = claude_session_id;
         if (replaces) body.replaces = replaces;
 
-        const res = await request("POST", "/api/checkpoints", body);
-        if (res.status !== 200 && res.status !== 201) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data)}`);
-        return text(res.data);
+        // Try blocking mode first (normal path)
+        try {
+          const res = await request("POST", "/api/checkpoints", body);
+          if (res.status === 200 || res.status === 201) return text(res.data);
+          // If server returned an error status, fall through to polling
+        } catch (blockingErr) {
+          // Blocking connection dropped (timeout, server restart, network issue)
+          // Fall through to non-blocking polling mode
+          process.stderr.write(`[checkpoint] Blocking mode failed: ${blockingErr.message}, falling back to polling\n`);
+        }
+
+        // Fallback: non-blocking post + poll for response
+        const postRes = await request("POST", "/api/checkpoints?blocking=false", body);
+        if (postRes.status !== 200 && postRes.status !== 201) {
+          return errorResult(`Status ${postRes.status}: ${JSON.stringify(postRes.data)}`);
+        }
+
+        const checkpointId = postRes.data && postRes.data.checkpoint_id;
+        if (!checkpointId) return text(postRes.data);
+
+        // Poll every 30 seconds for up to 24 hours
+        const maxPolls = 2880; // 24 hours at 30s intervals
+        for (let i = 0; i < maxPolls; i++) {
+          await new Promise(r => setTimeout(r, 30000));
+          try {
+            const pollRes = await request("GET", `/api/checkpoints/${encodeURIComponent(checkpointId)}/status`);
+            if (pollRes.data && pollRes.data.status === "responded") {
+              return text(pollRes.data);
+            }
+            if (pollRes.data && pollRes.data.status === "superseded") {
+              return text(pollRes.data);
+            }
+          } catch (_) {
+            // Poll failed, keep trying
+          }
+        }
+
+        return text({ checkpoint_id: checkpointId, status: "timeout", message: "No response after 24 hours" });
       } catch (e) {
         return errorResult(e.message);
       }

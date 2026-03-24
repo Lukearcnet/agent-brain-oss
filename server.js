@@ -3313,26 +3313,33 @@ app.post("/api/checkpoints", async (req, res) => {
     }
   }
 
-  // Content-aware dedup: when the same session retries a checkpoint (e.g., after MCP
-  // connection drop during server restart), supersede older pending checkpoints that
-  // have similar question text. This is narrower than the old session-wide auto-supersede:
-  // it only matches when both session_id AND question content overlap.
+  // Dedup: supersede older pending checkpoints from the same session.
+  // Two strategies:
+  // 1. Time-based: if another pending checkpoint from this session was posted < 10 min ago, supersede it
+  //    (it's obviously a retry/update regardless of content similarity)
+  // 2. Content-based: if word overlap > 30%, treat as a retry (catches retries with varying context)
   const resolvedSessionId = checkpointSession && checkpointSession.session_id;
   if (!replaces && resolvedSessionId) {
     const { data: sameSess } = await db.supabase
       .from("session_checkpoints")
-      .select("id, question")
+      .select("id, question, created_at")
       .eq("status", "pending")
       .eq("session_id", resolvedSessionId)
       .neq("id", id);
     if (sameSess && sameSess.length > 0) {
-      // Check for content overlap: if >60% of words match, treat as a retry
+      const now = Date.now();
       const newWords = new Set(question.toLowerCase().split(/\s+/).filter(w => w.length > 3));
       for (const old of sameSess) {
+        const oldAgeMs = now - new Date(old.created_at).getTime();
+        const isRecent = oldAgeMs < 600000; // < 10 minutes old
+
+        // Check content similarity
         const oldWords = new Set((old.question || "").toLowerCase().split(/\s+/).filter(w => w.length > 3));
         const overlap = [...newWords].filter(w => oldWords.has(w)).length;
         const similarity = newWords.size > 0 ? overlap / Math.max(newWords.size, oldWords.size) : 0;
-        if (similarity > 0.5) {
+
+        // Supersede if: recent pending from same session OR content overlap > 30%
+        if (isRecent || similarity > 0.3) {
           await db.supabase
             .from("session_checkpoints")
             .update({ status: "superseded", responded_at: new Date().toISOString() })
@@ -3343,7 +3350,8 @@ app.post("/api/checkpoints", async (req, res) => {
             pending.resolve({ status: "superseded", message: "Replaced by retry.", replaced_by: id });
             pendingCheckpoints.delete(old.id);
           }
-          console.log(`[checkpoint] Dedup-superseded ${old.id} → ${id} (similarity: ${(similarity * 100).toFixed(0)}%)`);
+          const reason = isRecent ? `recent (${Math.round(oldAgeMs / 1000)}s)` : `similarity: ${(similarity * 100).toFixed(0)}%`;
+          console.log(`[checkpoint] Dedup-superseded ${old.id} → ${id} (${reason})`);
         }
       }
     }
