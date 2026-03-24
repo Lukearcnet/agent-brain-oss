@@ -2810,6 +2810,16 @@ app.get("/api/memory/:projectDir", async (req, res) => {
       });
     }
 
+    // Include historical summaries if requested
+    if (req.query.includeHistory === "true") {
+      const history = await db.getHistoricalContext(projectDir);
+      return res.json({
+        content,
+        history,
+        project_dir: projectDir
+      });
+    }
+
     // Default: return full content (backward compatible)
     res.json({ content, project_dir: projectDir });
   } catch (_) { res.json({ content: "", project_dir: req.params.projectDir }); }
@@ -2842,6 +2852,65 @@ app.post("/api/memory/:projectDir/daily", async (req, res) => {
   const result = await db.appendDailyLog(req.params.projectDir, content);
   logEvent("memory_updated", null, { project_dir: req.params.projectDir, file: result.date + ".md" });
   res.json({ ok: true, date: result.date });
+});
+
+// Log summaries (compaction)
+app.get("/api/memory/:projectDir/summaries", async (req, res) => {
+  try {
+    const periodType = req.query.period; // 'weekly' or 'monthly'
+    const summaries = await db.getLogSummaries(req.params.projectDir, { periodType });
+    res.json(summaries);
+  } catch (_) { res.json([]); }
+});
+
+app.get("/api/memory/:projectDir/history", async (req, res) => {
+  try {
+    const maxTokens = parseInt(req.query.maxTokens) || 8000;
+    const history = await db.getHistoricalContext(req.params.projectDir, { maxTokens });
+    res.json({ content: history });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/memory/:projectDir/compact", async (req, res) => {
+  try {
+    const projectDir = req.params.projectDir;
+
+    // Summarization function using Haiku
+    const summarizeWithLLM = async (content, periodType, startDate, endDate) => {
+      const client = getAnthropicClient();
+      const response = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 2000,
+        messages: [{
+          role: "user",
+          content: `Summarize the following ${periodType} log entries from ${startDate} to ${endDate}.
+Preserve key accomplishments, decisions made, and any important technical details.
+Keep the summary concise but retain actionable information for future sessions.
+
+${content}`
+        }]
+      });
+      return response.content[0].text;
+    };
+
+    const weeklyResults = await db.runWeeklyCompaction(projectDir, summarizeWithLLM);
+    const monthlyResults = await db.runMonthlyCompaction(projectDir, summarizeWithLLM);
+
+    logEvent("log_compaction", null, {
+      project_dir: projectDir,
+      weekly: weeklyResults,
+      monthly: monthlyResults
+    });
+
+    res.json({
+      ok: true,
+      weekly: weeklyResults,
+      monthly: monthlyResults
+    });
+  } catch (err) {
+    console.error("[compaction] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Topic files
@@ -7485,6 +7554,62 @@ app.listen(PORT, "0.0.0.0", () => {
       }
     }, { timezone: "America/Chicago" });
     console.log("[morning-refresh] Scheduled for 7:00 AM Central");
+
+    // Log compaction cron job - 3:00 AM daily (low traffic time)
+    cron.schedule("0 3 * * *", async () => {
+      console.log("[log-compaction] Running daily compaction...");
+      try {
+        const projects = await db.listProjects();
+        if (projects.length === 0) {
+          console.log("[log-compaction] No projects with memory");
+          return;
+        }
+
+        // Summarization function using Haiku
+        const summarizeWithLLM = async (content, periodType, startDate, endDate) => {
+          const client = getAnthropicClient();
+          const response = await client.messages.create({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 2000,
+            messages: [{
+              role: "user",
+              content: `Summarize the following ${periodType} log entries from ${startDate} to ${endDate}.
+Preserve key accomplishments, decisions made, and any important technical details.
+Keep the summary concise but retain actionable information for future sessions.
+
+${content}`
+            }]
+          });
+          return response.content[0].text;
+        };
+
+        let totalWeekly = 0;
+        let totalMonthly = 0;
+
+        for (const project of projects) {
+          try {
+            const weekly = await db.runWeeklyCompaction(project.name, summarizeWithLLM);
+            const monthly = await db.runMonthlyCompaction(project.name, summarizeWithLLM);
+            totalWeekly += weekly.created;
+            totalMonthly += monthly.created;
+            if (weekly.created > 0 || monthly.created > 0) {
+              console.log(`[log-compaction] ${project.name}: ${weekly.created} weekly, ${monthly.created} monthly`);
+            }
+          } catch (err) {
+            console.error(`[log-compaction] Error compacting ${project.name}:`, err.message);
+          }
+        }
+
+        if (totalWeekly > 0 || totalMonthly > 0) {
+          console.log(`[log-compaction] Complete: ${totalWeekly} weekly, ${totalMonthly} monthly summaries created`);
+        } else {
+          console.log("[log-compaction] No compaction needed");
+        }
+      } catch (err) {
+        console.error("[log-compaction] Error:", err.message);
+      }
+    }, { timezone: "America/Chicago" });
+    console.log("[log-compaction] Scheduled for 3:00 AM Central");
   } catch (e) {
     console.warn("[morning-refresh] Cron setup failed:", e.message);
   }
