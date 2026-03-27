@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>Agent Brain - Apps</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      overflow-x: hidden;
+      max-width: 100vw;
+    }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 20px 16px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header-left h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .header-left p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+    .header-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      text-decoration: none;
+    }
+    .header-btn:active { background: rgba(255,255,255,0.25); }
+
+    /* Nav pills */
+    .nav-pills {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .nav-pill {
+      padding: 8px 16px;
+      background: #fff;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #1c1c1e;
+      text-decoration: none;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .nav-pill:active { background: #f2f2f7; }
+    .nav-pill.active {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* Content */
+    .content { padding: 0 16px 32px; }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 20px 4px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .section-count {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    /* App cards */
+    .apps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 12px;
+    }
+    .app-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: transform 0.15s, box-shadow 0.15s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      position: relative;
+      overflow: hidden;
+    }
+    .app-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .app-card:active { transform: scale(0.98); }
+    .app-card-top {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .app-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      flex-shrink: 0;
+      color: #fff;
+      font-weight: 700;
+    }
+    .app-info { flex: 1; min-width: 0; }
+    .app-name {
+      font-size: 17px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+    .app-url {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .app-status {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .app-status.online { background: #34c759; box-shadow: 0 0 6px rgba(52,199,89,0.4); }
+    .app-status.offline { background: #ff3b30; box-shadow: 0 0 6px rgba(255,59,48,0.4); }
+    .app-status.checking { background: #ff9500; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .app-description {
+      font-size: 14px;
+      color: #636366;
+      line-height: 1.4;
+    }
+    .app-meta {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .app-tag {
+      padding: 4px 10px;
+      background: #f2f2f7;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #636366;
+      font-weight: 500;
+    }
+    .app-tag.integrated {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #8e8e93;
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-state h3 { font-size: 18px; color: #1c1c1e; margin-bottom: 8px; }
+    .empty-state p { font-size: 14px; line-height: 1.5; }
+
+    /* Add app button */
+    .add-app-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      cursor: pointer;
+      border: 2px dashed #d1d1d6;
+      color: #8e8e93;
+      font-size: 15px;
+      font-weight: 500;
+      min-height: 120px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .add-app-card:hover {
+      border-color: #6366f1;
+      color: #6366f1;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .modal h2 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 20px;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #636366;
+      margin-bottom: 6px;
+    }
+    .form-group input, .form-group textarea {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #d1d1d6;
+      border-radius: 10px;
+      font-size: 15px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus, .form-group textarea:focus {
+      border-color: #6366f1;
+    }
+    .form-group textarea { resize: vertical; min-height: 60px; }
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+    .btn {
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s;
+    }
+    .btn:active { opacity: 0.7; }
+    .btn-cancel { background: #f2f2f7; color: #1c1c1e; }
+    .btn-primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; }
+    .btn-danger { background: #ff3b30; color: #fff; font-size: 13px; padding: 6px 12px; }
+
+    @media (max-width: 640px) {
+      .apps-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Apps</h1>
+      <p>Your connected applications</p>
+    </div>
+    <a href="/" class="header-btn">Dashboard</a>
+  </div>
+
+  <div class="nav-pills">
+    <a href="/" class="nav-pill">Dashboard</a>
+    <a href="/chat" class="nav-pill">Sessions</a>
+    <a href="/tasks" class="nav-pill">Tasks</a>
+    <a href="/apps" class="nav-pill active">Apps</a>
+    <a href="/email-triage" class="nav-pill">Email</a>
+    <a href="/calendar" class="nav-pill">Calendar</a>
+    <a href="/briefings" class="nav-pill">AI Brief</a>
+    <a href="/orchestrator" class="nav-pill">Orchestrator</a>
+  </div>
+
+  <div class="content">
+    <div class="section-header">
+      Registered Apps <span class="section-count" id="appCount">0</span>
+    </div>
+    <div class="apps-grid" id="appsGrid">
+      <!-- Apps populated by JS -->
+    </div>
+  </div>
+
+  <!-- Add/Edit App Modal -->
+  <div class="modal-overlay" id="modal">
+    <div class="modal">
+      <h2 id="modalTitle">Add App</h2>
+      <div class="form-group">
+        <label>App Name</label>
+        <input type="text" id="appNameInput" placeholder="e.g. Atlas Terminal">
+      </div>
+      <div class="form-group">
+        <label>URL</label>
+        <input type="url" id="appUrlInput" placeholder="e.g. http://localhost:3050">
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="appDescInput" placeholder="Brief description of what this app does"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Icon (emoji)</label>
+        <input type="text" id="appIconInput" placeholder="e.g. &#x1F4C8;" maxlength="4">
+      </div>
+      <div class="form-group">
+        <label>Color (hex)</label>
+        <input type="text" id="appColorInput" placeholder="e.g. #6366f1" value="#6366f1">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="modalSaveBtn" onclick="saveApp()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var apps = [];
+    var editingId = null;
+
+    // Color palette for auto-assignment
+    var COLORS = ['#6366f1','#8b5cf6','#ec4899','#f43f5e','#f97316','#eab308','#22c55e','#06b6d4','#3b82f6'];
+
+    function init() {
+      fetch('/api/apps')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          apps = data;
+          render();
+          checkHealth();
+        })
+        .catch(function() { render(); });
+    }
+
+    function render() {
+      var grid = document.getElementById('appsGrid');
+      document.getElementById('appCount').textContent = apps.length;
+
+      if (apps.length === 0) {
+        grid.innerHTML = '<div class="empty-state"><div class="icon">&#x1F4E6;</div><h3>No apps registered</h3><p>Add your first app to see it here with live status monitoring.</p></div>';
+        // Still add the "add" card
+        grid.innerHTML += '<div class="add-app-card" onclick="openAddModal()">+ Add App</div>';
+        return;
+      }
+
+      // Replace localhost in app URLs with the current browser hostname
+      // so apps work from any device (phone via Tailscale, local Mac, etc.)
+      function resolveAppUrl(url) {
+        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+          return url.replace(/\/\/localhost(:\d+)/, '//' + window.location.hostname + '$1')
+                    .replace(/\/\/127\.0\.0\.1(:\d+)/, '//' + window.location.hostname + '$1');
+        }
+        return url;
+      }
+
+      var html = '';
+      for (var i = 0; i < apps.length; i++) {
+        var app = apps[i];
+        var statusClass = app._status || 'checking';
+        var icon = app.icon || app.name.charAt(0).toUpperCase();
+        var color = app.color || COLORS[i % COLORS.length];
+        var tags = '';
+        if (app.project_key) {
+          tags += '<span class="app-tag integrated">Agent Brain linked</span>';
+        }
+        if (app.repo_url) {
+          tags += '<span class="app-tag">Git repo</span>';
+        }
+
+        var displayUrl = resolveAppUrl(app.url);
+        html += '<a class="app-card" href="' + escHtml(displayUrl) + '" target="_blank" rel="noopener" data-id="' + escHtml(app.id) + '">' +
+          '<div class="app-card-top">' +
+            '<div class="app-icon" style="background:' + escHtml(color) + '">' + escHtml(icon) + '</div>' +
+            '<div class="app-info">' +
+              '<div class="app-name">' + escHtml(app.name) + '</div>' +
+              '<div class="app-url">' + escHtml(displayUrl) + '</div>' +
+            '</div>' +
+            '<div class="app-status ' + statusClass + '"></div>' +
+          '</div>' +
+          (app.description ? '<div class="app-description">' + escHtml(app.description) + '</div>' : '') +
+          (tags ? '<div class="app-meta">' + tags + '</div>' : '') +
+          '<div style="position:absolute;top:8px;right:8px;display:flex;gap:4px;">' +
+            '<button class="btn btn-cancel" style="padding:4px 10px;font-size:12px;" onclick="event.preventDefault();event.stopPropagation();openEditModal(\'' + escHtml(app.id) + '\')">Edit</button>' +
+            '<button class="btn btn-danger" onclick="event.preventDefault();event.stopPropagation();deleteApp(\'' + escHtml(app.id) + '\')">Delete</button>' +
+          '</div>' +
+        '</a>';
+      }
+      html += '<div class="add-app-card" onclick="openAddModal()">+ Add App</div>';
+      grid.innerHTML = html;
+    }
+
+    function checkHealth() {
+      fetch('/api/apps/health')
+        .then(function(r) { return r.json(); })
+        .then(function(results) {
+          for (var i = 0; i < apps.length; i++) {
+            if (results[apps[i].id] !== undefined) {
+              apps[i]._status = results[apps[i].id] ? 'online' : 'offline';
+            }
+          }
+          render();
+        })
+        .catch(function() {});
+    }
+
+    function openAddModal() {
+      editingId = null;
+      document.getElementById('modalTitle').textContent = 'Add App';
+      document.getElementById('modalSaveBtn').textContent = 'Add';
+      document.getElementById('appNameInput').value = '';
+      document.getElementById('appUrlInput').value = '';
+      document.getElementById('appDescInput').value = '';
+      document.getElementById('appIconInput').value = '';
+      document.getElementById('appColorInput').value = '#6366f1';
+      document.getElementById('modal').classList.add('open');
+    }
+
+    function openEditModal(id) {
+      var app = apps.find(function(a) { return a.id === id; });
+      if (!app) return;
+      editingId = id;
+      document.getElementById('modalTitle').textContent = 'Edit App';
+      document.getElementById('modalSaveBtn').textContent = 'Save';
+      document.getElementById('appNameInput').value = app.name;
+      document.getElementById('appUrlInput').value = app.url;
+      document.getElementById('appDescInput').value = app.description || '';
+      document.getElementById('appIconInput').value = app.icon || '';
+      document.getElementById('appColorInput').value = app.color || '#6366f1';
+      document.getElementById('modal').classList.add('open');
+    }
+
+    function closeModal() {
+      document.getElementById('modal').classList.remove('open');
+      editingId = null;
+    }
+
+    function saveApp() {
+      var name = document.getElementById('appNameInput').value.trim();
+      var url = document.getElementById('appUrlInput').value.trim();
+      var desc = document.getElementById('appDescInput').value.trim();
+      var icon = document.getElementById('appIconInput').value.trim();
+      var color = document.getElementById('appColorInput').value.trim();
+
+      if (!name || !url) return alert('Name and URL are required');
+
+      var body = { name: name, url: url, description: desc, icon: icon, color: color };
+
+      if (editingId) {
+        fetch('/api/apps/' + editingId, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }).then(function() { closeModal(); init(); });
+      } else {
+        fetch('/api/apps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }).then(function() { closeModal(); init(); });
+      }
+    }
+
+    function deleteApp(id) {
+      if (!confirm('Delete this app?')) return;
+      fetch('/api/apps/' + id, { method: 'DELETE' })
+        .then(function() { init(); });
+    }
+
+    function escHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s || '';
+      return d.innerHTML;
+    }
+
+    // Auto-refresh health every 30s
+    setInterval(checkHealth, 30000);
+
+    init();
+  </script>
+</body>
+</html>
