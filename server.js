@@ -649,7 +649,7 @@ async function buildCheckpointProtocol(checkpoint, response) {
   };
 }
 
-function appendSessionBindingInstructions(briefing, { sessionId, provider, sessionTitle }) {
+function appendSessionBindingInstructions(briefing, { sessionId, provider, sessionTitle, terminalId }) {
   if (!sessionId) return briefing;
 
   const normalizedProvider = normalizeProviderFamily(provider);
@@ -664,6 +664,8 @@ curl -s -X POST http://localhost:3030/api/checkpoints \\
   -H "Content-Type: application/json" \\
   -d '{"project_dir":"'$PROJECT_KEY'","session_id":"${sessionId}","question":"Your question","options":["Option 1","Option 2"]}'`;
 
+  const terminalIdLine = terminalId ? `- Terminal id: \`${terminalId}\` (for terminal isolation)\n` : "";
+
   return `${briefing}
 
 ## Agent Brain Session Binding
@@ -672,7 +674,7 @@ This session is attached to a specific Agent Brain session record.
 
 - Agent Brain session id: \`${sessionId}\`
 - Provider: \`${normalizedProvider}\`
-- Session label: ${sessionTitle || "(use current session title)"}
+${terminalIdLine}- Session label: ${sessionTitle || "(use current session title)"}
 
 When posting checkpoints, always include this session id:
 
@@ -1457,6 +1459,12 @@ function nowId() {
   );
 }
 
+function generateTerminalId() {
+  // Generate a unique terminal ID: timestamp + random suffix
+  // This persists for the terminal's lifetime and isolates it from other terminals
+  return `term-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 // ── Session management ───────────────────────────────────────────────────────
 
 async function createSession() {
@@ -1615,6 +1623,27 @@ app.get("/api/sessions", async (_req, res) => {
   })));
 });
 
+// Create a new Agent Brain session manually (for terminal isolation)
+app.post("/api/sessions", async (req, res) => {
+  const { title, provider, cc_project_dir, terminal_id } = req.body;
+
+  const session = await createSession();
+  if (title) session.title = title;
+  if (provider) session.provider = normalizeProviderFamily(provider);
+  if (cc_project_dir) session.cc_project_dir = cc_project_dir;
+  if (terminal_id) session.terminal_id = terminal_id;
+  session.messages = [];
+
+  await saveSession(session);
+
+  res.json({
+    session_id: session.session_id,
+    title: session.title,
+    provider: session.provider,
+    terminal_id: session.terminal_id
+  });
+});
+
 app.get("/api/sessions/:id", async (req, res) => {
   const session = await loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
@@ -1724,9 +1753,10 @@ app.post("/chat/new", async (req, res) => {
   const provider = req.body.provider || "claude";
   if (!firstMessage) return res.status(400).json({ error: "First message required" });
 
-  // Create Agent Brain session
+  // Create Agent Brain session with unique terminal_id
   const session = await createSession();
   session.provider = provider;
+  session.terminal_id = generateTerminalId();
 
   // Auto-title from first message
   session.title = firstMessage.length > 50 ? firstMessage.slice(0, 47) + "..." : firstMessage;
@@ -1786,7 +1816,8 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
       briefing = appendSessionBindingInstructions(briefing, {
         sessionId: session.session_id,
         provider: "codex",
-        sessionTitle: session.title
+        sessionTitle: session.title,
+        terminalId: session.terminal_id
       });
 
       // Generate a handoff ID for tracking
@@ -1872,7 +1903,8 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
     briefing = appendSessionBindingInstructions(briefing, {
       sessionId: session.session_id,
       provider: "claude",
-      sessionTitle: session.title
+      sessionTitle: session.title,
+      terminalId: session.terminal_id
     });
 
     // Generate a handoff ID for tracking
@@ -2092,21 +2124,42 @@ app.get("/api/claude-sessions/:projectDir/:sessionId/pending-permission", (req, 
 });
 
 // Resume a Claude Code session into Agent Brain
+// If terminal_id is provided, ensures terminal isolation even when CC UUIDs are shared
 app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", async (req, res) => {
   const { projectDir, sessionId } = req.params;
+  const terminalId = req.body?.terminal_id || req.query?.terminal_id || null;
 
   // Check if an Agent Brain session already exists for this CC session
   const sessions = await listSessions();
-  let existingId = null;
+  let existingSession = null;
   for (const s of sessions) {
     const full = await loadSession(s.session_id);
     if (full && full.claude_session_id === sessionId && full.cc_project_dir === projectDir) {
-      existingId = s.session_id;
-      break;
+      // If terminal_id is provided, only match if terminal_ids are compatible
+      if (terminalId) {
+        // Match if: existing has same terminal_id, or existing has no terminal_id (legacy)
+        if (full.terminal_id === terminalId) {
+          existingSession = full;
+          break;
+        }
+        // If existing has a different terminal_id, keep looking or create new
+        if (full.terminal_id && full.terminal_id !== terminalId) {
+          continue;
+        }
+        // Existing has no terminal_id (legacy) - claim it for this terminal
+        existingSession = full;
+        existingSession.terminal_id = terminalId;
+        await saveSession(existingSession);
+        break;
+      } else {
+        // No terminal_id provided - return first match (legacy behavior)
+        existingSession = full;
+        break;
+      }
     }
   }
-  if (existingId) {
-    return res.json({ session_id: existingId });
+  if (existingSession) {
+    return res.json({ session_id: existingSession.session_id, terminal_id: existingSession.terminal_id });
   }
 
   // Verify the CC session exists
@@ -2117,11 +2170,12 @@ app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", async (req, res) =
   const session = await createSession();
   session.claude_session_id = sessionId;
   session.cc_project_dir = projectDir;
+  session.terminal_id = terminalId;
   session.messages = []; // messages are read live from JSONL
   // Auto-name: "Project-Name #N"
   await autoNameSession(session);
   await saveSession(session);
-  res.json({ session_id: session.session_id });
+  res.json({ session_id: session.session_id, terminal_id: session.terminal_id });
 });
 
 // ── Codex session browsing ──────────────────────────────────────────────────
@@ -3981,11 +4035,12 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
     }
     // For Codex, we'll detect new sessions via codexDiscovery
 
-    // Create an Agent Brain session for the new handoff
+    // Create an Agent Brain session for the new handoff with unique terminal_id
     const newSession = await createSession();
     newSession.title = `Handoff: ${record.project_name || record.project_dir}`;
     newSession.cc_project_dir = record.project_dir;
     newSession.provider = provider;
+    newSession.terminal_id = generateTerminalId();
     newSession.handoff_from = record.from_session_title || null;
     await saveSession(newSession);
     await setSessionStartupContract(newSession.session_id, {
@@ -4031,7 +4086,8 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
     briefingToUse = appendSessionBindingInstructions(briefingToUse, {
       sessionId: newSession.session_id,
       provider,
-      sessionTitle: newSession.title
+      sessionTitle: newSession.title,
+      terminalId: newSession.terminal_id
     });
 
     // Spawn the terminal session
@@ -4998,10 +5054,11 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
       } catch (_) {}
     }
 
-    // Create new Agent Brain session with date-based name
+    // Create new Agent Brain session with date-based name and unique terminal_id
     const newSession = await createSession();
     newSession.title = `${projectConfig.name || record.project_name} - ${today}`;
     newSession.cc_project_dir = record.project_dir;
+    newSession.terminal_id = generateTerminalId();
     newSession.handoff_from = "Morning Refresh";
     newSession.provider = provider;
     await saveSession(newSession);
@@ -5046,7 +5103,8 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
     const fullBriefing = appendSessionBindingInstructions(refreshBriefing, {
       sessionId: newSession.session_id,
       provider,
-      sessionTitle: newSession.title
+      sessionTitle: newSession.title,
+      terminalId: newSession.terminal_id
     });
     const result = await handoff.spawnDesktopSession({
       cwd,
@@ -5308,10 +5366,11 @@ curl -s --max-time 86410 -X POST http://localhost:3030/api/checkpoints \\
       .update({ briefing })
       .eq("id", handoffRecord.id);
 
-    // Create AI Cron session
+    // Create AI Cron session with unique terminal_id
     const newSession = await createSession();
     newSession.title = `Explore: ${title}`;
     newSession.cc_project_dir = projectDir;
+    newSession.terminal_id = generateTerminalId();
     newSession.handoff_from = "AI Monitor";
     await saveSession(newSession);
 
@@ -5333,7 +5392,8 @@ curl -s --max-time 86410 -X POST http://localhost:3030/api/checkpoints \\
     const boundBriefing = appendSessionBindingInstructions(briefing, {
       sessionId: newSession.session_id,
       provider: "claude",
-      sessionTitle: newSession.title
+      sessionTitle: newSession.title,
+      terminalId: newSession.terminal_id
     });
 
     const result = await handoff.spawnDesktopSession({
@@ -5876,10 +5936,11 @@ curl -s -X POST http://localhost:3030/api/maintenance/findings/mark-fixed \\
       .update({ briefing })
       .eq("id", handoffRecord.id);
 
-    // Create session
+    // Create session with unique terminal_id
     const newSession = await createSession();
     newSession.title = `Fix: ${finding.message?.slice(0, 40)}...`;
     newSession.cc_project_dir = projectDir;
+    newSession.terminal_id = generateTerminalId();
     newSession.handoff_from = "Maintenance Monitor";
     await saveSession(newSession);
 
@@ -5900,7 +5961,8 @@ curl -s -X POST http://localhost:3030/api/maintenance/findings/mark-fixed \\
     const boundBriefing = appendSessionBindingInstructions(briefing, {
       sessionId: newSession.session_id,
       provider: "claude",
-      sessionTitle: newSession.title
+      sessionTitle: newSession.title,
+      terminalId: newSession.terminal_id
     });
 
     await handoff.spawnDesktopSession({
