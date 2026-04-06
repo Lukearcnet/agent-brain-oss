@@ -1170,6 +1170,8 @@
 
   <div id="token-tracker-section" style="padding:0 16px;"></div>
 
+  <div id="cost-tracker-section" style="padding:0 16px;"></div>
+
   <div class="footer">
     <a href="/chat">Browse All Sessions &rarr;</a>
   </div>
@@ -1873,7 +1875,7 @@
     }
 
     // Poll every 3 seconds
-    setInterval(function() { refresh(); refreshCheckpoints(); }, 3000);
+    setInterval(function() { refresh(); refreshCheckpoints(); }, 10000); // Reduced from 3s to 10s to improve responsiveness
 
     // Immediate refresh on tab visibility
     document.addEventListener("visibilitychange", function() {
@@ -2721,6 +2723,96 @@
       el.innerHTML = html;
     }
 
+    // Cost Tracker (Haiku API usage for checkpoint memory)
+    var costPeriod = "month";
+
+    function formatCost(n) {
+      if (n >= 1) return "$" + n.toFixed(2);
+      if (n >= 0.01) return "$" + n.toFixed(2);
+      if (n >= 0.001) return "$" + n.toFixed(3);
+      return "$" + n.toFixed(4);
+    }
+
+    async function refreshCostTracker() {
+      try {
+        var resp = await fetch("/api/costs/haiku?period=" + costPeriod);
+        var data = await resp.json();
+        renderCostTracker(data);
+      } catch (_) {}
+    }
+
+    function renderCostTracker(data) {
+      var el = document.getElementById("cost-tracker-section");
+      if (!el) return;
+
+      var costs = data.costs || {};
+      var daily = data.daily || [];
+
+      var periods = ["day", "week", "month", "all"];
+      var periodLabels = { day: "Today", week: "7 Days", month: "30 Days", all: "All Time" };
+
+      var html = '<div class="section" style="margin-top:12px;">';
+      html += '<div class="section-header" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">';
+      html += '  <span style="font-size:15px;font-weight:700;color:#1c1c1e;">Haiku API Cost</span>';
+      html += '  <span style="font-size:11px;color:#8e8e93;font-weight:500;">(Checkpoint Memory)</span>';
+      html += '  <div style="margin-left:auto;display:flex;gap:4px;">';
+      for (var i = 0; i < periods.length; i++) {
+        var p = periods[i];
+        var active = p === costPeriod;
+        html += '<button onclick="costPeriod=\'' + p + '\';refreshCostTracker()" style="border:none;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;'
+          + (active ? 'background:#10b981;color:#fff;' : 'background:#f3f4f6;color:#6b7280;')
+          + '">' + periodLabels[p] + '</button>';
+      }
+      html += '  </div>';
+      html += '</div>';
+
+      // Summary cards
+      html += '<div style="display:flex;gap:8px;margin-bottom:12px;">';
+      // Total cost card
+      html += '<div style="flex:1;background:linear-gradient(135deg,#ecfdf5,#d1fae5);border-radius:12px;padding:12px;">';
+      html += '  <div style="font-size:11px;font-weight:600;color:#059669;text-transform:uppercase;letter-spacing:0.5px;">Total Cost</div>';
+      html += '  <div style="font-size:22px;font-weight:700;color:#065f46;margin-top:4px;">' + formatCost(costs.total || 0) + '</div>';
+      html += '  <div style="font-size:11px;color:#059669;margin-top:2px;">' + (data.summary_count || 0) + ' summaries</div>';
+      html += '</div>';
+      // Breakdown card
+      html += '<div style="flex:1;background:#f9fafb;border-radius:12px;padding:12px;">';
+      html += '  <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Breakdown</div>';
+      html += '  <div style="font-size:12px;color:#374151;margin-top:6px;line-height:1.6;">';
+      html += '    Summaries: ' + formatCost(costs.summaries || 0) + '<br>';
+      html += '    Streams: ' + formatCost(costs.streams || 0) + '<br>';
+      html += '    Consolidations: ' + formatCost(costs.consolidations || 0);
+      html += '  </div>';
+      html += '</div>';
+      html += '</div>';
+
+      // Bar chart
+      if (daily.length > 0) {
+        var maxCost = Math.max.apply(null, daily.map(function(d) { return d.cost; }));
+        if (maxCost === 0) maxCost = 0.001;
+
+        html += '<div style="background:#fff;border-radius:12px;border:1px solid #e5e5ea;padding:12px;overflow-x:auto;">';
+        html += '<div style="display:flex;align-items:flex-end;gap:3px;height:60px;min-width:' + (daily.length * 24) + 'px;">';
+
+        for (var j = 0; j < daily.length; j++) {
+          var day = daily[j];
+          var pct = day.cost / maxCost;
+          var barH = Math.max(2, Math.round(pct * 50));
+          var label = day.date.slice(5);
+
+          html += '<div style="flex:1;min-width:18px;display:flex;flex-direction:column;align-items:center;gap:0;" title="' + day.date + ': ' + formatCost(day.cost) + ' (' + day.summaries + ' summaries)">';
+          html += '<div style="width:100%;max-width:28px;height:' + barH + 'px;background:linear-gradient(180deg,#34d399,#10b981);border-radius:4px 4px 0 0;"></div>';
+          html += '<div style="font-size:9px;color:#9ca3af;margin-top:4px;white-space:nowrap;">' + label + '</div>';
+          html += '</div>';
+        }
+
+        html += '</div>';
+        html += '</div>';
+      }
+
+      html += '</div>';
+      el.innerHTML = html;
+    }
+
     // Initial load
     refresh();
     refreshOutbox();
@@ -2730,10 +2822,12 @@
     refreshMaintenance();
     refreshTerminals();
     refreshTokenTracker();
+    refreshCostTracker();
     setInterval(refreshMaintenance, 60000); // Refresh maintenance every minute
     setInterval(refreshTerminals, 10000); // Refresh terminals every 10 seconds
     setInterval(refreshOutbox, 15000); // Refresh outbox every 15 seconds
     setInterval(refreshTokenTracker, 60000); // Refresh token tracker every minute
+    setInterval(refreshCostTracker, 60000); // Refresh cost tracker every minute
 
     // Register service worker for PWA
     if ("serviceWorker" in navigator) {

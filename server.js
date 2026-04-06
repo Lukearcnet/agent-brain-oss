@@ -52,6 +52,7 @@ const gcalClient = require("./lib/calendar/gcal-client");
 const calendar = require("./lib/calendar");
 const codexDiscovery = require("./lib/codex-discovery");
 const maintenance = require("./lib/maintenance");
+const checkpointMemory = require("./lib/checkpoint-memory");
 const { normalizeSessionTitle, getDisplaySessionTitle, getProjectNameFromPath } = require("./lib/session-titles");
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -702,34 +703,49 @@ async function resolveCheckpointSession({ projectDir, provider, sessionId, sessi
   const allSessions = await listSessions();
 
   // Priority 2: Lookup by Claude Code's unique session UUID (terminal-specific)
+  // Note: Claude Code can reuse session UUIDs, so multiple AB sessions may match.
+  // Prefer sessions with terminal_id set (newer, properly tracked), then most recent.
   if (claudeSessionId) {
-    const byCC = allSessions.find(s => s.claude_session_id === claudeSessionId && s.cc_project_dir === projectDir);
-    if (byCC) {
+    const ccMatches = allSessions
+      .filter(s => s.claude_session_id === claudeSessionId && s.cc_project_dir === projectDir)
+      .sort((a, b) => {
+        // Prefer sessions with terminal_id (newer tracking system)
+        if (a.terminal_id && !b.terminal_id) return -1;
+        if (!a.terminal_id && b.terminal_id) return 1;
+        // Then by most recently updated
+        return new Date(b.updated_at) - new Date(a.updated_at);
+      });
+    if (ccMatches.length > 0) {
       return {
-        session_id: byCC.session_id,
-        session_title: getSessionDisplayTitle(byCC)
+        session_id: ccMatches[0].session_id,
+        session_title: getSessionDisplayTitle(ccMatches[0])
       };
     }
-  }
 
-  // Priority 3: Fallback to project-dir matching (legacy behavior)
-  const matching = allSessions
-    .filter(s => s.cc_project_dir === projectDir)
-    .filter(s => sessionMatchesProviderFamily(s, provider))
-    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-
-  if (matching.length === 0) {
+    // claudeSessionId provided but no match - create a new session for this terminal
+    // This prevents cross-session pollution that occurred with the old fallback logic
+    const newSession = await createSession();
+    newSession.claude_session_id = claudeSessionId;
+    newSession.cc_project_dir = projectDir;
+    newSession.provider = normalizeProviderFamily(provider || 'claude');
+    newSession.terminal_id = generateTerminalId();
+    newSession.messages = [];
+    await autoNameSession(newSession);
+    await saveSession(newSession);
+    console.log(`[session-resolve] Created new session ${newSession.session_id} for unmatched claude_session_id ${claudeSessionId}`);
     return {
-      session_id: null,
-      session_title: sessionLabel || null
+      session_id: newSession.session_id,
+      session_title: getSessionDisplayTitle(newSession)
     };
   }
 
-  const exactLabel = matching.find(s => getSessionDisplayTitle(s) === sessionLabel || s.title === sessionLabel);
-  const chosen = exactLabel || matching[0];
+  // No claudeSessionId provided - return null instead of falling back to "most recent"
+  // OLD behavior: picked most recently updated session in project (caused cross-session pollution)
+  // NEW behavior: return null so checkpoint is unlinked - surfaces missing claude_session_id
+  console.log(`[session-resolve] No claude_session_id provided for project ${projectDir} - returning null to prevent cross-session pollution`);
   return {
-    session_id: chosen.session_id,
-    session_title: getSessionDisplayTitle(chosen)
+    session_id: null,
+    session_title: sessionLabel || null
   };
 }
 
@@ -808,7 +824,7 @@ function getCheckpointExecutionReminder(provider) {
   if (provider === "codex") {
     return "ATOMIC CYCLE PROTOCOL (CODEX): You are now in EXECUTING state. Execute the user's instruction, then POST the next checkpoint with `ab-checkpoint ask`. You may try `ab-checkpoint wait-once` once for an immediate reply, but Agent Brain owns the long wait. If the session resumes later, run `ab-checkpoint consume` (or `ab-checkpoint wait-once` with no id) before doing anything else.";
   }
-  return "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results using the agent_brain_checkpoint MCP tool (preferred) or curl fallback, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints.";
+  return "ATOMIC CYCLE PROTOCOL: You are now in EXECUTING state. (1) Execute the user's instruction above, (2) POST a new checkpoint with your results using the agent_brain_checkpoint MCP tool (preferred) or curl fallback, (3) Return to BLOCKING state. Do NOT send a final chat response - all user communication must be via checkpoints. IMPORTANT: If you have a session_id from handoff binding, always include it in checkpoint calls. If not, extract your claude_session_id from your transcript path and include it to ensure correct session binding.";
 }
 
 async function sendCheckpointFollowup({ checkpointId, projectDir, sessionId, provider, response, reminder }) {
@@ -1524,6 +1540,99 @@ app.get("/api/tokens/usage", (req, res) => {
   }
 });
 
+// Haiku cost tracking endpoint (checkpoint memory system)
+app.get("/api/costs/haiku", async (req, res) => {
+  try {
+    const period = req.query.period || "month"; // day, week, month, all
+
+    // Calculate date range
+    let since;
+    const now = new Date();
+    switch (period) {
+      case "day":
+        since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case "week":
+        since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case "month":
+        since = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        since = new Date(0); // All time
+    }
+
+    // Count checkpoint summaries
+    const { count: summaryCount } = await db.supabase
+      .from("checkpoint_summaries")
+      .select("*", { count: "exact", head: true })
+      .gte("created_at", since.toISOString());
+
+    // Count work stream refreshes (approximated by project_work_streams updates)
+    const { count: streamCount } = await db.supabase
+      .from("project_work_streams")
+      .select("*", { count: "exact", head: true })
+      .gte("updated_at", since.toISOString());
+
+    // Count daily consolidations
+    const { count: consolidationCount } = await db.supabase
+      .from("session_daily_summaries")
+      .select("*", { count: "exact", head: true })
+      .gte("created_at", since.toISOString());
+
+    // Haiku 3 pricing: $0.25/1M input, $1.25/1M output
+    // Estimates per operation:
+    // - Checkpoint summary: ~500 input + 100 output = $0.00025
+    // - Work stream detection: ~1000 input + 300 output = $0.000625
+    // - Daily consolidation: ~500 input + 200 output = $0.000375
+
+    const summaryCost = (summaryCount || 0) * 0.00025;
+    const streamCost = (streamCount || 0) * 0.000625;
+    const consolidationCost = (consolidationCount || 0) * 0.000375;
+    const totalCost = summaryCost + streamCost + consolidationCost;
+
+    // Get daily breakdown for chart
+    const daily = [];
+    const days = period === "day" ? 1 : period === "week" ? 7 : period === "month" ? 30 : 90;
+    for (let i = days - 1; i >= 0; i--) {
+      const dayStart = new Date(now);
+      dayStart.setDate(dayStart.getDate() - i);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+
+      const { count: daySummaries } = await db.supabase
+        .from("checkpoint_summaries")
+        .select("*", { count: "exact", head: true })
+        .gte("created_at", dayStart.toISOString())
+        .lt("created_at", dayEnd.toISOString());
+
+      daily.push({
+        date: dayStart.toISOString().split("T")[0],
+        summaries: daySummaries || 0,
+        cost: (daySummaries || 0) * 0.00025
+      });
+    }
+
+    res.json({
+      period,
+      summary_count: summaryCount || 0,
+      stream_count: streamCount || 0,
+      consolidation_count: consolidationCount || 0,
+      costs: {
+        summaries: summaryCost,
+        streams: streamCost,
+        consolidations: consolidationCost,
+        total: totalCost
+      },
+      daily
+    });
+  } catch (err) {
+    console.error("[api] Haiku cost error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Health check endpoint for monitoring
 app.get("/api/health", async (_req, res) => {
   const status = {
@@ -1909,15 +2018,23 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
 
     // Generate a handoff ID for tracking
     const handoffId = `new-${Date.now()}`;
+    const spawnTime = Date.now();
+    const expectedProjectDir = cwd.replace(/\//g, "-");
 
-    // Snapshot existing JSONL files so we can detect the new one
-    const existingFiles = new Set();
+    // Snapshot existing JSONL files WITH mtimes so we can detect modifications
+    // This handles Claude Code reusing existing session UUIDs
+    const existingFileMtimes = new Map();
     try {
       for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
         const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
         if (!fs.statSync(dirPath).isDirectory()) continue;
         for (const f of fs.readdirSync(dirPath)) {
-          if (f.endsWith(".jsonl")) existingFiles.add(dir + "/" + f);
+          if (f.endsWith(".jsonl")) {
+            const filePath = path.join(dirPath, f);
+            try {
+              existingFileMtimes.set(dir + "/" + f, fs.statSync(filePath).mtimeMs);
+            } catch (_) {}
+          }
         }
       }
     } catch (_) {}
@@ -1938,21 +2055,24 @@ curl -s -X PUT http://localhost:3030/api/memory/$PROJECT_KEY \\
 
     await saveSession(session);
 
-    // Watch for the new JSONL to appear (poll for up to 30 seconds)
+    // Watch for new or modified JSONL to appear (poll for up to 30 seconds)
     let linked = false;
     for (let attempt = 0; attempt < 30; attempt++) {
       await new Promise(r => setTimeout(r, 1000));
       try {
         for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+          // Only look in the expected project directory
+          if (dir !== expectedProjectDir) continue;
           const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
           if (!fs.statSync(dirPath).isDirectory()) continue;
           for (const f of fs.readdirSync(dirPath)) {
             if (!f.endsWith(".jsonl")) continue;
             const key = dir + "/" + f;
-            if (existingFiles.has(key)) continue;
-            // New JSONL found — check if it's recent (within last 20 seconds)
-            const stat = fs.statSync(path.join(dirPath, f));
-            if (Date.now() - stat.mtimeMs < 20000) {
+            const filePath = path.join(dirPath, f);
+            const stat = fs.statSync(filePath);
+            const previousMtime = existingFileMtimes.get(key) || 0;
+            // Link if file was created OR modified after spawn time
+            if (stat.mtimeMs > spawnTime && stat.mtimeMs > previousMtime) {
               session.cc_project_dir = dir;
               session.claude_session_id = f.replace(".jsonl", "");
               await saveSession(session);
@@ -1983,6 +2103,14 @@ app.patch("/api/sessions/:id", async (req, res) => {
       if (!nextTitle) return res.status(400).json({ error: "title is required" });
       session.title = nextTitle;
     }
+    // Allow updating claude_session_id for correcting wrong CC session links
+    if (req.body.claude_session_id !== undefined) {
+      session.claude_session_id = req.body.claude_session_id;
+    }
+    // Allow updating cc_project_dir for normalizing path formats
+    if (req.body.cc_project_dir !== undefined) {
+      session.cc_project_dir = req.body.cc_project_dir;
+    }
     await saveSession(session);
 
     const displayTitle = getSessionDisplayTitle(session);
@@ -2006,7 +2134,7 @@ app.patch("/api/sessions/:id", async (req, res) => {
     logEvent("session_renamed", session.session_id, {
       raw_title: session.title,
       display_title: displayTitle
-    }).catch(() => {});
+    });
 
     res.json({
       ok: true,
@@ -2135,22 +2263,16 @@ app.post("/api/claude-sessions/:projectDir/:sessionId/adopt", async (req, res) =
   for (const s of sessions) {
     const full = await loadSession(s.session_id);
     if (full && full.claude_session_id === sessionId && full.cc_project_dir === projectDir) {
-      // If terminal_id is provided, only match if terminal_ids are compatible
+      // If terminal_id is provided, only match if terminal_ids match exactly
       if (terminalId) {
-        // Match if: existing has same terminal_id, or existing has no terminal_id (legacy)
+        // Match only if existing has same terminal_id
         if (full.terminal_id === terminalId) {
           existingSession = full;
           break;
         }
-        // If existing has a different terminal_id, keep looking or create new
-        if (full.terminal_id && full.terminal_id !== terminalId) {
-          continue;
-        }
-        // Existing has no terminal_id (legacy) - claim it for this terminal
-        existingSession = full;
-        existingSession.terminal_id = terminalId;
-        await saveSession(existingSession);
-        break;
+        // Don't match if terminal_ids differ or if legacy session (no terminal_id)
+        // Legacy sessions should not be claimed by new terminals to avoid confusion
+        continue;
       } else {
         // No terminal_id provided - return first match (legacy behavior)
         existingSession = full;
@@ -3414,6 +3536,16 @@ app.post("/api/checkpoints", async (req, res) => {
   // Log event
   logEvent("checkpoint_created", null, { id, project_dir, question_length: question.length, replaces: replaces || null });
 
+  // Background: summarize checkpoint for memory system (non-blocking)
+  checkpointMemory.processCheckpoint({
+    id,
+    project_dir,
+    question,
+    session_id: checkpointSession.session_id,
+    claude_session_id: claude_session_id,
+    options
+  }).catch(err => console.error("[checkpoint-memory] Process error:", err.message));
+
   if (checkpointSession.session_id) {
     const startup = await getSessionStartupContract(checkpointSession.session_id);
     if (startup?.requires_initial_direction && startup.authorization_status !== "granted") {
@@ -3492,40 +3624,52 @@ app.post("/api/checkpoints/:id/respond", async (req, res) => {
     return res.status(404).json({ error: "Checkpoint not found or already responded" });
   }
 
+  // Fire-and-forget: logging is non-critical (already async internally)
   logEvent("checkpoint_responded", null, {
     id,
     project_dir: checkpoint.project_dir,
     response_length: response.length
   });
 
+  // Background: update checkpoint summary with response (non-blocking)
+  checkpointMemory.processCheckpoint({
+    ...checkpoint,
+    response
+  }).catch(err => console.error("[checkpoint-memory] Response update error:", err.message));
+
   const { protocol, reminder } = await buildCheckpointProtocol(checkpoint, response);
 
+  // Run session state update and followup message in parallel (both are independent)
+  const parallelOps = [];
+
   if (checkpoint.session_id) {
-    await setSessionRuntimeState(checkpoint.session_id, {
-      state: protocol?.your_state === "AWAITING_DIRECTION" ? "awaiting_initial_direction" : "executing",
-      wait_required: false,
-      checkpoint_id: checkpoint.id,
-      wait_kind: protocol?.mode === "startup_gate" ? "startup" : "general",
-      last_wait_result: "responded",
-      response_ready: checkpoint.provider === "codex",
-      response_text: response,
-      responded_at: checkpoint.responded_at || new Date().toISOString(),
-      provider: checkpoint.provider
-    });
+    parallelOps.push(
+      setSessionRuntimeState(checkpoint.session_id, {
+        state: protocol?.your_state === "AWAITING_DIRECTION" ? "awaiting_initial_direction" : "executing",
+        wait_required: false,
+        checkpoint_id: checkpoint.id,
+        wait_kind: protocol?.mode === "startup_gate" ? "startup" : "general",
+        last_wait_result: "responded",
+        response_ready: checkpoint.provider === "codex",
+        response_text: response,
+        responded_at: checkpoint.responded_at || new Date().toISOString(),
+        provider: checkpoint.provider
+      }).catch(e => console.warn("[checkpoint-respond] setSessionRuntimeState error:", e.message))
+    );
   }
 
-  try {
-    await sendCheckpointFollowup({
+  parallelOps.push(
+    sendCheckpointFollowup({
       checkpointId: id,
       projectDir: checkpoint.project_dir,
       sessionId: checkpoint.session_id,
       provider: checkpoint.provider,
       response,
       reminder
-    });
-  } catch (e) {
-    console.warn("[checkpoint-followup] Failed to queue follow-up:", e.message);
-  }
+    }).catch(e => console.warn("[checkpoint-followup] Failed to queue follow-up:", e.message))
+  );
+
+  await Promise.all(parallelOps);
 
   if (checkpoint.provider === "codex" && checkpoint.session_id) {
     scheduleCodexReactivation(checkpoint.session_id, checkpoint.id);
@@ -4020,15 +4164,22 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
     const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.dir === record.project_dir) || {};
     const cwd = projectConfig.cwd || process.env.HOME || "/tmp";
 
-    // Snapshot existing session files so we can detect the new one
-    const existingFiles = new Set();
+    // Snapshot existing session files WITH their mtimes so we can detect modifications
+    // This handles Claude Code reusing existing session UUIDs
+    const existingFileMtimes = new Map();
+    const spawnTime = Date.now();
     if (provider === "claude") {
       try {
         for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
           const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
           if (!fs.statSync(dirPath).isDirectory()) continue;
           for (const f of fs.readdirSync(dirPath)) {
-            if (f.endsWith(".jsonl")) existingFiles.add(dir + "/" + f);
+            if (f.endsWith(".jsonl")) {
+              const filePath = path.join(dirPath, f);
+              try {
+                existingFileMtimes.set(dir + "/" + f, fs.statSync(filePath).mtimeMs);
+              } catch (_) {}
+            }
           }
         }
       } catch (_) {}
@@ -4112,30 +4263,36 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
     // Background: poll for the new session to link it
     (async () => {
       if (provider === "claude") {
-        // Poll for new JSONL files
+        // Poll for new or modified JSONL files in the expected project directory
+        // This handles both new sessions AND Claude Code reusing existing UUIDs
+        const expectedProjectDir = record.project_dir;
         for (let attempt = 0; attempt < 30; attempt++) {
           await new Promise(r => setTimeout(r, 2000));
           try {
             for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+              // Only look in the expected project directory
+              if (dir !== expectedProjectDir) continue;
               const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
               if (!fs.statSync(dirPath).isDirectory()) continue;
               for (const f of fs.readdirSync(dirPath)) {
                 if (!f.endsWith(".jsonl")) continue;
                 const key = dir + "/" + f;
-                if (existingFiles.has(key)) continue;
-                const stat = fs.statSync(path.join(dirPath, f));
-                if (Date.now() - stat.mtimeMs < 30000) {
+                const filePath = path.join(dirPath, f);
+                const stat = fs.statSync(filePath);
+                const previousMtime = existingFileMtimes.get(key) || 0;
+                // Link if file was created OR modified after spawn time
+                if (stat.mtimeMs > spawnTime && stat.mtimeMs > previousMtime) {
                   newSession.claude_session_id = f.replace(".jsonl", "");
                   newSession.cc_project_dir = dir;
                   await saveSession(newSession);
-                  console.log(`[handoff] Linked spawned session ${newSession.session_id} to JSONL ${dir}/${f}`);
+                  console.log(`[handoff] Linked spawned session ${newSession.session_id} to JSONL ${dir}/${f} (mtime: ${new Date(stat.mtimeMs).toISOString()})`);
                   return;
                 }
               }
             }
           } catch (_) {}
         }
-        console.warn(`[handoff] Could not link JSONL for spawned session ${newSession.session_id} after 60s`);
+        console.warn(`[handoff] Could not link JSONL for spawned session ${newSession.session_id} after 60s in project ${expectedProjectDir}`);
       } else if (provider === "codex") {
         // Poll Codex SQLite for new sessions
         const startTime = Date.now();
@@ -4181,6 +4338,208 @@ app.get("/api/handoffs/:id", async (req, res) => {
   const record = await handoff.getHandoff(req.params.id);
   if (!record) return res.status(404).json({ error: "Handoff not found" });
   res.json(record);
+});
+
+// ── Project Work Streams ────────────────────────────────────────────────────
+
+// Detect work streams for a project (for project-level spawning)
+app.get("/api/projects/:dir/streams", async (req, res) => {
+  try {
+    const projectDir = decodeURIComponent(req.params.dir);
+    const streams = await checkpointMemory.getWorkStreams(projectDir);
+
+    // If no streams cached, run detection
+    if (streams.length === 0) {
+      const detected = await checkpointMemory.detectWorkStreams(projectDir);
+      return res.json({ streams: detected, cached: false });
+    }
+
+    res.json({ streams, cached: true });
+  } catch (err) {
+    console.error("[api] Project streams error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Refresh work stream detection
+app.post("/api/projects/:dir/streams/refresh", async (req, res) => {
+  try {
+    const projectDir = decodeURIComponent(req.params.dir);
+    const streams = await checkpointMemory.detectWorkStreams(projectDir);
+    res.json({ streams, refreshed: true });
+  } catch (err) {
+    console.error("[api] Stream refresh error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get checkpoint summaries for a project (for debugging/inspection)
+app.get("/api/projects/:dir/summaries", async (req, res) => {
+  try {
+    const projectDir = decodeURIComponent(req.params.dir);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+
+    const { data, error } = await db.supabase
+      .from("checkpoint_summaries")
+      .select("*")
+      .eq("project_dir", projectDir)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Spawn a new session for a project (optionally targeting a specific work stream)
+app.post("/api/projects/:dir/spawn", async (req, res) => {
+  try {
+    const projectDir = decodeURIComponent(req.params.dir);
+    const { stream_name, provider = "claude" } = req.body;
+
+    // Get project config
+    const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.dir === projectDir) || {};
+    const projectName = projectConfig.name || getProjectName(projectDir);
+    const cwd = projectConfig.cwd || process.env.HOME || "/tmp";
+
+    // Build handoff notes based on stream
+    let handoffNotes = "";
+    if (stream_name) {
+      const { data: streamData } = await db.supabase
+        .from("project_work_streams")
+        .select("*")
+        .eq("project_dir", projectDir)
+        .eq("stream_name", stream_name)
+        .single();
+
+      if (streamData) {
+        handoffNotes = `Continue work on the "${stream_name}" work stream.\n\nContext:\n${streamData.description || ""}${streamData.summary ? "\n\n" + streamData.summary : ""}`;
+      }
+    }
+
+    // Get recent checkpoint summaries for richer context
+    const { data: recentSummaries } = await db.supabase
+      .from("checkpoint_summaries")
+      .select("summary, work_stream, created_at")
+      .eq("project_dir", projectDir)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (recentSummaries && recentSummaries.length > 0) {
+      const contextBullets = recentSummaries
+        .filter(s => !stream_name || s.work_stream === stream_name)
+        .slice(0, 5)
+        .map(s => `- ${s.summary}`)
+        .join("\n");
+
+      if (contextBullets) {
+        handoffNotes += (handoffNotes ? "\n\n" : "") + "Recent activity:\n" + contextBullets;
+      }
+    }
+
+    // Create handoff record
+    const record = await handoff.createHandoff({
+      projectDir,
+      projectName,
+      cwd,
+      fromSessionTitle: stream_name ? `Project spawn (${stream_name})` : "Project spawn",
+      handoffNotes,
+      projectConfig,
+      targetProvider: provider
+    });
+
+    // Spawn desktop session
+    const spawnResult = await handoff.spawnDesktopSession({
+      cwd,
+      briefing: record.briefing,
+      handoffId: record.id,
+      provider
+    });
+
+    await handoff.markHandoffSpawned(record.id);
+
+    logEvent("project_spawn", null, {
+      project_dir: projectDir,
+      stream_name: stream_name || null,
+      provider,
+      handoff_id: record.id
+    });
+
+    res.json({
+      ok: true,
+      handoff_id: record.id,
+      project: projectName,
+      stream: stream_name || null,
+      provider,
+      method: spawnResult.method
+    });
+  } catch (err) {
+    console.error("[api] Project spawn error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List projects with their work streams (enriched version)
+app.get("/api/projects/with-streams", async (req, res) => {
+  try {
+    // Get folders (which represent projects)
+    const folders = await loadFolders();
+
+    // Get work streams for each project
+    const { data: allStreams } = await db.supabase
+      .from("project_work_streams")
+      .select("*")
+      .eq("active", true);
+
+    const streamsByProject = new Map();
+    for (const stream of (allStreams || [])) {
+      if (!streamsByProject.has(stream.project_dir)) {
+        streamsByProject.set(stream.project_dir, []);
+      }
+      streamsByProject.get(stream.project_dir).push(stream);
+    }
+
+    // Build response
+    const projects = [];
+    const seenDirs = new Set();
+
+    // Add folders first
+    for (const folder of folders) {
+      if (folder.session_ids.length === 0) continue;
+
+      // Find the most common project_dir for this folder
+      const sessions = await db.supabase
+        .from("sessions")
+        .select("cc_project_dir")
+        .in("session_id", folder.session_ids.slice(0, 10))
+        .then(r => r.data || []);
+
+      const dirCounts = {};
+      for (const s of sessions) {
+        if (s.cc_project_dir) {
+          dirCounts[s.cc_project_dir] = (dirCounts[s.cc_project_dir] || 0) + 1;
+        }
+      }
+
+      const primaryDir = Object.entries(dirCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!primaryDir || seenDirs.has(primaryDir)) continue;
+
+      seenDirs.add(primaryDir);
+      projects.push({
+        name: folder.name,
+        dir: primaryDir,
+        session_count: folder.session_ids.length,
+        streams: streamsByProject.get(primaryDir) || []
+      });
+    }
+
+    res.json({ projects });
+  } catch (err) {
+    console.error("[api] List projects error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Terminal Management ─────────────────────────────────────────────────────
@@ -5040,15 +5399,21 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
       }
     }
 
-    // Snapshot existing JSONL files
-    const existingFiles = new Set();
+    // Snapshot existing JSONL files WITH mtimes to detect modifications
+    const existingFileMtimes = new Map();
+    const spawnTime = Date.now();
     if (provider === "claude") {
       try {
         for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
           const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
           if (!fs.statSync(dirPath).isDirectory()) continue;
           for (const f of fs.readdirSync(dirPath)) {
-            if (f.endsWith(".jsonl")) existingFiles.add(dir + "/" + f);
+            if (f.endsWith(".jsonl")) {
+              const filePath = path.join(dirPath, f);
+              try {
+                existingFileMtimes.set(dir + "/" + f, fs.statSync(filePath).mtimeMs);
+              } catch (_) {}
+            }
           }
         }
       } catch (_) {}
@@ -5123,21 +5488,26 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
       folder_id: record.source_folder_id
     }).catch(console.error);
 
-    // Background: poll for the new JSONL to link
+    // Background: poll for new or modified JSONL to link
+    const expectedProjectDir = record.project_dir;
     (async () => {
       if (provider === "claude") {
         for (let attempt = 0; attempt < 30; attempt++) {
           await new Promise(r => setTimeout(r, 2000));
           try {
             for (const dir of fs.readdirSync(CLAUDE_SESSIONS_DIR)) {
+              // Only look in the expected project directory
+              if (dir !== expectedProjectDir) continue;
               const dirPath = path.join(CLAUDE_SESSIONS_DIR, dir);
               if (!fs.statSync(dirPath).isDirectory()) continue;
               for (const f of fs.readdirSync(dirPath)) {
                 if (!f.endsWith(".jsonl")) continue;
                 const key = dir + "/" + f;
-                if (existingFiles.has(key)) continue;
-                const stat = fs.statSync(path.join(dirPath, f));
-                if (Date.now() - stat.mtimeMs < 30000) {
+                const filePath = path.join(dirPath, f);
+                const stat = fs.statSync(filePath);
+                const previousMtime = existingFileMtimes.get(key) || 0;
+                // Link if file was created OR modified after spawn time
+                if (stat.mtimeMs > spawnTime && stat.mtimeMs > previousMtime) {
                   newSession.claude_session_id = f.replace(".jsonl", "");
                   newSession.cc_project_dir = dir;
                   await saveSession(newSession);
@@ -5148,6 +5518,7 @@ After outputting the above, proceed with reviewing the briefing and posting a ch
             }
           } catch (_) {}
         }
+        console.warn(`[morning-refresh] Could not link JSONL for session ${newSession.session_id} after 60s`);
       } else {
         const startTime = Date.now();
         for (let attempt = 0; attempt < 30; attempt++) {
@@ -7695,6 +8066,18 @@ ${content}`
       }
     }, { timezone: "America/Chicago" });
     console.log("[log-compaction] Scheduled for 3:00 AM Central");
+
+    // Checkpoint memory consolidation - 4:00 AM daily
+    cron.schedule("0 4 * * *", async () => {
+      console.log("[checkpoint-memory] Running daily consolidation...");
+      try {
+        const result = await checkpointMemory.runDailyConsolidation();
+        console.log(`[checkpoint-memory] Consolidated ${result.consolidated} checkpoint summaries`);
+      } catch (err) {
+        console.error("[checkpoint-memory] Consolidation error:", err.message);
+      }
+    }, { timezone: "America/Chicago" });
+    console.log("[checkpoint-memory] Consolidation scheduled for 4:00 AM Central");
   } catch (e) {
     console.warn("[morning-refresh] Cron setup failed:", e.message);
   }

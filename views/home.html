@@ -347,6 +347,85 @@
     .modal-btn:last-child { border-bottom: none; }
     .modal-btn:active { background: rgba(0,0,0,0.04); }
     .modal-btn.danger { color: #ff3b30; }
+    .modal-btn.primary { color: #6366f1; font-weight: 600; }
+
+    /* Spawn Modal */
+    .spawn-modal-body {
+      padding: 16px;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+    }
+    .spawn-label {
+      font-size: 12px;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .spawn-streams {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .spawn-stream {
+      background: #f8f8f8;
+      border: 2px solid transparent;
+      border-radius: 10px;
+      padding: 12px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      text-align: left;
+    }
+    .spawn-stream:hover { background: #f0f0f5; }
+    .spawn-stream.selected {
+      border-color: #6366f1;
+      background: #ede9fe;
+    }
+    .spawn-stream-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+    .spawn-stream-desc {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 2px;
+    }
+    .spawn-provider-row {
+      display: flex;
+      gap: 8px;
+    }
+    .spawn-provider-btn {
+      flex: 1;
+      padding: 12px;
+      border: 2px solid #e8e8ed;
+      border-radius: 10px;
+      background: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .spawn-provider-btn:hover { background: #f8f8f8; }
+    .spawn-provider-btn.selected {
+      border-color: #6366f1;
+      background: #ede9fe;
+      color: #4c1d95;
+    }
+    .spawn-btn {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      border: none;
+      background: linear-gradient(135deg,#6366f1,#8b5cf6);
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      color: #fff;
+      border-radius: 0 0 14px 14px;
+    }
+    .spawn-btn:disabled { opacity: 0.5; }
     .modal-cancel {
       display: block;
       width: 100%;
@@ -545,10 +624,33 @@
           <input type="text" id="folder-rename-input" placeholder="New name...">
           <button onclick="doRenameFolder()">Save</button>
         </div>
+        <button class="modal-btn primary" onclick="openSpawnModal()">Start New Session</button>
         <button class="modal-btn" onclick="showFolderRename()">Rename Project</button>
         <button class="modal-btn danger" onclick="doDeleteFolder()">Delete Project</button>
       </div>
       <button class="modal-cancel" onclick="closeFolderModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Spawn modal -->
+  <div class="modal-overlay" id="spawn-modal" onclick="closeSpawnModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title" id="spawn-modal-title">Start New Session</div>
+        <div class="spawn-modal-body">
+          <div class="spawn-label">Work Stream</div>
+          <div class="spawn-streams" id="spawn-streams">
+            <!-- Filled dynamically -->
+          </div>
+          <div class="spawn-label">Provider</div>
+          <div class="spawn-provider-row">
+            <button class="spawn-provider-btn selected" data-provider="claude" onclick="selectSpawnProvider('claude')">Claude</button>
+            <button class="spawn-provider-btn" data-provider="codex" onclick="selectSpawnProvider('codex')">Codex</button>
+          </div>
+        </div>
+        <button class="spawn-btn" id="spawn-btn" onclick="doSpawn()">Start Session</button>
+      </div>
+      <button class="modal-cancel" onclick="closeSpawnModal()">Cancel</button>
     </div>
   </div>
 
@@ -1065,6 +1167,133 @@
       await fetch("/api/folders/" + activeFolderId, { method: "DELETE" });
       closeFolderModal();
       loadData();
+    }
+
+    // ── Spawn Modal ──
+    let spawnProjectDir = null;
+    let spawnProjectName = null;
+    let spawnStreams = [];
+    let selectedSpawnStream = null;
+    let selectedSpawnProvider = "claude";
+
+    async function openSpawnModal() {
+      if (!activeFolderId) return;
+
+      // Get folder info
+      const folder = allFolders.find(f => f.id === activeFolderId);
+      if (!folder) return;
+
+      spawnProjectName = folder.name;
+
+      // Find the project_dir from sessions in this folder
+      const folderSessions = allSessions.filter(s => folder.session_ids && folder.session_ids.includes(s.session_id));
+      const dirs = folderSessions.map(s => s.cc_project_dir).filter(Boolean);
+      const dirCounts = {};
+      dirs.forEach(d => dirCounts[d] = (dirCounts[d] || 0) + 1);
+      spawnProjectDir = Object.entries(dirCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+      // Fetch work streams for this project
+      spawnStreams = [];
+      if (spawnProjectDir) {
+        try {
+          const resp = await fetch("/api/projects/" + encodeURIComponent(spawnProjectDir) + "/streams");
+          const data = await resp.json();
+          spawnStreams = data.streams || [];
+        } catch (_) {}
+      }
+
+      // Reset selection
+      selectedSpawnStream = null;
+      selectedSpawnProvider = "claude";
+
+      // Render modal
+      document.getElementById("spawn-modal-title").textContent = spawnProjectName;
+
+      let streamsHtml = '<div class="spawn-stream selected" data-stream="" onclick="selectSpawnStream(this, \'\')">';
+      streamsHtml += '<div class="spawn-stream-name">General</div>';
+      streamsHtml += '<div class="spawn-stream-desc">Start without a specific work stream focus</div>';
+      streamsHtml += '</div>';
+
+      for (const s of spawnStreams) {
+        streamsHtml += '<div class="spawn-stream" data-stream="' + esc(s.stream_name) + '" onclick="selectSpawnStream(this, \'' + esc(s.stream_name).replace(/'/g, "\\'") + '\')">';
+        streamsHtml += '<div class="spawn-stream-name">' + esc(s.stream_name) + '</div>';
+        if (s.description) {
+          streamsHtml += '<div class="spawn-stream-desc">' + esc(s.description) + '</div>';
+        }
+        streamsHtml += '</div>';
+      }
+      document.getElementById("spawn-streams").innerHTML = streamsHtml;
+
+      // Reset provider buttons
+      const provBtns = document.querySelectorAll(".spawn-provider-btn");
+      provBtns.forEach(btn => btn.classList.toggle("selected", btn.dataset.provider === "claude"));
+
+      // Close folder modal, show spawn modal
+      document.getElementById("folder-modal").classList.remove("active");
+      document.getElementById("spawn-modal").classList.add("active");
+    }
+
+    function closeSpawnModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("spawn-modal").classList.remove("active");
+      spawnProjectDir = null;
+      spawnProjectName = null;
+    }
+
+    function selectSpawnStream(el, stream) {
+      selectedSpawnStream = stream || null;
+      const items = document.querySelectorAll(".spawn-stream");
+      items.forEach(item => item.classList.toggle("selected", item === el));
+    }
+
+    function selectSpawnProvider(provider) {
+      selectedSpawnProvider = provider;
+      const btns = document.querySelectorAll(".spawn-provider-btn");
+      btns.forEach(btn => btn.classList.toggle("selected", btn.dataset.provider === provider));
+    }
+
+    async function doSpawn() {
+      if (!spawnProjectDir) {
+        alert("Could not determine project directory");
+        return;
+      }
+
+      const btn = document.getElementById("spawn-btn");
+      btn.disabled = true;
+      btn.textContent = "Starting...";
+
+      try {
+        const resp = await fetch("/api/projects/" + encodeURIComponent(spawnProjectDir) + "/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stream_name: selectedSpawnStream,
+            provider: selectedSpawnProvider
+          })
+        });
+        const result = await resp.json();
+        if (result.ok) {
+          btn.textContent = "Started!";
+          setTimeout(() => {
+            closeSpawnModal();
+            btn.textContent = "Start Session";
+            btn.disabled = false;
+            loadData();
+          }, 1000);
+        } else {
+          btn.textContent = "Error: " + (result.error || "Unknown");
+          setTimeout(() => {
+            btn.textContent = "Start Session";
+            btn.disabled = false;
+          }, 2000);
+        }
+      } catch (err) {
+        btn.textContent = "Error";
+        setTimeout(() => {
+          btn.textContent = "Start Session";
+          btn.disabled = false;
+        }, 2000);
+      }
     }
 
     // ── New Chat Modal ──
