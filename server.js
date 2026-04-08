@@ -5660,8 +5660,11 @@ function runAutoApprovalCheck() {
   }
 }
 
-// Run keystroke fallback every 10 seconds (slower since hooks are primary)
-setInterval(runAutoApprovalCheck, 10000);
+// Keystroke fallback disabled — hooks handle all permissions for Terminal sessions.
+// The legacy keystroke mechanism (sendKeystrokeToClaude) activated Claude Desktop
+// and pressed Enter, which caused UI glitches when Terminal sessions were detected
+// as having pending permissions via JSONL scanning.
+// setInterval(runAutoApprovalCheck, 10000);
 
 // Clean up old cooldown entries every minute
 setInterval(() => {
