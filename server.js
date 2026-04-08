@@ -1389,17 +1389,19 @@ function getSessionState(projectDir, sessionId) {
   const lastActivity = stat.mtime.toISOString();
   const ageMs = Date.now() - stat.mtimeMs;
 
-  // Check for pending permission first
-  const perm = checkPendingPermission(projectDir, sessionId);
-  if (perm && perm.pending) {
-    return { status: "needs_attention", permission: perm, current_tool: null, last_activity: lastActivity };
-  }
-
   // If this session resolved via continuation, only show as active if its OWN
   // JSONL is recent (< 6 hours) — meaning it was the session that was actually continued.
   // Old sessions whose JNSONLs are stale should show as idle, not inherit the active status.
+  // IMPORTANT: this must run BEFORE checkPendingPermission to prevent stale sessions
+  // from falsely detecting pending permissions in the current session's JSONL.
   if (isContinuation && ownAgeMs > 21600000) {
     return { status: "idle", permission: null, current_tool: null, last_activity: ownStat ? ownStat.mtime.toISOString() : null };
+  }
+
+  // Check for pending permission
+  const perm = checkPendingPermission(projectDir, sessionId);
+  if (perm && perm.pending) {
+    return { status: "needs_attention", permission: perm, current_tool: null, last_activity: lastActivity };
   }
 
   // Active if JSONL modified in last 2 minutes
@@ -2523,6 +2525,16 @@ app.get("/api/dashboard", async (_req, res) => {
         if (state.status === "needs_attention" && resolvedAt && (Date.now() - resolvedAt) < 15000) {
           state = { status: "active", permission: null, current_tool: null, last_activity: state.last_activity };
         }
+        // Suppress JSONL-based "needs_attention" when the detected tool is auto-approved.
+        // The hook system handles these — JSONL detection is redundant and creates false positives
+        // (especially from continuation resolution mapping old sessions to the current JSONL).
+        if (state.status === "needs_attention" && state.permission && !state.permission.hook_id) {
+          const detectedTools = state.permission.tools || [];
+          const allAutoApproved = detectedTools.every(t => checkToolPolicy(t.name, {}) === "auto" || t.name.startsWith("mcp__"));
+          if (allAutoApproved) {
+            state = { status: "active", permission: null, current_tool: detectedTools[0]?.name || null, last_activity: state.last_activity };
+          }
+        }
       }
     }
 
@@ -2579,6 +2591,14 @@ app.get("/api/dashboard", async (_req, res) => {
         const resolvedAt = recentlyResolvedSessions.get(cc.session_id);
         if (state.status === "needs_attention" && resolvedAt && (Date.now() - resolvedAt) < 15000) {
           state = { status: "active", permission: null, current_tool: null, last_activity: state.last_activity };
+        }
+        // Suppress JSONL-based "needs_attention" when the detected tool is auto-approved
+        if (state.status === "needs_attention" && state.permission && !state.permission.hook_id) {
+          const detectedTools = state.permission.tools || [];
+          const allAutoApproved = detectedTools.every(t => checkToolPolicy(t.name, {}) === "auto" || t.name.startsWith("mcp__"));
+          if (allAutoApproved) {
+            state = { status: "active", permission: null, current_tool: detectedTools[0]?.name || null, last_activity: state.last_activity };
+          }
         }
         // Only include active or needs_attention CC sessions (skip idle ones to avoid clutter)
         if (state.status === "idle") continue;
@@ -2698,6 +2718,7 @@ app.post("/api/hooks/permission-request", async (req, res) => {
 
   if (policy === "auto") {
     console.log(`[hook] Auto-approved: ${toolName}`);
+    recentlyResolvedSessions.set(sessionId, Date.now());
     logEvent("permission_resolved", sessionId, { tool: toolName, decision: "allow", source: "auto" });
     return res.json({
       hookSpecificOutput: {
