@@ -28,3 +28,6 @@ Marshall Transcripts/
 # Sensitive config files
 apps.json
 scripts/generate-asc-token.js
+
+# MCP config (user-specific paths)
+.mcp.json

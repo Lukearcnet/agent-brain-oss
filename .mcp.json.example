@@ -2,7 +2,7 @@
   "mcpServers": {
     "agent-brain": {
       "command": "node",
-      "args": ["/Users/lukeblanton/agent-brain/mcp-server.js"]
+      "args": ["/path/to/agent-brain/mcp-server.js"]
     }
   }
 }
