@@ -75,7 +75,7 @@ async function main() {
     "agent_brain_memory_read",
     "Read project memory from Agent Brain. Returns persistent context from previous sessions.",
     {
-      project: z.string().describe("Project key (e.g. -Users-lukeblanton-myproject). Use pwd | sed 's|/|-|g' to derive."),
+      project: z.string().describe("Project key (e.g. -Users-yourname-myproject). Use pwd | sed 's|/|-|g' to derive."),
       sections: z.string().optional().describe("Comma-separated section slugs to read (e.g. 'architecture,next-steps'). Omit for full memory."),
       task: z.string().optional().describe("Task description for AI-based section filtering (e.g. 'fix email bug'). Agent Brain picks relevant sections."),
     },
@@ -354,6 +354,111 @@ async function main() {
       try {
         const res = await request("POST", "/api/ai-assistant", { prompt });
         if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── Granola (meeting notes) ─────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_granola_list_notes",
+    "List Granola meeting notes (most recent first). Filters by date or title substring.",
+    {
+      since: z.string().optional().describe("ISO date — only notes created at or after this time"),
+      before: z.string().optional().describe("ISO date — only notes created before this time"),
+      search: z.string().optional().describe("Title substring (case-insensitive)"),
+      limit: z.number().optional().describe("Max notes to return (default 50, max 500)"),
+    },
+    async ({ since, before, search, limit }) => {
+      try {
+        const params = new URLSearchParams();
+        if (since) params.set("since", since);
+        if (before) params.set("before", before);
+        if (search) params.set("search", search);
+        if (limit) params.set("limit", String(limit));
+        const qs = params.toString();
+        const res = await request("GET", `/api/granola/notes${qs ? "?" + qs : ""}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_granola_get_note",
+    "Get a single Granola meeting note by id, optionally with the full transcript.",
+    {
+      note_id: z.string().describe("Granola note id (starts with 'not_')"),
+      include_transcript: z.boolean().optional().describe("Include the full transcript (default false)"),
+    },
+    async ({ note_id, include_transcript }) => {
+      try {
+        const qs = include_transcript ? "?include_transcript=true" : "";
+        const res = await request("GET", `/api/granola/notes/${encodeURIComponent(note_id)}${qs}`);
+        if (res.status === 404) return errorResult("Note not found");
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_granola_search",
+    "Full-text search Granola meeting notes (summaries AND transcripts). Returns matching notes ordered by recency.",
+    {
+      query: z.string().describe("Search query (Postgres websearch syntax, e.g. 'cotter triumvirate')"),
+      since: z.string().optional().describe("ISO date — only search notes created at or after this time"),
+      limit: z.number().optional().describe("Max results (default 20, max 100)"),
+    },
+    async ({ query, since, limit }) => {
+      try {
+        const params = new URLSearchParams({ q: query });
+        if (since) params.set("since", since);
+        if (limit) params.set("limit", String(limit));
+        const res = await request("GET", `/api/granola/search?${params.toString()}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_granola_recent_meetings",
+    "Digest of recent Granola meetings — title, attendees, summary for the last N days.",
+    {
+      days: z.number().optional().describe("Look-back window in days (default 7, max 90)"),
+    },
+    async ({ days }) => {
+      try {
+        const res = await request("GET", `/api/granola/digest?days=${days || 7}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_granola_sync_now",
+    "Trigger an immediate Granola sync. Pass full=true to run a complete backfill instead of incremental.",
+    {
+      full: z.boolean().optional().describe("Run full backfill instead of incremental (default false)"),
+    },
+    async ({ full }) => {
+      try {
+        const qs = full ? "?full=true" : "";
+        const res = await request("POST", `/api/granola/sync/now${qs}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}`);
         return text(res.data);
       } catch (e) {
         return errorResult(e.message);

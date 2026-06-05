@@ -313,6 +313,46 @@ with open('$CLAUDE_SETTINGS', 'w') as f:
   fi
 fi
 
+# ── Step 6.5: MCP Server Registration ─────────────────────────────────────
+
+echo ""
+echo "── Step 6.5: MCP Server Registration ──────────"
+
+CLAUDE_CONFIG="$HOME/.claude.json"
+MCP_SCRIPT="$PROJECT_DIR/mcp-server.js"
+
+if command -v python3 &>/dev/null; then
+  python3 - <<PYEOF
+import json, os, sys
+config_path = "$CLAUDE_CONFIG"
+mcp_script = "$MCP_SCRIPT"
+try:
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            cfg = json.load(f)
+    else:
+        cfg = {}
+    cfg.setdefault("mcpServers", {})
+    existing = cfg["mcpServers"].get("agent-brain") or {}
+    if existing.get("command") == "node" and existing.get("args", []) == [mcp_script]:
+        print("  ✓ agent-brain MCP server already registered")
+        sys.exit(0)
+    cfg["mcpServers"]["agent-brain"] = {"command": "node", "args": [mcp_script]}
+    with open(config_path, "w") as f:
+        json.dump(cfg, f, indent=2)
+    print("  ✓ Registered agent-brain MCP server in ~/.claude.json")
+    print("    Claude Code sessions in ANY project will now see agent_brain_* tools")
+except Exception as e:
+    print(f"  ⚠ Could not auto-register MCP server: {e}")
+    print(f"    Manually add to {config_path}:")
+    print(f'    "mcpServers": {{"agent-brain": {{"command": "node", "args": ["{mcp_script}"]}}}}')
+PYEOF
+else
+  echo "  ⚠ python3 not found — skipping MCP auto-registration"
+  echo "    Manually add to $CLAUDE_CONFIG:"
+  echo "    \"mcpServers\": {\"agent-brain\": {\"command\": \"node\", \"args\": [\"$MCP_SCRIPT\"]}}"
+fi
+
 # ── Step 7: Background Service (macOS LaunchAgent) ────────────────────────
 
 echo ""
@@ -324,7 +364,16 @@ if [ "$(uname)" = "Darwin" ]; then
   echo ""
   read -p "  Install as background service? (Y/n): " install_service
   if [ "$install_service" != "n" ] && [ "$install_service" != "N" ]; then
-    NODE_PATH=$(which node)
+    # Prefer stable system Node paths over `which node` (which may be a
+    # transient nvm path that breaks the LaunchAgent when Node updates).
+    if [ -x "/opt/homebrew/bin/node" ]; then
+      NODE_PATH="/opt/homebrew/bin/node"
+    elif [ -x "/usr/local/bin/node" ]; then
+      NODE_PATH="/usr/local/bin/node"
+    else
+      NODE_PATH=$(which node)
+    fi
+    echo "  Using node: $NODE_PATH"
     cat > "$PLIST_PATH" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -427,6 +476,23 @@ else
   fi
   echo "  Then install the Tailscale app on your phone."
   echo "  Access Agent Brain from anywhere: http://<tailscale-ip>:3030"
+fi
+
+# ── Step 9: Codex CLI (optional) ──────────────────────────────────────────
+
+echo ""
+echo "── Step 9: Codex CLI ────────────────────────"
+
+if command -v codex &>/dev/null; then
+  CODEX_PATH=$(command -v codex)
+  echo "  ✓ Codex CLI detected at $CODEX_PATH"
+  echo "    AGENTS.md has been generated for both project and ~/.codex"
+  echo "    For Codex sessions launched OUTSIDE agent-brain, add this to your shell:"
+  echo "      export PATH=\"$PROJECT_DIR/bin:\$PATH\""
+  echo "    This lets ab-checkpoint resolve without needing the bin/ prefix."
+else
+  echo "  Codex CLI not detected — Agent Brain works fine with Claude Code only."
+  echo "  If you install Codex later, re-run bin/ab-setup to wire it up."
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────

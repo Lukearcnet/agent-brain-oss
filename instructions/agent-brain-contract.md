@@ -20,7 +20,7 @@ Available MCP tools:
 - `agent_brain_ai_assistant` — Draft emails/events with AI (params: `prompt`)
 - `agent_brain_health` — Check if Agent Brain is running
 
-The project key for MCP tools is the same as for curl: your working directory with `/` replaced by `-` (e.g. `-Users-lukeblanton-myproject`).
+The project key for MCP tools is the same as for curl: your working directory with `/` replaced by `-` (e.g. `-Users-yourname-myproject`).
 
 **Codex sessions** do not support MCP — use the curl commands below instead.
 

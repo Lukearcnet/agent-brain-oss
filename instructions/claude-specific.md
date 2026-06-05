@@ -2,7 +2,7 @@
 Claude Code sessions should use the `agent_brain_checkpoint` MCP tool for checkpoints. This is auto-approved and doesn't require JSON escaping.
 
 **MCP (preferred):** Call `agent_brain_checkpoint` with:
-- `project`: your project key (e.g. `-Users-lukeblanton-myproject`)
+- `project`: your project key (e.g. `-Users-yourname-myproject`)
 - `question`: your question or status update
 - `options`: array of response options (optional)
 - `session_id`: Agent Brain session ID if known (optional)

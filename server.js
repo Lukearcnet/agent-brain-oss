@@ -50,6 +50,7 @@ const emailSynth = require("./lib/email-synth");
 const gmailClient = require("./lib/email-synth/gmail-client");
 const gcalClient = require("./lib/calendar/gcal-client");
 const calendar = require("./lib/calendar");
+const granola = require("./lib/granola");
 const codexDiscovery = require("./lib/codex-discovery");
 const maintenance = require("./lib/maintenance");
 const checkpointMemory = require("./lib/checkpoint-memory");
@@ -150,7 +151,7 @@ function getProjectName(projectDir) {
     const dirName = projectDir.replace(/\/+$/, "").split("/").pop() || projectDir;
     return dirName.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
   }
-  // Encoded path: -Users-lukeblanton-project-name → extract after last known prefix
+  // Encoded path: -Users-yourname-project-name → extract after last known prefix
   // Find the home directory portion and take everything after it
   const decoded = projectDir.replace(/^-/, "");
   const homeMatch = decoded.match(/^Users-[^-]+-(.+)$/i);
@@ -7923,6 +7924,11 @@ db.initSettingsCache()
     const calSettings = () => db.getCachedSettings()?.calendar || {};
     calendar.registerRoutes(app, db.supabase, sendPushNotification, calSettings);
     calendar.init(db.supabase, sendPushNotification, calSettings);
+
+    // Register Granola routes and start scheduler
+    const granolaSettings = () => db.getCachedSettings()?.granola || {};
+    granola.registerRoutes(app, db.supabase, sendPushNotification, granolaSettings);
+    granola.init(db.supabase, sendPushNotification, granolaSettings);
 
     // Register maintenance module
     maintenance.registerRoutes(app);
