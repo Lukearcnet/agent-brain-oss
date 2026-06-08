@@ -25,6 +25,28 @@ AB_HOST="${AB_HOST:-http://localhost:3030}"
 AB_POLL_INTERVAL="${AB_POLL_INTERVAL:-30}"
 AB_TIMEOUT="${AB_TIMEOUT:-86400}"
 
+# Load AB_AUTH_* from agent-brain .env so this CLI stays in sync with the server.
+AB_ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env"
+AB_AUTH_HEADER=""
+if [ -f "$AB_ENV_FILE" ]; then
+  AB_AUTH_ENABLED_VAL=$(grep -E '^AB_AUTH_ENABLED=' "$AB_ENV_FILE" 2>/dev/null | tail -1 | sed 's/^AB_AUTH_ENABLED=//' | tr -d '"' | tr -d "'" | tr '[:upper:]' '[:lower:]')
+  if [ "$AB_AUTH_ENABLED_VAL" = "true" ]; then
+    AB_API_USER=$(grep -E '^AB_API_USER=' "$AB_ENV_FILE" 2>/dev/null | tail -1 | sed 's/^AB_API_USER=//' | tr -d '"' | tr -d "'")
+    AB_API_PASSWORD=$(grep -E '^AB_API_PASSWORD=' "$AB_ENV_FILE" 2>/dev/null | tail -1 | sed 's/^AB_API_PASSWORD=//' | tr -d '"' | tr -d "'")
+    AB_AUTH_HEADER="Authorization: Basic $(printf '%s' "${AB_API_USER}:${AB_API_PASSWORD}" | base64)"
+  fi
+fi
+
+# Wrapper that injects the auth header when set. Use ab_curl instead of curl
+# for all calls to AB_HOST.
+ab_curl() {
+  if [ -n "$AB_AUTH_HEADER" ]; then
+    curl "$@" -H "$AB_AUTH_HEADER"
+  else
+    curl "$@"
+  fi
+}
+
 # Determine project key from current directory
 PROJECT_KEY=$(pwd | sed 's|/|-|g')
 
@@ -90,7 +112,7 @@ fetch_ready_checkpoint() {
     echo "AB_SESSION_ID is required to check ready responses." >&2
     exit 1
   fi
-  curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/ready-checkpoint"
+  ab_curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/ready-checkpoint"
 }
 
 consume_ready_checkpoint() {
@@ -99,7 +121,7 @@ consume_ready_checkpoint() {
     exit 1
   fi
   clear_checkpoint_id
-  curl -s -X POST "${AB_HOST}/api/sessions/${AB_SESSION_ID}/consume-ready-checkpoint"
+  ab_curl -s -X POST "${AB_HOST}/api/sessions/${AB_SESSION_ID}/consume-ready-checkpoint"
 }
 
 # Create a checkpoint (non-blocking)
@@ -132,7 +154,7 @@ create_checkpoint() {
       '{project_dir: $project_dir, question: $question, options: $options}')
   fi
 
-  local response=$(curl -s -X POST "${AB_HOST}/api/checkpoints?blocking=false" \
+  local response=$(ab_curl -s -X POST "${AB_HOST}/api/checkpoints?blocking=false" \
     -H "Content-Type: application/json" \
     -d "$payload")
 
@@ -161,7 +183,7 @@ poll_checkpoint() {
       exit 1
     fi
 
-    local response=$(curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/wait?timeout=${AB_POLL_INTERVAL}")
+    local response=$(ab_curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/wait?timeout=${AB_POLL_INTERVAL}")
     local status=$(echo "$response" | jq -r '.status // "error"')
 
     case "$status" in
@@ -189,7 +211,7 @@ poll_checkpoint() {
 # This avoids long-running local loops, which Codex tends to background.
 poll_checkpoint_once() {
   local checkpoint_id="$1"
-  local response=$(curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/wait?timeout=${AB_POLL_INTERVAL}")
+  local response=$(ab_curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/wait?timeout=${AB_POLL_INTERVAL}")
   local status=$(echo "$response" | jq -r '.status // "error"')
 
   if [ "$status" = "responded" ]; then
@@ -202,7 +224,7 @@ poll_checkpoint_once() {
 # Get checkpoint status without blocking
 get_status() {
   local checkpoint_id="$1"
-  curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/status"
+  ab_curl -s "${AB_HOST}/api/checkpoints/${checkpoint_id}/status"
 }
 
 # Recover: find and resume polling a pending checkpoint
@@ -221,7 +243,7 @@ recover_checkpoint() {
   local saved_id=$(load_checkpoint_id)
   if [ -n "$saved_id" ]; then
     echo "Found saved checkpoint: $saved_id" >&2
-    local status=$(curl -s "${AB_HOST}/api/checkpoints/${saved_id}/status" | jq -r '.status // "error"')
+    local status=$(ab_curl -s "${AB_HOST}/api/checkpoints/${saved_id}/status" | jq -r '.status // "error"')
     if [ "$status" = "pending" ]; then
       echo "Resuming polling..." >&2
       poll_checkpoint "$saved_id"
@@ -229,7 +251,7 @@ recover_checkpoint() {
     elif [ "$status" = "responded" ]; then
       echo "Checkpoint already responded:" >&2
       clear_checkpoint_id
-      curl -s "${AB_HOST}/api/checkpoints/${saved_id}/status"
+      ab_curl -s "${AB_HOST}/api/checkpoints/${saved_id}/status"
       return
     fi
     echo "Saved checkpoint is $status, clearing..." >&2
@@ -239,7 +261,7 @@ recover_checkpoint() {
   # Strategy 2: Ask server for pending checkpoint by session_id
   if [ -n "$AB_SESSION_ID" ]; then
     echo "Looking up pending checkpoint for session $AB_SESSION_ID..." >&2
-    local lookup=$(curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/pending-checkpoint")
+    local lookup=$(ab_curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/pending-checkpoint")
     local pending=$(echo "$lookup" | jq -r '.pending // false')
 
     if [ "$pending" = "true" ]; then
@@ -282,7 +304,7 @@ resolve_checkpoint_id() {
 
   if [ -n "${AB_SESSION_ID:-}" ]; then
     local lookup
-    lookup=$(curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/pending-checkpoint")
+    lookup=$(ab_curl -s "${AB_HOST}/api/sessions/${AB_SESSION_ID}/pending-checkpoint")
     local pending
     pending=$(echo "$lookup" | jq -r '.pending // false')
     if [ "$pending" = "true" ]; then

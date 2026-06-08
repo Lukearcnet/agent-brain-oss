@@ -17,6 +17,19 @@ LOCK_CACHE="$HOME/.claude/locks/state.json"
 # Read stdin once, save for both checks
 INPUT=$(cat /dev/stdin)
 
+# Load AB_AUTH_* from agent-brain .env so this hook stays in sync with the server.
+# Exported so the Python heredoc (subprocess.Popen curl) sees it too.
+AB_ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env"
+export AB_AUTH_HEADER=""
+if [ -f "$AB_ENV_FILE" ]; then
+  AB_AUTH_ENABLED=$(grep -E '^AB_AUTH_ENABLED=' "$AB_ENV_FILE" 2>/dev/null | tail -1 | sed 's/^AB_AUTH_ENABLED=//' | tr -d '"' | tr -d "'" | tr '[:upper:]' '[:lower:]')
+  if [ "$AB_AUTH_ENABLED" = "true" ]; then
+    AB_API_USER=$(grep -E '^AB_API_USER=' "$AB_ENV_FILE" 2>/dev/null | tail -1 | sed 's/^AB_API_USER=//' | tr -d '"' | tr -d "'")
+    AB_API_PASSWORD=$(grep -E '^AB_API_PASSWORD=' "$AB_ENV_FILE" 2>/dev/null | tail -1 | sed 's/^AB_API_PASSWORD=//' | tr -d '"' | tr -d "'")
+    export AB_AUTH_HEADER="Authorization: Basic $(printf '%s' "${AB_API_USER}:${AB_API_PASSWORD}" | base64)"
+  fi
+fi
+
 # ── Extract session info using lightweight grep+sed ──
 CWD=$(echo "$INPUT" | grep -o '"cwd":"[^"]*"' | head -1 | sed 's/"cwd":"//;s/"$//')
 TOOL_NAME=$(echo "$INPUT" | grep -o '"tool_name":"[^"]*"' | head -1 | sed 's/"tool_name":"//;s/"$//')
@@ -63,12 +76,16 @@ try:
 
     # Mark as delivered (background, non-blocking)
     if ids:
-        import subprocess
+        import subprocess, os
+        curl_args = ['curl', '-s', '-X', 'POST',
+                     'http://localhost:3030/api/sessions/messages/deliver',
+                     '-H', 'Content-Type: application/json']
+        auth_header = os.environ.get('AB_AUTH_HEADER', '')
+        if auth_header:
+            curl_args += ['-H', auth_header]
+        curl_args += ['-d', json.dumps({'message_ids': ids})]
         subprocess.Popen(
-            ['curl', '-s', '-X', 'POST',
-             'http://localhost:3030/api/sessions/messages/deliver',
-             '-H', 'Content-Type: application/json',
-             '-d', json.dumps({'message_ids': ids})],
+            curl_args,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
 except:
@@ -182,10 +199,18 @@ files = [os.path.abspath(l.strip()) if not os.path.isabs(l.strip()) else l.strip
 print(json.dumps(files))
 " "$FILE_PATHS" 2>/dev/null)
 
-    curl -s -X POST http://localhost:3030/api/locks/check-and-acquire \
-      -H "Content-Type: application/json" \
-      -d "{\"file_paths\":$FILE_PATHS_JSON,\"session_id\":\"$SESSION_ID\",\"project_dir\":\"$PROJECT_KEY\"}" \
-      > /dev/null 2>&1 &
+    if [ -n "$AB_AUTH_HEADER" ]; then
+      curl -s -X POST http://localhost:3030/api/locks/check-and-acquire \
+        -H "Content-Type: application/json" \
+        -H "$AB_AUTH_HEADER" \
+        -d "{\"file_paths\":$FILE_PATHS_JSON,\"session_id\":\"$SESSION_ID\",\"project_dir\":\"$PROJECT_KEY\"}" \
+        > /dev/null 2>&1 &
+    else
+      curl -s -X POST http://localhost:3030/api/locks/check-and-acquire \
+        -H "Content-Type: application/json" \
+        -d "{\"file_paths\":$FILE_PATHS_JSON,\"session_id\":\"$SESSION_ID\",\"project_dir\":\"$PROJECT_KEY\"}" \
+        > /dev/null 2>&1 &
+    fi
   fi
 fi
 

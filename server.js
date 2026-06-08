@@ -56,6 +56,43 @@ const maintenance = require("./lib/maintenance");
 const checkpointMemory = require("./lib/checkpoint-memory");
 const { normalizeSessionTitle, getDisplaySessionTitle, getProjectNameFromPath } = require("./lib/session-titles");
 const app = express();
+
+// ── HTTP Basic Auth (flag-gated, opt-in) ────────────────────────────────────
+// Gates ALL HTTP traffic when AB_AUTH_ENABLED=true. Tailscale provides network
+// isolation but NOT authentication — without this, any device on the user's
+// tailnet (including a future-compromised one) can read/write memory, answer
+// checkpoints, inject mailbox messages, etc. Basic auth + Tailscale's end-to-end
+// encryption is the simplest fix that works without HTTPS setup.
+const AB_AUTH_ENABLED = (process.env.AB_AUTH_ENABLED || "").toLowerCase() === "true";
+const AB_API_USER = process.env.AB_API_USER || "";
+const AB_API_PASSWORD = process.env.AB_API_PASSWORD || "";
+const AB_AUTH_EXPECTED = AB_AUTH_ENABLED
+  ? "Basic " + Buffer.from(`${AB_API_USER}:${AB_API_PASSWORD}`).toString("base64")
+  : null;
+if (AB_AUTH_ENABLED && (!AB_API_USER || !AB_API_PASSWORD)) {
+  console.warn("[auth] AB_AUTH_ENABLED=true but AB_API_USER or AB_API_PASSWORD is empty — auth will reject all requests");
+}
+
+function timingSafeStringEqual(a, b) {
+  const crypto = require("crypto");
+  const ab = Buffer.from(a || "", "utf8");
+  const bb = Buffer.from(b || "", "utf8");
+  if (ab.length !== bb.length) {
+    // Still do a constant-time op on a same-length buffer to avoid leaking length info
+    crypto.timingSafeEqual(ab, ab);
+    return false;
+  }
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+app.use((req, res, next) => {
+  if (!AB_AUTH_ENABLED) return next();
+  const provided = req.headers.authorization || "";
+  if (timingSafeStringEqual(provided, AB_AUTH_EXPECTED)) return next();
+  res.set("WWW-Authenticate", 'Basic realm="Agent Brain", charset="UTF-8"');
+  return res.status(401).type("text/plain").send("Authentication required");
+});
+
 app.use(express.json({ limit: "2mb" }));
 
 // Serve static files (PWA manifest, service worker, icons)

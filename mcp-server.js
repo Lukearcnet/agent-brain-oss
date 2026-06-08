@@ -10,6 +10,12 @@
  * All tools call the existing Agent Brain HTTP API at localhost:3030.
  */
 
+// Load .env from the agent-brain install dir so AB_AUTH_* and AGENT_BRAIN_URL
+// are available even when Claude Code spawns us with a clean env.
+try {
+  require("dotenv").config({ path: require("path").join(__dirname, ".env") });
+} catch (_) { /* dotenv optional — env vars may come from parent process */ }
+
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { z } = require("zod");
@@ -17,17 +23,25 @@ const http = require("http");
 
 const AB_BASE = process.env.AGENT_BRAIN_URL || "http://localhost:3030";
 
+// Auth header — sent to Agent Brain when AB_AUTH_ENABLED=true. Read from same
+// .env that the server reads, so MCP and server stay in sync without extra config.
+const AB_AUTH_HEADER = (process.env.AB_AUTH_ENABLED || "").toLowerCase() === "true"
+  ? "Basic " + Buffer.from(`${process.env.AB_API_USER || ""}:${process.env.AB_API_PASSWORD || ""}`).toString("base64")
+  : null;
+
 // ── HTTP helper (no external deps) ──────────────────────────────────────────
 
 function request(method, path, body) {
   return new Promise((resolve, reject) => {
     const url = new URL(path, AB_BASE);
+    const headers = { "Content-Type": "application/json" };
+    if (AB_AUTH_HEADER) headers["Authorization"] = AB_AUTH_HEADER;
     const opts = {
       method,
       hostname: url.hostname,
       port: url.port,
       path: url.pathname + url.search,
-      headers: { "Content-Type": "application/json" },
+      headers,
       timeout: method === "POST" && path.includes("/checkpoints") && !path.includes("/respond")
         ? 86400000  // 24 hours for blocking checkpoint
         : 30000,
