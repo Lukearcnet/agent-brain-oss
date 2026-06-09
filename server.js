@@ -1214,6 +1214,20 @@ async function inferCwdFromFolder(folderId) {
     const folder = folders.find(f => f.id === folderId);
     if (!folder) return null;
 
+    // Source 0 (highest priority): PROJECT_KEYWORDS entry whose name matches
+    // the folder name. This is the explicit user-configured binding from
+    // projects.json — always trust it over inference. Lets users disambiguate
+    // similarly-named projects (e.g., "Triumvirate Os" vs "Triumvirate Ops")
+    // that heuristics can't tell apart.
+    if (folder.name) {
+      const folderNameNorm = folder.name.trim().toLowerCase();
+      for (const cfg of Object.values(PROJECT_KEYWORDS)) {
+        if (!cfg || !cfg.name || !cfg.cwd) continue;
+        if (cfg.name.trim().toLowerCase() !== folderNameNorm) continue;
+        if (fs.existsSync(cfg.cwd)) return cfg.cwd;
+      }
+    }
+
     const counts = new Map();
 
     // Source 1: decode each session's recorded cc_project_dir to a filesystem

@@ -1192,6 +1192,20 @@
       dirs.forEach(d => dirCounts[d] = (dirCounts[d] || 0) + 1);
       spawnProjectDir = Object.entries(dirCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
 
+      // If no session-derived project_dir (e.g., empty folder, or folder where
+      // every session has the broken cc_project_dir), look up by folder name
+      // in the configured projects list (projects.json). This lets explicitly-
+      // bound folders spawn even with zero sessions.
+      if (!spawnProjectDir && folder.name) {
+        try {
+          const projResp = await fetch("/api/projects");
+          const projList = await projResp.json();
+          const target = folder.name.trim().toLowerCase();
+          const match = (projList || []).find(p => p.name && p.name.trim().toLowerCase() === target);
+          if (match) spawnProjectDir = match.dir;
+        } catch (_) {}
+      }
+
       // Fetch work streams for this project
       spawnStreams = [];
       if (spawnProjectDir) {
