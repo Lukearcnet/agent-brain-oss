@@ -1121,6 +1121,146 @@ function decodeClaudeProjectDir(encoded) {
   return resolved;
 }
 
+// Resolve the working directory for a project spawn. Tries (in order):
+//   1. projectConfig.cwd from projects.json (existing user-configured paths)
+//   2. Filesystem-walk decode of the encoded projectDir (handles projects not
+//      in projects.json — covers everything Claude Code already knows about)
+//   3. cwd recovered from any existing JSONL at ~/.claude/projects/<dir>/
+//   4. $HOME (last resort, terrible UX, only fires if all else fails)
+// Without this, project-level spawns for any project not in projects.json
+// landed in $HOME instead of the actual codebase.
+function resolveProjectCwd(projectDir, projectConfig) {
+  const configCwd = projectConfig && projectConfig.cwd;
+  if (configCwd && fs.existsSync(configCwd)) return configCwd;
+
+  if (projectDir && projectDir.startsWith("-")) {
+    try {
+      const decoded = decodeClaudeProjectDir(projectDir);
+      if (decoded && decoded !== "/" && fs.existsSync(decoded)) return decoded;
+    } catch (_) {}
+
+    try {
+      const jsonlDir = path.join(CLAUDE_SESSIONS_DIR, projectDir);
+      if (fs.existsSync(jsonlDir)) {
+        const files = fs.readdirSync(jsonlDir).filter(f => f.endsWith(".jsonl"));
+        for (const f of files) {
+          try {
+            const content = fs.readFileSync(path.join(jsonlDir, f), "utf8");
+            const firstNewline = content.indexOf("\n");
+            const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
+            const parsed = JSON.parse(firstLine);
+            if (parsed && parsed.cwd && fs.existsSync(parsed.cwd)) return parsed.cwd;
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+
+  return process.env.HOME || "/tmp";
+}
+
+// Extract the recorded `cwd` from a Claude Code JSONL session file.
+// JSONLs record cwd on many lines (launch dir + every subsequent message).
+// A session that spawned in $HOME but then cd'd into a real project dir would
+// have line 1 say $HOME but most lines say the project dir. Return the
+// most-common non-$HOME cwd so we recover the actual work dir, not the launch.
+function extractCwdFromJsonl(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    const counts = new Map();
+    for (const line of content.split("\n")) {
+      if (!line.includes('"cwd"')) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (!parsed || !parsed.cwd) continue;
+        if (parsed.cwd === process.env.HOME) continue;
+        counts.set(parsed.cwd, (counts.get(parsed.cwd) || 0) + 1);
+      } catch (_) {}
+    }
+    if (counts.size === 0) return null;
+    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    return ranked[0][0];
+  } catch (_) {}
+  return null;
+}
+
+// Tally cwds from all JSONLs under a Claude Code project dir, skipping $HOME
+// (the broken-spawn signature we're trying to recover from). Mutates counts.
+function tallyCwdsFromProjectDir(jsonlDir, counts) {
+  if (!fs.existsSync(jsonlDir)) return;
+  try {
+    const files = fs.readdirSync(jsonlDir).filter(f => f.endsWith(".jsonl"));
+    for (const f of files) {
+      const cwd = extractCwdFromJsonl(path.join(jsonlDir, f));
+      if (!cwd || !fs.existsSync(cwd)) continue;
+      if (cwd === process.env.HOME) continue;
+      counts.set(cwd, (counts.get(cwd) || 0) + 1);
+    }
+  } catch (_) {}
+}
+
+// Infer the project cwd for a folder by scanning JSONLs. Two sources, in order:
+//   1. The folder's session JSONLs (most accurate if any session ran in the
+//      right project).
+//   2. ALL Claude Code project dirs whose encoded name contains the folder name
+//      (case-insensitive, normalized) — useful when the folder's only sessions
+//      were broken-spawn'd into $HOME and have no ground-truth cwd themselves.
+// Skips $HOME-rooted cwds so we don't perpetuate the bug. Returns most-common
+// cwd found, or null.
+async function inferCwdFromFolder(folderId) {
+  if (!folderId) return null;
+  try {
+    const folders = await db.loadFolders();
+    const folder = folders.find(f => f.id === folderId);
+    if (!folder) return null;
+
+    const counts = new Map();
+
+    // Source 1: decode each session's recorded cc_project_dir to a filesystem
+    // path. That's what Agent Brain meant the session to live at — much more
+    // reliable than scanning JSONL cwd entries, which jump around as the agent
+    // cd's between subdirs during long-running work.
+    if (folder.session_ids && folder.session_ids.length > 0) {
+      const { data: sessions } = await db.supabase
+        .from("sessions")
+        .select("session_id, cc_project_dir")
+        .in("session_id", folder.session_ids);
+      for (const s of sessions || []) {
+        if (!s.cc_project_dir || !s.cc_project_dir.startsWith("-")) continue;
+        const decoded = decodeClaudeProjectDir(s.cc_project_dir);
+        if (!decoded || decoded === "/" || !fs.existsSync(decoded)) continue;
+        if (decoded === process.env.HOME) continue;  // skip broken-spawn signature
+        counts.set(decoded, (counts.get(decoded) || 0) + 1);
+      }
+    }
+
+    // Source 2: Claude Code project dirs whose name matches the folder name.
+    // Normalize both sides: lowercase, strip non-alphanumerics. Match if the
+    // normalized folder name appears as a substring of the normalized encoded
+    // project dir. "Triumvirate" → matches "-Users-lukeblanton-triumvirate-os"
+    // and "-Users-lukeblanton-triumvirate-os-apps-local-instance".
+    if (folder.name) {
+      const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const folderNorm = norm(folder.name);
+      if (folderNorm.length >= 3) {
+        try {
+          const entries = fs.readdirSync(CLAUDE_SESSIONS_DIR);
+          for (const entry of entries) {
+            if (!norm(entry).includes(folderNorm)) continue;
+            tallyCwdsFromProjectDir(path.join(CLAUDE_SESSIONS_DIR, entry), counts);
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (counts.size === 0) return null;
+    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    return ranked[0][0];
+  } catch (_) {
+    return null;
+  }
+}
+
 function listClaudeCodeSessions() {
   // Scan ~/.claude/projects/ for session JSONL files
   const results = [];
@@ -4188,7 +4328,7 @@ app.post("/api/sessions/:id/handoff", async (req, res) => {
     const { id: handoffId, briefing } = await handoff.createHandoff({
       projectDir,
       projectName: projectConfig.name || session.title || "Unknown",
-      cwd: projectConfig.cwd || null,
+      cwd: resolveProjectCwd(projectDir, projectConfig),
       fromSessionTitle: session.title || req.params.id,
       handoffNotes: handoff_notes || "",
       projectConfig,
@@ -4221,7 +4361,7 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
 
     const provider = req.body.provider || "claude";
     const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.dir === record.project_dir) || {};
-    const cwd = projectConfig.cwd || process.env.HOME || "/tmp";
+    const cwd = resolveProjectCwd(record.project_dir, projectConfig);
 
     // Snapshot existing session files WITH their mtimes so we can detect modifications
     // This handles Claude Code reusing existing session UUIDs
@@ -4286,7 +4426,7 @@ app.post("/api/handoffs/:id/spawn", async (req, res) => {
       briefingToUse = await handoff.composeBriefing({
         projectDir: record.project_dir,
         projectName: record.project_name || projectConfig.name || "Unknown",
-        cwd: projectConfig.cwd || null,
+        cwd: resolveProjectCwd(record.project_dir, projectConfig),
         fromSessionTitle: record.from_session_title || "",
         handoffNotes: record.handoff_notes || "",
         projectConfig,
@@ -4456,12 +4596,23 @@ app.get("/api/projects/:dir/summaries", async (req, res) => {
 app.post("/api/projects/:dir/spawn", async (req, res) => {
   try {
     const projectDir = decodeURIComponent(req.params.dir);
-    const { stream_name, provider = "claude" } = req.body;
+    const { stream_name, provider = "claude", folder_id } = req.body;
 
     // Get project config
     const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.dir === projectDir) || {};
     const projectName = projectConfig.name || getProjectName(projectDir);
-    const cwd = projectConfig.cwd || process.env.HOME || "/tmp";
+
+    // Resolve cwd. When a folder_id is provided AND the project_dir resolution
+    // lands at $HOME (the broken-spawn signature, see inferCwdFromFolder), try
+    // inferring from the folder's session JSONLs first — that's ground truth
+    // of where Claude Code actually ran for those sessions.
+    let cwd = null;
+    if (folder_id) {
+      cwd = await inferCwdFromFolder(folder_id);
+    }
+    if (!cwd) {
+      cwd = resolveProjectCwd(projectDir, projectConfig);
+    }
 
     // Build handoff notes based on stream
     let handoffNotes = "";
@@ -5384,7 +5535,7 @@ app.post("/api/morning-refresh/:id/spawn", async (req, res) => {
     const provider = req.body.provider === "codex" ? "codex" : "claude";
 
     const projectConfig = Object.values(PROJECT_KEYWORDS).find(p => p.dir === record.project_dir) || {};
-    const cwd = projectConfig.cwd || process.env.HOME || "/tmp";
+    const cwd = resolveProjectCwd(record.project_dir, projectConfig);
     const today = new Date().toISOString().split("T")[0];
 
     // Archive sessions that haven't been touched for more than 2 days

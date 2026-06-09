@@ -1268,7 +1268,8 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             stream_name: selectedSpawnStream,
-            provider: selectedSpawnProvider
+            provider: selectedSpawnProvider,
+            folder_id: activeFolderId
           })
         });
         const result = await resp.json();
