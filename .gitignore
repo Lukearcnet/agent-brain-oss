@@ -1,0 +1,34 @@
+node_modules/
+.env
+.env.*
+!.env.example
+projects.json
+settings.json
+automation-flags.json
+logs/
+.DS_Store
+sessions/
+fly-agent-runner/node_modules/
+# User uploads (screenshots, etc)
+public/uploads/*
+!public/uploads/.gitkeep
+
+# User view customizations
+views/custom/*
+!views/custom/.gitkeep
+
+# Generated instruction files (rebuilt by instructions/generate.sh)
+CLAUDE.md
+AGENTS.md
+
+# User-specific instruction overrides
+instructions/local.md
+
+# Personal transcripts/documents
+
+# Sensitive config files
+apps.json
+scripts/generate-asc-token.js
+
+# MCP config (user-specific paths)
+.mcp.json

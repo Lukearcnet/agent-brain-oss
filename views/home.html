@@ -1,0 +1,1501 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Agent Brain - Sessions</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+    .header h1 { font-size: 20px; font-weight: 700; flex: 1; }
+    .header-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .header-btn:hover { background: rgba(255,255,255,0.2); }
+
+    /* Two-panel layout */
+    .container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 320px;
+      min-width: 280px;
+      max-width: 400px;
+      background: #fff;
+      border-right: 1px solid #e5e5ea;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 12px;
+      border-bottom: 1px solid #e5e5ea;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .new-chat-btn {
+      padding: 10px;
+      background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
+      color: #fff;
+      text-align: center;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      width: 100%;
+    }
+    .new-chat-btn:active { transform: scale(0.98); }
+    .search-input {
+      width: 100%;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      background: #f2f2f7;
+    }
+    .search-input:focus { outline: none; background: #e8e8ed; }
+    .session-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    /* Folder styles */
+    .folder-header {
+      display: flex;
+      align-items: center;
+      padding: 8px 10px;
+      cursor: pointer;
+      border-radius: 8px;
+      margin-bottom: 2px;
+      user-select: none;
+    }
+    .folder-header:hover { background: #f2f2f7; }
+    .folder-arrow {
+      font-size: 10px;
+      margin-right: 8px;
+      color: #8e8e93;
+      transition: transform 0.15s;
+    }
+    .folder-header.collapsed .folder-arrow { transform: rotate(-90deg); }
+    .folder-name { font-size: 13px; font-weight: 600; color: #1c1c1e; flex: 1; }
+    .folder-count {
+      font-size: 11px;
+      color: #8e8e93;
+      background: #e8e8ed;
+      padding: 2px 6px;
+      border-radius: 8px;
+      margin-right: 6px;
+    }
+    .folder-action-btn {
+      background: none; border: none; font-size: 14px; color: #8e8e93;
+      cursor: pointer; padding: 2px 4px; opacity: 0;
+    }
+    .folder-header:hover .folder-action-btn { opacity: 1; }
+    .folder-body { padding-left: 18px; }
+    .folder-body.hidden { display: none; }
+
+    /* Archived toggle */
+    .archived-toggle {
+      display: flex;
+      align-items: center;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #8e8e93;
+      border-radius: 6px;
+      margin: 4px 0;
+    }
+    .archived-toggle:hover { background: #f2f2f7; }
+    .archived-toggle-arrow {
+      font-size: 8px;
+      margin-right: 6px;
+      transition: transform 0.15s;
+    }
+    .archived-toggle.collapsed .archived-toggle-arrow { transform: rotate(-90deg); }
+    .archived-sessions.hidden { display: none; }
+
+    /* Session items */
+    .session-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 2px;
+      transition: background 0.1s;
+    }
+    .session-item:hover { background: #f2f2f7; }
+    .session-item.selected { background: #e3f2fd; }
+    .session-item.archived { opacity: 0.5; }
+    .session-info { flex: 1; min-width: 0; }
+    .session-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .session-title {
+      flex: 1;
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 500;
+      color: #1c1c1e;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .session-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 3px;
+      font-size: 11px;
+      color: #8e8e93;
+      min-width: 0;
+    }
+    .session-meta-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .session-state {
+      flex-shrink: 0;
+      font-weight: 600;
+      color: #636366;
+    }
+    .session-state.active { color: #0a7f3f; }
+    .session-state.recent { color: #1565c0; }
+    .provider-badge {
+      display: inline-block;
+      flex-shrink: 0;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    .provider-badge.claude { background: #f5e6d3; color: #a55b2a; }
+    .provider-badge.codex { background: #e3f2fd; color: #1565c0; }
+    .provider-badge.unadopted { background: #f2f2f7; color: #8e8e93; border: 1px dashed #c7c7cc; }
+    .session-terminal-btn {
+      background: none;
+      border: none;
+      font-size: 16px;
+      padding: 4px 6px;
+      cursor: pointer;
+      opacity: 0;
+      color: #8e8e93;
+      border-radius: 4px;
+    }
+    .session-item:hover .session-terminal-btn { opacity: 1; }
+    .session-terminal-btn:hover { background: #e8e8ed; color: #1c1c1e; }
+    .session-action-btn {
+      background: none;
+      border: none;
+      font-size: 14px;
+      padding: 4px 6px;
+      cursor: pointer;
+      opacity: 0;
+      color: #8e8e93;
+    }
+    .session-item:hover .session-action-btn { opacity: 1; }
+
+    /* Preview panel */
+    .preview {
+      flex: 1;
+      background: #f2f2f7;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .preview-empty {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      color: #8e8e93;
+      gap: 8px;
+    }
+    .preview-empty-icon { font-size: 48px; opacity: 0.5; }
+    .preview iframe {
+      flex: 1;
+      border: none;
+      width: 100%;
+    }
+    .preview-header {
+      padding: 12px 16px;
+      background: #fff;
+      border-bottom: 1px solid #e5e5ea;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .preview-title {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .preview-btn {
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .preview-btn:hover { background: #0066dd; }
+    .preview-btn.secondary {
+      background: #e8e8ed;
+      color: #1c1c1e;
+    }
+    .preview-btn.secondary:hover { background: #d1d1d6; }
+
+    /* Unfiled section */
+    .unfiled-header {
+      font-size: 11px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      padding: 12px 10px 6px;
+      letter-spacing: 0.5px;
+    }
+
+    /* Modal styles (kept from original) */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      justify-content: center;
+      align-items: flex-end;
+      padding: 0 10px 12px;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(20px);
+      border-radius: 14px;
+      width: 100%;
+      max-width: 400px;
+      overflow: hidden;
+    }
+    .modal-title {
+      padding: 14px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+      color: #8e8e93;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .modal-btn {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      border: none;
+      background: none;
+      font-size: 18px;
+      cursor: pointer;
+      text-align: center;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      color: #007aff;
+    }
+    .modal-btn:last-child { border-bottom: none; }
+    .modal-btn:active { background: rgba(0,0,0,0.04); }
+    .modal-btn.danger { color: #ff3b30; }
+    .modal-btn.primary { color: #6366f1; font-weight: 600; }
+
+    /* Spawn Modal */
+    .spawn-modal-body {
+      padding: 16px;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+    }
+    .spawn-label {
+      font-size: 12px;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .spawn-streams {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .spawn-stream {
+      background: #f8f8f8;
+      border: 2px solid transparent;
+      border-radius: 10px;
+      padding: 12px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      text-align: left;
+    }
+    .spawn-stream:hover { background: #f0f0f5; }
+    .spawn-stream.selected {
+      border-color: #6366f1;
+      background: #ede9fe;
+    }
+    .spawn-stream-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1c1c1e;
+    }
+    .spawn-stream-desc {
+      font-size: 12px;
+      color: #8e8e93;
+      margin-top: 2px;
+    }
+    .spawn-provider-row {
+      display: flex;
+      gap: 8px;
+    }
+    .spawn-provider-btn {
+      flex: 1;
+      padding: 12px;
+      border: 2px solid #e8e8ed;
+      border-radius: 10px;
+      background: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .spawn-provider-btn:hover { background: #f8f8f8; }
+    .spawn-provider-btn.selected {
+      border-color: #6366f1;
+      background: #ede9fe;
+      color: #4c1d95;
+    }
+    /* Scrollable model picker (shared by spawn + new-chat modals) */
+    .model-list {
+      max-height: 168px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border: 1px solid #e8e8ed;
+      border-radius: 10px;
+      padding: 6px;
+      background: #fafafa;
+      -webkit-overflow-scrolling: touch;
+    }
+    .model-option {
+      text-align: left;
+      padding: 9px 11px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .model-option:hover { background: #f4f4f8; }
+    .model-option.selected {
+      border-color: #6366f1;
+      background: #ede9fe;
+    }
+    .model-option-name { font-size: 14px; font-weight: 600; color: #1c1c1e; }
+    .model-option-name .model-default-tag {
+      font-size: 10px; font-weight: 700; color: #6d28d9;
+      background: #ede9fe; border-radius: 5px; padding: 1px 5px; margin-left: 6px;
+      vertical-align: middle;
+    }
+    .model-option-desc { font-size: 12px; color: #8e8e93; margin-top: 2px; line-height: 1.35; }
+    .spawn-btn {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      border: none;
+      background: linear-gradient(135deg,#6366f1,#8b5cf6);
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      color: #fff;
+      border-radius: 0 0 14px 14px;
+    }
+    .spawn-btn:disabled { opacity: 0.5; }
+    .modal-cancel {
+      display: block;
+      width: 100%;
+      margin-top: 8px;
+      padding: 16px;
+      border: none;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(20px);
+      border-radius: 14px;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #007aff;
+      max-width: 400px;
+    }
+    .rename-row {
+      display: none;
+      padding: 12px 16px;
+      gap: 8px;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+    }
+    .rename-row.active { display: flex; }
+    .rename-row input {
+      flex: 1;
+      font-size: 16px;
+      padding: 10px 14px;
+      border: 1px solid #d1d1d6;
+      border-radius: 10px;
+      background: #fff;
+    }
+    .rename-row input:focus { outline: none; border-color: #007aff; }
+    .rename-row button {
+      padding: 10px 18px;
+      background: #007aff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Mobile menu button (hamburger - hidden on desktop) */
+    .mobile-menu-btn {
+      display: none;
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 18px;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+    }
+    .mobile-menu-btn:active { background: rgba(255,255,255,0.25); }
+
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+      .mobile-menu-btn {
+        display: block;
+      }
+      .container {
+        position: relative;
+      }
+      .sidebar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        max-width: none;
+        z-index: 10;
+        transition: transform 0.25s ease;
+      }
+      .preview {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 5;
+      }
+      /* When a session is selected on mobile, hide sidebar and show preview */
+      .container.mobile-show-preview .sidebar {
+        transform: translateX(-100%);
+      }
+      .container.mobile-show-preview .preview {
+        z-index: 15;
+      }
+      /* Show sidebar overlay when menu is open */
+      .container.mobile-menu-open .sidebar {
+        transform: translateX(0);
+        z-index: 20;
+        box-shadow: 2px 0 20px rgba(0,0,0,0.2);
+      }
+      .container.mobile-menu-open::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.4);
+        z-index: 15;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <button class="mobile-menu-btn" id="mobile-menu-btn" onclick="toggleMobileMenu()">☰</button>
+    <h1>Sessions</h1>
+    <a href="/" class="header-btn">Dashboard</a>
+  </div>
+
+  <div class="container">
+    <!-- Left sidebar: session list -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <button class="new-chat-btn" onclick="openNewChatModal()">+ New Session</button>
+        <input type="text" class="search-input" id="search" placeholder="Search sessions...">
+      </div>
+      <div class="session-list" id="session-list"></div>
+    </div>
+
+    <!-- Right panel: preview -->
+    <div class="preview" id="preview">
+      <div class="preview-empty" id="preview-empty">
+        <div class="preview-empty-icon">💬</div>
+        <div>Select a session to preview</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action modal -->
+  <div class="modal-overlay" id="modal" onclick="closeModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title" id="modal-title"></div>
+        <div class="rename-row" id="rename-row">
+          <input type="text" id="rename-input" placeholder="New name...">
+          <button onclick="doRename()">Save</button>
+        </div>
+        <div id="main-actions">
+          <button class="modal-btn" onclick="showRename()">Rename</button>
+          <button class="modal-btn" onclick="showFolderPicker()">Move to Project</button>
+          <button class="modal-btn" onclick="doArchive()">Archive</button>
+          <button class="modal-btn danger" onclick="doDelete()">Delete</button>
+        </div>
+        <div id="folder-picker" style="display:none;">
+          <div style="padding:14px 16px; font-size:13px; font-weight:600; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); text-transform:uppercase; letter-spacing:0.5px;">Move to project</div>
+          <button class="modal-btn" onclick="doMoveToFolder(null)" style="color:#8e8e93;">Remove from project</button>
+          <div id="folder-list-picker"></div>
+          <div class="rename-row active" style="display:flex;">
+            <input type="text" id="new-folder-input" placeholder="New project name...">
+            <button onclick="doCreateFolderAndMove()">Create</button>
+          </div>
+        </div>
+      </div>
+      <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- New chat modal -->
+  <div class="modal-overlay" id="new-chat-modal" onclick="closeNewChatModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title">New Session</div>
+        <!-- Provider selector -->
+        <div style="display:flex;gap:8px;padding:0 16px 12px;">
+          <button id="provider-claude" class="provider-btn active" onclick="selectProvider('claude')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border:2px solid #d97706;background:#fef3c7;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.2s;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#d97706"/><path d="M12 7v5l3 3" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+            Claude Code
+          </button>
+          <button id="provider-codex" class="provider-btn" onclick="selectProvider('codex')" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border:2px solid #e0e0e0;background:#f9f9f9;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.2s;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+            Codex
+          </button>
+        </div>
+        <div id="newchat-model-wrap" style="padding:0 16px 12px;">
+          <div style="font-size:12px;font-weight:600;color:#8e8e93;margin-bottom:6px;">Model</div>
+          <div class="model-list" id="newchat-model-list"></div>
+        </div>
+        <div style="padding:0 16px 16px;">
+          <textarea id="new-chat-message" rows="3" placeholder="What would you like to work on?" style="width:100%; font-size:16px; padding:12px; border:1px solid #e0e0e0; border-radius:12px; resize:none; font-family:inherit; line-height:1.4; background:#f9f9f9;"></textarea>
+        </div>
+        <div id="new-chat-status" style="display:none; padding:0 16px 12px; text-align:center; font-size:13px; color:#8e8e93;"></div>
+        <button class="modal-btn" onclick="startNewChat()" style="font-weight:600;">Start Session</button>
+      </div>
+      <button class="modal-cancel" onclick="closeNewChatModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Folder action modal -->
+  <div class="modal-overlay" id="folder-modal" onclick="closeFolderModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title" id="folder-modal-title"></div>
+        <div class="rename-row" id="folder-rename-row">
+          <input type="text" id="folder-rename-input" placeholder="New name...">
+          <button onclick="doRenameFolder()">Save</button>
+        </div>
+        <button class="modal-btn primary" onclick="openSpawnModal()">Start New Session</button>
+        <button class="modal-btn" onclick="showFolderRename()">Rename Project</button>
+        <button class="modal-btn danger" onclick="doDeleteFolder()">Delete Project</button>
+      </div>
+      <button class="modal-cancel" onclick="closeFolderModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Spawn modal -->
+  <div class="modal-overlay" id="spawn-modal" onclick="closeSpawnModal(event)">
+    <div style="width:100%; max-width:400px;">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title" id="spawn-modal-title">Start New Session</div>
+        <div class="spawn-modal-body">
+          <div class="spawn-label">Work Stream</div>
+          <div class="spawn-streams" id="spawn-streams">
+            <!-- Filled dynamically -->
+          </div>
+          <div class="spawn-label">Provider</div>
+          <div class="spawn-provider-row">
+            <button class="spawn-provider-btn selected" data-provider="claude" onclick="selectSpawnProvider('claude')">Claude</button>
+            <button class="spawn-provider-btn" data-provider="codex" onclick="selectSpawnProvider('codex')">Codex</button>
+          </div>
+          <div id="spawn-model-wrap">
+            <div class="spawn-label">Model</div>
+            <div class="model-list" id="spawn-model-list"></div>
+          </div>
+        </div>
+        <button class="spawn-btn" id="spawn-btn" onclick="doSpawn()">Start Session</button>
+      </div>
+      <button class="modal-cancel" onclick="closeSpawnModal()">Cancel</button>
+    </div>
+  </div>
+
+  <script>
+    let allSessions = [];
+    let allFolders = [];
+    let activeSessionId = null;
+    let activeFolderId = null;
+    let selectedSessionId = null;
+    let collapsedFolders = JSON.parse(localStorage.getItem("collapsedFolders") || "{}");
+    let collapsedArchived = JSON.parse(localStorage.getItem("collapsedArchived") || "{}");
+
+    async function loadData() {
+      const [sResp, fResp, ccResp, codexResp] = await Promise.all([
+        fetch("/api/sessions"),
+        fetch("/api/folders"),
+        fetch("/api/claude-sessions"),
+        fetch("/api/codex-sessions")
+      ]);
+      const abSessions = await sResp.json();
+      allFolders = await fResp.json();
+      const ccSessions = await ccResp.json();
+      const codexSessions = await codexResp.json();
+
+      // Track which external sessions are already adopted
+      const adoptedCC = new Set();
+      const adoptedCodex = new Set();
+      for (const ab of abSessions) {
+        if (ab.claude_session_id) adoptedCC.add(ab.claude_session_id);
+        if (ab.codex_session_id) adoptedCodex.add(ab.codex_session_id);
+      }
+
+      allSessions = [];
+
+      // Add Agent Brain sessions with provider info
+      for (const ab of abSessions) {
+        const provider = ab.provider || (ab.claude_session_id ? "claude" : "agent-brain");
+        allSessions.push({ ...ab, source: "agent-brain", provider });
+      }
+
+      // Add unadopted Claude Code sessions
+      for (const cc of ccSessions) {
+        if (!adoptedCC.has(cc.session_id)) {
+          allSessions.push({
+            session_id: cc.session_id,
+            title: cc.title,
+            updated_at: cc.updated_at,
+            source: "claude-code",
+            provider: "claude",
+            project_dir: cc.project_dir,
+            project_path: cc.project_path
+          });
+        }
+      }
+
+      // Add unadopted Codex sessions
+      for (const cx of codexSessions) {
+        if (!adoptedCodex.has(cx.session_id)) {
+          allSessions.push({
+            session_id: cx.session_id,
+            title: cx.title,
+            updated_at: cx.updated_at,
+            source: "codex",
+            provider: "codex",
+            project_dir: cx.project_dir
+          });
+        }
+      }
+
+      allSessions.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      renderList();
+    }
+
+    function renderList() {
+      const q = (document.getElementById("search").value || "").toLowerCase();
+      const list = document.getElementById("session-list");
+      const filtered = q ? allSessions.filter(s => s.title.toLowerCase().includes(q)) : allSessions;
+
+      const inFolder = new Set();
+      for (const f of allFolders) {
+        for (const sid of f.session_ids) inFolder.add(sid);
+      }
+
+      let html = "";
+
+      // Render folders
+      for (const f of allFolders) {
+        const folderSessions = filtered.filter(s => f.session_ids.includes(s.session_id));
+        const activeSessions = folderSessions.filter(s => !s.archived);
+        const archivedSessions = folderSessions.filter(s => s.archived);
+
+        if (q && folderSessions.length === 0) continue;
+
+        const isCollapsed = collapsedFolders[f.id];
+        const isArchivedCollapsed = collapsedArchived[f.id] !== false; // default collapsed
+
+        html += '<div class="folder-header' + (isCollapsed ? ' collapsed' : '') + '" onclick="toggleFolder(\'' + f.id + '\')">' +
+          '<span class="folder-arrow">▼</span>' +
+          '<span class="folder-name">' + esc(f.name) + '</span>' +
+          '<span class="folder-count">' + activeSessions.length + '</span>' +
+          '<button class="folder-action-btn" onclick="event.stopPropagation(); openFolderModal(\'' + f.id + '\', \'' + esc(f.name).replace(/'/g, "\\'") + '\')">···</button>' +
+        '</div>';
+
+        html += '<div class="folder-body' + (isCollapsed ? ' hidden' : '') + '">';
+
+        // Active sessions
+        for (const s of activeSessions) {
+          html += sessionItemHtml(s);
+        }
+
+        // Archived toggle
+        if (archivedSessions.length > 0) {
+          html += '<div class="archived-toggle' + (isArchivedCollapsed ? ' collapsed' : '') + '" onclick="toggleArchived(\'' + f.id + '\')">' +
+            '<span class="archived-toggle-arrow">▼</span>' +
+            'Archived (' + archivedSessions.length + ')' +
+          '</div>';
+          html += '<div class="archived-sessions' + (isArchivedCollapsed ? ' hidden' : '') + '">';
+          for (const s of archivedSessions) {
+            html += sessionItemHtml(s);
+          }
+          html += '</div>';
+        }
+
+        html += '</div>';
+      }
+
+      // Unfiled sessions
+      const unfiled = filtered.filter(s => !inFolder.has(s.session_id));
+      const unfiledActive = unfiled.filter(s => !s.archived);
+      const unfiledArchived = unfiled.filter(s => s.archived);
+
+      if (unfiled.length > 0) {
+        html += '<div class="unfiled-header">Unfiled</div>';
+        for (const s of unfiledActive) {
+          html += sessionItemHtml(s);
+        }
+
+        if (unfiledArchived.length > 0) {
+          const isArchivedCollapsed = collapsedArchived["unfiled"] !== false;
+          html += '<div class="archived-toggle' + (isArchivedCollapsed ? ' collapsed' : '') + '" onclick="toggleArchived(\'unfiled\')">' +
+            '<span class="archived-toggle-arrow">▼</span>' +
+            'Archived (' + unfiledArchived.length + ')' +
+          '</div>';
+          html += '<div class="archived-sessions' + (isArchivedCollapsed ? ' hidden' : '') + '">';
+          for (const s of unfiledArchived) {
+            html += sessionItemHtml(s);
+          }
+          html += '</div>';
+        }
+      }
+
+      if (!html) {
+        html = '<div style="text-align:center;padding:40px 16px;color:#8e8e93;">' +
+          (q ? 'No matching sessions' : 'No sessions yet') + '</div>';
+      }
+
+      list.innerHTML = html;
+    }
+
+    function sessionItemHtml(s) {
+      const ago = timeAgo(s.updated_at);
+      const state = sessionState(s.updated_at);
+      const projectLabel = getSessionProjectLabel(s);
+      const isSelected = s.session_id === selectedSessionId;
+      const archivedClass = s.archived ? ' archived' : '';
+      const selectedClass = isSelected ? ' selected' : '';
+
+      // Provider badge
+      let badge = '';
+      if (s.provider === 'claude' || s.provider === 'claude-code') {
+        badge = '<span class="provider-badge claude">Claude</span>';
+      } else if (s.provider === 'codex') {
+        badge = '<span class="provider-badge codex">Codex</span>';
+      }
+
+      // Unadopted Claude Code session
+      if (s.source === "claude-code") {
+        return '<div class="session-item' + archivedClass + '" onclick="adoptCCSession(\'' + esc(s.project_dir) + '\', \'' + s.session_id + '\')">' +
+          '<div class="session-info">' +
+            '<div class="session-title-row"><div class="session-title">' + esc(s.title) + '</div><span class="provider-badge unadopted">Adopt</span></div>' +
+            sessionMetaHtml(projectLabel, state, ago, true) +
+          '</div>' +
+        '</div>';
+      }
+
+      // Unadopted Codex session
+      if (s.source === "codex") {
+        return '<div class="session-item' + archivedClass + '" onclick="adoptCodexSession(\'' + s.session_id + '\')">' +
+          '<div class="session-info">' +
+            '<div class="session-title-row"><div class="session-title">' + esc(s.title) + '</div><span class="provider-badge unadopted">Adopt</span></div>' +
+            sessionMetaHtml(projectLabel, state, ago, true) +
+          '</div>' +
+        '</div>';
+      }
+
+      // Adopted session (Agent Brain managed)
+      return '<div class="session-item' + archivedClass + selectedClass + '" onclick="selectSession(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">' +
+        '<div class="session-info">' +
+          '<div class="session-title-row"><div class="session-title">' + esc(s.title) + '</div>' + badge + '</div>' +
+          sessionMetaHtml(projectLabel, state, ago, false) +
+        '</div>' +
+        '<button class="session-terminal-btn" onclick="event.stopPropagation(); focusTerminal(\'' + esc(s.title).replace(/'/g, "\\'") + '\')" title="Focus terminal">💻</button>' +
+        '<button class="session-action-btn" onclick="event.stopPropagation(); openModal(\'' + s.session_id + '\', \'' + esc(s.title).replace(/'/g, "\\'") + '\')">...</button>' +
+      '</div>';
+    }
+
+    function sessionMetaHtml(projectLabel, state, ago, isExternal) {
+      const bits = [];
+      if (projectLabel) bits.push(projectLabel);
+      if (isExternal) bits.push("External");
+      bits.push(ago);
+      return '<div class="session-meta">' +
+        '<span class="session-state ' + state.className + '">' + state.label + '</span>' +
+        '<span class="session-meta-text">' + esc(bits.join(" • ")) + '</span>' +
+      '</div>';
+    }
+
+    function sessionState(iso) {
+      const diff = Date.now() - new Date(iso).getTime();
+      if (diff < 10 * 60 * 1000) return { label: "Active", className: "active" };
+      if (diff < 6 * 60 * 60 * 1000) return { label: "Recent", className: "recent" };
+      return { label: "Idle", className: "idle" };
+    }
+
+    function getSessionProjectLabel(s) {
+      const folderName = getFolderNameForSession(s.session_id);
+      if (folderName) return folderName;
+      const rawPath = s.project_path || s.project_dir || s.cc_project_dir || "";
+      if (!rawPath) return "";
+      if (rawPath.includes("/")) {
+        const parts = rawPath.split("/").filter(Boolean);
+        return parts[parts.length - 1] || "";
+      }
+      return "";
+    }
+
+    function getFolderNameForSession(sessionId) {
+      const folder = allFolders.find(f => f.session_ids.includes(sessionId));
+      return folder ? folder.name : "";
+    }
+
+    function selectSession(sessionId, title) {
+      selectedSessionId = sessionId;
+      renderList();
+      showPreview(sessionId, title);
+      // On mobile, show the preview panel and close menu
+      const container = document.querySelector(".container");
+      container.classList.add("mobile-show-preview");
+      container.classList.remove("mobile-menu-open");
+    }
+
+    function closePreview() {
+      selectedSessionId = null;
+      renderList();
+      const preview = document.getElementById("preview");
+      preview.innerHTML = '<div class="preview-empty" id="preview-empty"><div class="preview-empty-icon">💬</div><div>Select a session to preview</div></div>';
+      const container = document.querySelector(".container");
+      container.classList.remove("mobile-show-preview");
+    }
+
+    function getPreviewFrame() {
+      return document.querySelector("#preview iframe");
+    }
+
+    function previewCopyChat(btn) {
+      const frame = getPreviewFrame();
+      if (!frame || !frame.contentWindow || typeof frame.contentWindow.copyChat !== "function") return;
+      frame.contentWindow.copyChat(btn);
+    }
+
+    function previewOpenActions() {
+      const frame = getPreviewFrame();
+      if (!frame || !frame.contentWindow || typeof frame.contentWindow.openActionMenu !== "function") return;
+      frame.contentWindow.openActionMenu();
+    }
+
+    function showPreview(sessionId, title) {
+      const preview = document.getElementById("preview");
+      preview.innerHTML =
+        '<div class="preview-header">' +
+          '<button class="preview-btn secondary" onclick="closePreview()">Back</button>' +
+          '<div class="preview-title">' + esc(title || "Session") + '</div>' +
+          '<button class="preview-btn secondary" onclick="previewCopyChat(this)">Copy</button>' +
+          '<button class="preview-btn secondary" onclick="previewOpenActions()">...</button>' +
+        '</div>' +
+        '<iframe src="/chat/' + sessionId + '?embed=1"></iframe>';
+    }
+
+    function toggleMobileMenu() {
+      const container = document.querySelector(".container");
+      container.classList.toggle("mobile-menu-open");
+    }
+
+    // Close mobile menu when clicking backdrop
+    document.addEventListener("click", function(e) {
+      const container = document.querySelector(".container");
+      if (container.classList.contains("mobile-menu-open")) {
+        // If click is on the backdrop (::after element area), close menu
+        const sidebar = document.querySelector(".sidebar");
+        if (!sidebar.contains(e.target) && !document.getElementById("mobile-menu-btn").contains(e.target)) {
+          container.classList.remove("mobile-menu-open");
+        }
+      }
+    });
+
+    window.addEventListener("message", function(event) {
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || event.data.type !== "agent-brain-sessions-back") return;
+      closePreview();
+    });
+
+    async function focusTerminal(sessionTitle) {
+      try {
+        await fetch("/api/terminals/focus-by-title", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: sessionTitle })
+        });
+      } catch (e) {
+        console.error("Failed to focus terminal:", e);
+      }
+    }
+
+    async function adoptCCSession(projectDir, sessionId) {
+      const resp = await fetch("/api/claude-sessions/" + projectDir + "/" + sessionId + "/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const data = await resp.json();
+      if (data.session_id) {
+        selectedSessionId = data.session_id;
+        loadData();
+        showPreview(data.session_id, data.title || sessionId);
+        const container = document.querySelector(".container");
+        container.classList.add("mobile-show-preview");
+        container.classList.remove("mobile-menu-open");
+      }
+    }
+
+    async function adoptCodexSession(sessionId) {
+      const resp = await fetch("/api/codex-sessions/" + sessionId + "/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const data = await resp.json();
+      if (data.session_id) {
+        selectedSessionId = data.session_id;
+        loadData();
+        showPreview(data.session_id, data.title || sessionId);
+        const container = document.querySelector(".container");
+        container.classList.add("mobile-show-preview");
+        container.classList.remove("mobile-menu-open");
+      }
+    }
+
+    function toggleFolder(folderId) {
+      collapsedFolders[folderId] = !collapsedFolders[folderId];
+      localStorage.setItem("collapsedFolders", JSON.stringify(collapsedFolders));
+      renderList();
+    }
+
+    function toggleArchived(key) {
+      collapsedArchived[key] = collapsedArchived[key] === false ? true : false;
+      localStorage.setItem("collapsedArchived", JSON.stringify(collapsedArchived));
+      renderList();
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s || "";
+      return d.innerHTML;
+    }
+
+    function timeAgo(iso) {
+      const diff = Date.now() - new Date(iso).getTime();
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return "just now";
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+
+    // ── Session action modal ──
+    function openModal(id, title) {
+      activeSessionId = id;
+      document.getElementById("modal-title").textContent = title;
+      document.getElementById("rename-input").value = title;
+      document.getElementById("rename-row").classList.remove("active");
+      document.getElementById("main-actions").style.display = "";
+      document.getElementById("folder-picker").style.display = "none";
+      document.getElementById("modal").classList.add("active");
+    }
+
+    function closeModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("modal").classList.remove("active");
+      activeSessionId = null;
+    }
+
+    function showRename() {
+      document.getElementById("rename-row").classList.add("active");
+      document.getElementById("rename-input").focus();
+    }
+
+    async function doRename() {
+      const title = document.getElementById("rename-input").value.trim();
+      if (!title || !activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
+      });
+      closeModal();
+      loadData();
+    }
+
+    async function doArchive() {
+      if (!activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId + "/archive", { method: "POST" });
+      closeModal();
+      loadData();
+    }
+
+    async function doDelete() {
+      if (!activeSessionId) return;
+      if (!confirm("Delete this session permanently?")) return;
+      await fetch("/api/sessions/" + activeSessionId, { method: "DELETE" });
+      closeModal();
+      if (selectedSessionId === activeSessionId) {
+        selectedSessionId = null;
+        const container = document.querySelector(".container");
+        container.classList.remove("mobile-show-preview");
+        container.classList.remove("mobile-menu-open");
+        document.getElementById("preview").innerHTML =
+          '<div class="preview-empty"><div class="preview-empty-icon">💬</div><div>Select a session to preview</div></div>';
+      }
+      loadData();
+    }
+
+    // ── Folder picker ──
+    function showFolderPicker() {
+      document.getElementById("main-actions").style.display = "none";
+      const picker = document.getElementById("folder-picker");
+      picker.style.display = "";
+      const listEl = document.getElementById("folder-list-picker");
+      listEl.innerHTML = allFolders.map(f =>
+        '<button class="modal-btn" onclick="doMoveToFolder(\'' + f.id + '\')">' + esc(f.name) + '</button>'
+      ).join("");
+      document.getElementById("new-folder-input").value = "";
+    }
+
+    async function doMoveToFolder(folderId) {
+      if (!activeSessionId) return;
+      await fetch("/api/sessions/" + activeSessionId + "/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_id: folderId })
+      });
+      closeModal();
+      loadData();
+    }
+
+    async function doCreateFolderAndMove() {
+      const name = document.getElementById("new-folder-input").value.trim();
+      if (!name || !activeSessionId) return;
+      const resp = await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const folders = await resp.json();
+      const newFolder = folders[folders.length - 1];
+      await doMoveToFolder(newFolder.id);
+    }
+
+    // ── Folder modal ──
+    function openFolderModal(id, name) {
+      activeFolderId = id;
+      document.getElementById("folder-modal-title").textContent = name;
+      document.getElementById("folder-rename-input").value = name;
+      document.getElementById("folder-rename-row").classList.remove("active");
+      document.getElementById("folder-modal").classList.add("active");
+    }
+
+    function closeFolderModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("folder-modal").classList.remove("active");
+      activeFolderId = null;
+    }
+
+    function showFolderRename() {
+      document.getElementById("folder-rename-row").classList.add("active");
+      document.getElementById("folder-rename-input").focus();
+    }
+
+    async function doRenameFolder() {
+      const name = document.getElementById("folder-rename-input").value.trim();
+      if (!name || !activeFolderId) return;
+      await fetch("/api/folders/" + activeFolderId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      closeFolderModal();
+      loadData();
+    }
+
+    async function doDeleteFolder() {
+      if (!activeFolderId) return;
+      if (!confirm("Delete this folder? Sessions inside will become unfiled.")) return;
+      await fetch("/api/folders/" + activeFolderId, { method: "DELETE" });
+      closeFolderModal();
+      loadData();
+    }
+
+    // ── Spawn Modal ──
+    let spawnProjectDir = null;
+    let spawnProjectName = null;
+    let spawnStreams = [];
+    let selectedSpawnStream = null;
+    let selectedSpawnProvider = "claude";
+
+    // ── Model picker (shared: folder spawn + new chat) ──
+    let spawnModelsCache = null;
+    let spawnModelsDefault = "";
+
+    async function ensureSpawnModels() {
+      if (spawnModelsCache) return spawnModelsCache;
+      try {
+        const resp = await fetch("/api/spawn-models");
+        const data = await resp.json();
+        spawnModelsCache = Array.isArray(data.models) ? data.models : [];
+        spawnModelsDefault = data.default || (spawnModelsCache[0] && spawnModelsCache[0].id) || "";
+      } catch (e) {
+        spawnModelsCache = [];
+        spawnModelsDefault = "";
+      }
+      return spawnModelsCache;
+    }
+
+    function renderModelPicker(listEl, selectedId) {
+      if (!listEl) return;
+      const models = spawnModelsCache || [];
+      listEl.dataset.model = selectedId || spawnModelsDefault || "";
+      listEl.innerHTML = "";
+      models.forEach(m => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "model-option" + (m.id === listEl.dataset.model ? " selected" : "");
+        row.dataset.modelId = m.id;
+        const tag = m.default ? ' <span class="model-default-tag">DEFAULT</span>' : "";
+        row.innerHTML = '<div class="model-option-name">' + esc(m.label) + tag + '</div>' +
+                        '<div class="model-option-desc">' + esc(m.description || "") + '</div>';
+        row.onclick = function () {
+          listEl.dataset.model = m.id;
+          Array.from(listEl.children).forEach(c => c.classList.toggle("selected", c.dataset.modelId === m.id));
+        };
+        listEl.appendChild(row);
+      });
+    }
+
+    // Populate a picker, preselecting the stored choice for this context, else the default (Fable).
+    async function setupModelPicker(listElId, storageKey) {
+      await ensureSpawnModels();
+      const listEl = document.getElementById(listElId);
+      if (!listEl) return;
+      let initial = spawnModelsDefault;
+      try {
+        const stored = storageKey ? localStorage.getItem(storageKey) : null;
+        if (stored && (spawnModelsCache || []).some(m => m.id === stored)) initial = stored;
+      } catch (e) {}
+      renderModelPicker(listEl, initial);
+    }
+
+    // Read the chosen model and remember it for next time. Returns null if the list isn't ready.
+    function getPickerModel(listElId, storageKey) {
+      const listEl = document.getElementById(listElId);
+      const model = (listEl && listEl.dataset.model) || spawnModelsDefault || null;
+      if (storageKey && model) { try { localStorage.setItem(storageKey, model); } catch (e) {} }
+      return model;
+    }
+
+    function spawnModelStorageKey() {
+      return spawnProjectDir ? ("spawnModel:" + spawnProjectDir) : "spawnModel:last";
+    }
+
+    async function openSpawnModal() {
+      if (!activeFolderId) return;
+
+      // Get folder info
+      const folder = allFolders.find(f => f.id === activeFolderId);
+      if (!folder) return;
+
+      spawnProjectName = folder.name;
+
+      // Find the project_dir from sessions in this folder
+      const folderSessions = allSessions.filter(s => folder.session_ids && folder.session_ids.includes(s.session_id));
+      const dirs = folderSessions.map(s => s.cc_project_dir).filter(Boolean);
+      const dirCounts = {};
+      dirs.forEach(d => dirCounts[d] = (dirCounts[d] || 0) + 1);
+      spawnProjectDir = Object.entries(dirCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+      // If no session-derived project_dir (e.g., empty folder, or folder where
+      // every session has the broken cc_project_dir), look up by folder name
+      // in the configured projects list (projects.json). This lets explicitly-
+      // bound folders spawn even with zero sessions.
+      if (!spawnProjectDir && folder.name) {
+        try {
+          const projResp = await fetch("/api/projects");
+          const projList = await projResp.json();
+          const target = folder.name.trim().toLowerCase();
+          const match = (projList || []).find(p => p.name && p.name.trim().toLowerCase() === target);
+          if (match) spawnProjectDir = match.dir;
+        } catch (_) {}
+      }
+
+      // Fetch work streams for this project
+      spawnStreams = [];
+      if (spawnProjectDir) {
+        try {
+          const resp = await fetch("/api/projects/" + encodeURIComponent(spawnProjectDir) + "/streams");
+          const data = await resp.json();
+          spawnStreams = data.streams || [];
+        } catch (_) {}
+      }
+
+      // Reset selection
+      selectedSpawnStream = null;
+      selectedSpawnProvider = "claude";
+
+      // Render modal
+      document.getElementById("spawn-modal-title").textContent = spawnProjectName;
+
+      let streamsHtml = '<div class="spawn-stream selected" data-stream="" onclick="selectSpawnStream(this, \'\')">';
+      streamsHtml += '<div class="spawn-stream-name">General</div>';
+      streamsHtml += '<div class="spawn-stream-desc">Start without a specific work stream focus</div>';
+      streamsHtml += '</div>';
+
+      for (const s of spawnStreams) {
+        streamsHtml += '<div class="spawn-stream" data-stream="' + esc(s.stream_name) + '" onclick="selectSpawnStream(this, \'' + esc(s.stream_name).replace(/'/g, "\\'") + '\')">';
+        streamsHtml += '<div class="spawn-stream-name">' + esc(s.stream_name) + '</div>';
+        if (s.description) {
+          streamsHtml += '<div class="spawn-stream-desc">' + esc(s.description) + '</div>';
+        }
+        streamsHtml += '</div>';
+      }
+      document.getElementById("spawn-streams").innerHTML = streamsHtml;
+
+      // Reset provider buttons
+      const provBtns = document.querySelectorAll(".spawn-provider-btn");
+      provBtns.forEach(btn => btn.classList.toggle("selected", btn.dataset.provider === "claude"));
+
+      // Populate the model picker (Claude only) with this folder's last choice or the default
+      document.getElementById("spawn-model-wrap").style.display = "";
+      setupModelPicker("spawn-model-list", spawnModelStorageKey());
+
+      // Close folder modal, show spawn modal
+      document.getElementById("folder-modal").classList.remove("active");
+      document.getElementById("spawn-modal").classList.add("active");
+    }
+
+    function closeSpawnModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("spawn-modal").classList.remove("active");
+      spawnProjectDir = null;
+      spawnProjectName = null;
+    }
+
+    function selectSpawnStream(el, stream) {
+      selectedSpawnStream = stream || null;
+      const items = document.querySelectorAll(".spawn-stream");
+      items.forEach(item => item.classList.toggle("selected", item === el));
+    }
+
+    function selectSpawnProvider(provider) {
+      selectedSpawnProvider = provider;
+      const btns = document.querySelectorAll(".spawn-provider-btn");
+      btns.forEach(btn => btn.classList.toggle("selected", btn.dataset.provider === provider));
+      // Model picker only applies to Claude
+      const wrap = document.getElementById("spawn-model-wrap");
+      if (wrap) wrap.style.display = provider === "claude" ? "" : "none";
+    }
+
+    async function doSpawn() {
+      if (!spawnProjectDir) {
+        alert("Could not determine project directory");
+        return;
+      }
+
+      const btn = document.getElementById("spawn-btn");
+      btn.disabled = true;
+      btn.textContent = "Starting...";
+
+      try {
+        const resp = await fetch("/api/projects/" + encodeURIComponent(spawnProjectDir) + "/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stream_name: selectedSpawnStream,
+            provider: selectedSpawnProvider,
+            folder_id: activeFolderId,
+            model: selectedSpawnProvider === "claude" ? getPickerModel("spawn-model-list", spawnModelStorageKey()) : null
+          })
+        });
+        const result = await resp.json();
+        if (result.ok) {
+          btn.textContent = "Started!";
+          setTimeout(() => {
+            closeSpawnModal();
+            btn.textContent = "Start Session";
+            btn.disabled = false;
+            loadData();
+          }, 1000);
+        } else {
+          btn.textContent = "Error: " + (result.error || "Unknown");
+          setTimeout(() => {
+            btn.textContent = "Start Session";
+            btn.disabled = false;
+          }, 2000);
+        }
+      } catch (err) {
+        btn.textContent = "Error";
+        setTimeout(() => {
+          btn.textContent = "Start Session";
+          btn.disabled = false;
+        }, 2000);
+      }
+    }
+
+    // ── New Chat Modal ──
+    let selectedProvider = "claude";
+
+    function selectProvider(provider) {
+      selectedProvider = provider;
+      const claudeBtn = document.getElementById("provider-claude");
+      const codexBtn = document.getElementById("provider-codex");
+      if (provider === "claude") {
+        claudeBtn.style.border = "2px solid #d97706";
+        claudeBtn.style.background = "#fef3c7";
+        codexBtn.style.border = "2px solid #e0e0e0";
+        codexBtn.style.background = "#f9f9f9";
+      } else {
+        codexBtn.style.border = "2px solid #10b981";
+        codexBtn.style.background = "#d1fae5";
+        claudeBtn.style.border = "2px solid #e0e0e0";
+        claudeBtn.style.background = "#f9f9f9";
+      }
+      // Model picker only applies to Claude
+      const wrap = document.getElementById("newchat-model-wrap");
+      if (wrap) wrap.style.display = provider === "claude" ? "" : "none";
+    }
+
+    function openNewChatModal() {
+      document.getElementById("new-chat-message").value = "";
+      document.getElementById("new-chat-status").style.display = "none";
+      selectProvider("claude"); // Reset to Claude by default
+      setupModelPicker("newchat-model-list", "spawnModel:last");
+      document.getElementById("new-chat-modal").classList.add("active");
+      setTimeout(() => document.getElementById("new-chat-message").focus(), 300);
+    }
+
+    function closeNewChatModal(e) {
+      if (e && !e.target.classList.contains("modal-overlay")) return;
+      document.getElementById("new-chat-modal").classList.remove("active");
+    }
+
+    async function startNewChat() {
+      const msg = document.getElementById("new-chat-message").value.trim();
+      if (!msg) return;
+      const statusEl = document.getElementById("new-chat-status");
+      statusEl.style.display = "";
+      statusEl.textContent = selectedProvider === "codex" ? "Opening Codex..." : "Opening Claude Desktop...";
+      try {
+        const resp = await fetch("/chat/new", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg, provider: selectedProvider, model: selectedProvider === "claude" ? getPickerModel("newchat-model-list", "spawnModel:last") : null })
+        });
+        const data = await resp.json();
+        if (data.error) {
+          statusEl.textContent = "Error: " + data.error;
+          return;
+        }
+        statusEl.textContent = data.linked ? "Linked! Loading..." : "Session created. Loading...";
+        closeNewChatModal();
+        selectedSessionId = data.session_id;
+        loadData();
+        showPreview(data.session_id, msg.slice(0, 50));
+        const container = document.querySelector(".container");
+        container.classList.add("mobile-show-preview");
+        container.classList.remove("mobile-menu-open");
+      } catch (e) {
+        statusEl.textContent = "Failed: " + e.message;
+      }
+    }
+
+    // Wire up search
+    document.getElementById("search").addEventListener("input", renderList);
+
+    loadData();
+  </script>
+</body>
+</html>

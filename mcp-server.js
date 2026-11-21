@@ -1,0 +1,671 @@
+#!/usr/bin/env node
+
+/**
+ * Agent Brain MCP Server
+ *
+ * Exposes Agent Brain's memory, checkpoint, mailbox, contacts, and calendar
+ * APIs as MCP tools for Claude Code sessions. Runs as a stdio transport
+ * server — Claude Code spawns it as a child process.
+ *
+ * All tools call the existing Agent Brain HTTP API at localhost:3030.
+ */
+
+// Load .env from the agent-brain install dir so AB_AUTH_* and AGENT_BRAIN_URL
+// are available even when Claude Code spawns us with a clean env.
+try {
+  require("dotenv").config({ path: require("path").join(__dirname, ".env") });
+} catch (_) { /* dotenv optional — env vars may come from parent process */ }
+
+const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
+const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
+const { z } = require("zod");
+const http = require("http");
+
+const AB_BASE = process.env.AGENT_BRAIN_URL || "http://localhost:3030";
+
+// Auth header — sent to Agent Brain when AB_AUTH_ENABLED=true. Read from same
+// .env that the server reads, so MCP and server stay in sync without extra config.
+const AB_AUTH_HEADER = (process.env.AB_AUTH_ENABLED || "").toLowerCase() === "true"
+  ? "Basic " + Buffer.from(`${process.env.AB_API_USER || ""}:${process.env.AB_API_PASSWORD || ""}`).toString("base64")
+  : null;
+
+// ── HTTP helper (no external deps) ──────────────────────────────────────────
+
+function request(method, path, body, timeoutMs, signal) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, AB_BASE);
+    const headers = { "Content-Type": "application/json" };
+    if (AB_AUTH_HEADER) headers["Authorization"] = AB_AUTH_HEADER;
+    const opts = {
+      method,
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname + url.search,
+      headers,
+      timeout: timeoutMs || (method === "POST" && path.includes("/checkpoints") && !path.includes("/respond")
+        ? 90000000  // a bit over the server's 24h wait window
+        : 30000),
+    };
+
+    const req = http.request(opts, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try {
+          resolve({ status: res.statusCode, data: JSON.parse(data) });
+        } catch {
+          resolve({ status: res.statusCode, data: data });
+        }
+      });
+    });
+
+    req.on("error", (err) => reject(err));
+    if (signal) {
+      if (signal.aborted) { req.destroy(new Error("cancelled")); }
+      else signal.addEventListener("abort", () => req.destroy(new Error("cancelled")), { once: true });
+    }
+    req.on("timeout", () => { req.destroy(); reject(new Error("Request timed out")); });
+
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+// ── Terminal identity ─────────────────────────────────────────────────────
+// This MCP server is a child of the Claude Code CLI process. Agent Brain's
+// spawn launcher exports AB_SESSION_ID into that terminal, and Claude Code
+// records the CLI's current session UUID in ~/.claude/sessions/<pid>.json.
+// Using these means checkpoints bind to the right session even when the agent
+// forgot its session id after compaction or computed a wrong claude_session_id.
+function terminalIdentity() {
+  const ab = /^[A-Za-z0-9_-]+$/.test(process.env.AB_SESSION_ID || "") ? process.env.AB_SESSION_ID : null;
+  let cc = null;
+  try {
+    const f = require("path").join(require("os").homedir(), ".claude", "sessions", process.ppid + ".json");
+    const j = JSON.parse(require("fs").readFileSync(f, "utf8"));
+    if (/^[0-9a-f-]{36}$/i.test(j.sessionId || "")) cc = j.sessionId;
+  } catch (_) {}
+  return { abSessionId: ab, claudeSessionId: cc };
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function text(str) {
+  return { content: [{ type: "text", text: typeof str === "string" ? str : JSON.stringify(str, null, 2) }] };
+}
+
+function errorResult(msg) {
+  return { content: [{ type: "text", text: `Error: ${msg}` }], isError: true };
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+
+async function main() {
+  const server = new McpServer({
+    name: "agent-brain",
+    version: "1.0.0",
+  });
+
+  // ── Memory Tools ────────────────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_memory_read",
+    "Read project memory from Agent Brain. Returns persistent context from previous sessions.",
+    {
+      project: z.string().describe("Project key (e.g. -Users-yourname-myproject). Use pwd | sed 's|/|-|g' to derive."),
+      sections: z.string().optional().describe("Comma-separated section slugs to read (e.g. 'architecture,next-steps'). Omit for full memory."),
+      task: z.string().optional().describe("Task description for AI-based section filtering (e.g. 'fix email bug'). Agent Brain picks relevant sections."),
+    },
+    async ({ project, sections, task }) => {
+      try {
+        let path = `/api/memory/${encodeURIComponent(project)}`;
+        const params = [];
+        if (sections) params.push(`sections=${encodeURIComponent(sections)}`);
+        if (task) params.push(`task=${encodeURIComponent(task)}`);
+        if (params.length) path += `?${params.join("&")}`;
+
+        const res = await request("GET", path);
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data)}`);
+        return text(res.data.content || res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_memory_write",
+    "Write/update project memory in Agent Brain. Structure content with ## headings for section filtering.",
+    {
+      project: z.string().describe("Project key"),
+      content: z.string().describe("Full memory content (markdown with ## Section headings)"),
+    },
+    async ({ project, content }) => {
+      try {
+        const res = await request("PUT", `/api/memory/${encodeURIComponent(project)}`, { content });
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data)}`);
+        return text("Memory updated successfully.");
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_memory_sections",
+    "List available memory sections for a project. Use this to discover what sections exist before reading specific ones.",
+    {
+      project: z.string().describe("Project key"),
+    },
+    async ({ project }) => {
+      try {
+        const res = await request("GET", `/api/memory/${encodeURIComponent(project)}?list=true`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_daily_log",
+    "Append a daily log entry for a project. Used at session end to record what was done.",
+    {
+      project: z.string().describe("Project key"),
+      content: z.string().describe("Log entry (markdown). Include key accomplishments, decisions, and next steps."),
+    },
+    async ({ project, content }) => {
+      try {
+        const res = await request("POST", `/api/memory/${encodeURIComponent(project)}/daily`, { content });
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text("Daily log entry appended.");
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── Checkpoint Tool ─────────────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_checkpoint",
+    "Post a checkpoint question to the user (who may respond from their phone). Blocks until the user responds — there is no timeout; it ends only when answered, superseded by your next checkpoint, or dismissed. Posting a new checkpoint retires your previous pending one. session_id/claude_session_id are filled in automatically in Agent Brain-spawned terminals. Use for plan approval, design decisions, clarifying questions, and task completion notifications.",
+    {
+      project: z.string().describe("Project key"),
+      question: z.string().describe("The question or status to present to the user"),
+      options: z.array(z.string()).optional().describe("Response options (e.g. ['Yes, proceed', 'Modify approach', 'Cancel'])"),
+      session_id: z.string().optional().describe("Agent Brain session ID (optional; auto-detected in spawned terminals)"),
+      claude_session_id: z.string().optional().describe("Claude Code session UUID (optional; auto-detected from the running CLI)"),
+      replaces: z.string().optional().describe("ID of a previous checkpoint this one replaces (auto-dismisses the old one to prevent dashboard clutter)"),
+    },
+    async ({ project, question, options, session_id, claude_session_id, replaces }, extra) => {
+      // Claude Code aborts an MCP tool call that sends no response OR PROGRESS
+      // for 30 minutes. A checkpoint legitimately waits far longer than that,
+      // so heartbeat progress notifications keep the call alive from our side —
+      // no per-machine `timeout` config required, and it can't be lost when a
+      // config is reset or the repo is installed somewhere new.
+      //
+      // Only possible when the client supplies a progressToken. If it doesn't,
+      // this degrades to exactly today's behaviour rather than failing.
+      const progressToken = extra && extra._meta && extra._meta.progressToken;
+      let heartbeat = null;
+      if (progressToken !== undefined && extra && typeof extra.sendNotification === "function") {
+        let ticks = 0;
+        heartbeat = setInterval(() => {
+          extra.sendNotification({
+            method: "notifications/progress",
+            params: { progressToken, progress: ++ticks, message: "waiting for user response" }
+          }).catch(() => {});   // a dropped heartbeat must never surface as a tool error
+        }, 60000);
+        if (heartbeat.unref) heartbeat.unref();
+        process.stderr.write("[checkpoint] progress heartbeat active (token present)\n");
+      } else {
+        process.stderr.write("[checkpoint] NO progressToken from client — 30min abort still applies\n");
+      }
+
+      try {
+        const ident = terminalIdentity();
+        const body = { project_dir: project, question };
+        if (options) body.options = options;
+        // The terminal's own identity wins over what the agent passed: it is
+        // exact, while the agent's copy can be stale, guessed, or a placeholder.
+        const sid = ident.abSessionId || session_id;
+        const ccid = ident.claudeSessionId || claude_session_id;
+        if (sid) body.session_id = sid;
+        if (ccid) body.claude_session_id = ccid;
+        if (replaces) body.replaces = replaces;
+
+        const DONE = new Set(["responded", "superseded", "dismissed"]);
+        let checkpointId = null;
+
+        // Normal path: blocking POST. Returns when answered — or when the
+        // server's 24h window lapses, in which case we keep waiting below.
+        try {
+          const res = await request("POST", "/api/checkpoints", body, undefined, extra && extra.signal);
+          if (res.status === 200 || res.status === 201) {
+            if (res.data && DONE.has(res.data.status)) return text(res.data);
+            checkpointId = res.data && res.data.checkpoint_id;
+            if (!checkpointId) return text(res.data);
+          }
+        } catch (blockingErr) {
+          if (extra && extra.signal && extra.signal.aborted) return errorResult("cancelled");
+          process.stderr.write(`[checkpoint] Blocking mode failed: ${blockingErr.message}, re-attaching\n`);
+        }
+
+        // Connection dropped before we learned the id: post non-blocking.
+        // An identical question from this session re-attaches to the existing
+        // checkpoint server-side, so this never creates a duplicate card.
+        while (!checkpointId) {
+          if (extra && extra.signal && extra.signal.aborted) return errorResult("cancelled");
+          try {
+            const postRes = await request("POST", "/api/checkpoints?blocking=false", body);
+            if (postRes.status !== 200 && postRes.status !== 201) {
+              return errorResult(`Status ${postRes.status}: ${JSON.stringify(postRes.data)}`);
+            }
+            checkpointId = postRes.data && postRes.data.checkpoint_id;
+            if (!checkpointId) return text(postRes.data);
+          } catch (_) {
+            await sleep(15000); // server unreachable (restart / sleep) — keep trying
+          }
+        }
+
+        // Wait indefinitely: until the user answers, the checkpoint is
+        // superseded by a newer one from this session, or it is dismissed
+        // (user dismissed it, or archived/killed the session).
+        for (;;) {
+          if (extra && extra.signal && extra.signal.aborted) return errorResult("cancelled");
+          try {
+            const r = await request("GET", `/api/checkpoints/${encodeURIComponent(checkpointId)}/attach`, null, 90000000, extra && extra.signal);
+            if (r.status === 404) {
+              return text({ checkpoint_id: checkpointId, status: "gone", message: "Checkpoint no longer exists." });
+            }
+            const st = r.data && r.data.status;
+            if (DONE.has(st) && r.data.response !== undefined) return text(r.data);
+            if (DONE.has(st) || (r.data && r.data.resolved)) {
+              const full = await request("GET", `/api/checkpoints/${encodeURIComponent(checkpointId)}/status`);
+              return text(full.data);
+            }
+            if (st === "reattached") {
+              // Another waiter took over this checkpoint; let it own the wait.
+              return text({ checkpoint_id: checkpointId, status: "reattached", message: "Another waiter attached to this checkpoint." });
+            }
+            // "timeout" (24h window lapsed) or anything else: attach again.
+          } catch (_) {
+            if (extra && extra.signal && extra.signal.aborted) return errorResult("cancelled");
+            await sleep(15000);
+          }
+        }
+      } catch (e) {
+        return errorResult(e.message);
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+      }
+    }
+  );
+
+  // ── Mailbox Tools ───────────────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_mailbox_check",
+    "Check for unread messages in the Agent Brain mailbox (project-specific and broadcast).",
+    {
+      project: z.string().describe("Project key"),
+    },
+    async ({ project }) => {
+      try {
+        const [broadcast, project_msgs] = await Promise.all([
+          request("GET", "/api/mailbox/broadcast?unread=true"),
+          request("GET", `/api/mailbox/${encodeURIComponent(project)}?unread=true`),
+        ]);
+        const messages = [
+          ...(Array.isArray(broadcast.data) ? broadcast.data : []),
+          ...(Array.isArray(project_msgs.data) ? project_msgs.data : []),
+        ];
+        if (messages.length === 0) return text("No unread messages.");
+        return text(messages);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_mailbox_send",
+    "Send a message to another session or broadcast to all sessions.",
+    {
+      from_session: z.string().describe("Sender project key"),
+      to_session: z.string().describe("Recipient project key, or 'broadcast' for all sessions"),
+      subject: z.string().describe("Message subject"),
+      body: z.string().describe("Message body"),
+    },
+    async ({ from_session, to_session, subject, body }) => {
+      try {
+        const res = await request("POST", "/api/mailbox", { from_session, to_session, subject, body });
+        if (res.status !== 200 && res.status !== 201) return errorResult(`Status ${res.status}`);
+        return text("Message sent.");
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_mailbox_mark_read",
+    "Mark a mailbox message as read.",
+    {
+      message_id: z.string().describe("The message ID to mark as read"),
+    },
+    async ({ message_id }) => {
+      try {
+        const res = await request("POST", `/api/mailbox/${encodeURIComponent(message_id)}/read`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text("Message marked as read.");
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── Contacts Tool ───────────────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_contacts_search",
+    "Search the master contacts list (email + Google People API contacts). Returns names and email addresses.",
+    {
+      query: z.string().optional().describe("Search query (name or email). Omit to list top contacts by interaction frequency."),
+      limit: z.number().optional().describe("Max results (default 20)"),
+    },
+    async ({ query, limit }) => {
+      try {
+        const params = [];
+        if (query) params.push(`q=${encodeURIComponent(query)}`);
+        params.push(`limit=${limit || 20}`);
+        const res = await request("GET", `/api/email/contacts?${params.join("&")}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── Calendar Tool ───────────────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_calendar_agenda",
+    "Get upcoming calendar events from Google Calendar.",
+    {
+      days: z.number().optional().describe("Number of days to look ahead (default 7)"),
+    },
+    async ({ days }) => {
+      try {
+        const res = await request("GET", `/api/calendar/events?days=${days || 7}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── Email Triage Tool ───────────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_email_triage",
+    "Get email triage summary — emails needing attention (RESPOND_NOW and RESPOND_TODAY).",
+    {
+      account: z.string().optional().describe("Filter by email account ID. Omit for all accounts."),
+      since: z.string().optional().describe("ISO date string to filter emails since (default: last 24 hours)"),
+    },
+    async ({ account, since }) => {
+      try {
+        const params = ["classification=RESPOND_NOW,RESPOND_TODAY"];
+        if (account) params.push(`account=${encodeURIComponent(account)}`);
+        if (since) params.push(`since=${encodeURIComponent(since)}`);
+        const res = await request("GET", `/api/email/inbox?${params.join("&")}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── AI Assistant Tool ───────────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_ai_assistant",
+    "Use Agent Brain's AI assistant to draft emails or calendar events using your contacts and context.",
+    {
+      prompt: z.string().describe("Natural language request (e.g. 'draft an email to Miles Deamer about the project update')"),
+    },
+    async ({ prompt }) => {
+      try {
+        const res = await request("POST", "/api/ai-assistant", { prompt });
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── Granola (meeting notes) ─────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_granola_list_notes",
+    "List Granola meeting notes (most recent first). Filters by date or title substring.",
+    {
+      since: z.string().optional().describe("ISO date — only notes created at or after this time"),
+      before: z.string().optional().describe("ISO date — only notes created before this time"),
+      search: z.string().optional().describe("Title substring (case-insensitive)"),
+      limit: z.number().optional().describe("Max notes to return (default 50, max 500)"),
+    },
+    async ({ since, before, search, limit }) => {
+      try {
+        const params = new URLSearchParams();
+        if (since) params.set("since", since);
+        if (before) params.set("before", before);
+        if (search) params.set("search", search);
+        if (limit) params.set("limit", String(limit));
+        const qs = params.toString();
+        const res = await request("GET", `/api/granola/notes${qs ? "?" + qs : ""}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_granola_get_note",
+    "Get a single Granola meeting note by id, optionally with the full transcript.",
+    {
+      note_id: z.string().describe("Granola note id (starts with 'not_')"),
+      include_transcript: z.boolean().optional().describe("Include the full transcript (default false)"),
+    },
+    async ({ note_id, include_transcript }) => {
+      try {
+        const qs = include_transcript ? "?include_transcript=true" : "";
+        const res = await request("GET", `/api/granola/notes/${encodeURIComponent(note_id)}${qs}`);
+        if (res.status === 404) return errorResult("Note not found");
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_granola_search",
+    "Full-text search Granola meeting notes (summaries AND transcripts). Returns matching notes ordered by recency.",
+    {
+      query: z.string().describe("Search query (Postgres websearch syntax, e.g. 'quarterly report')"),
+      since: z.string().optional().describe("ISO date — only search notes created at or after this time"),
+      limit: z.number().optional().describe("Max results (default 20, max 100)"),
+    },
+    async ({ query, since, limit }) => {
+      try {
+        const params = new URLSearchParams({ q: query });
+        if (since) params.set("since", since);
+        if (limit) params.set("limit", String(limit));
+        const res = await request("GET", `/api/granola/search?${params.toString()}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_granola_recent_meetings",
+    "Digest of recent Granola meetings — title, attendees, summary for the last N days.",
+    {
+      days: z.number().optional().describe("Look-back window in days (default 7, max 90)"),
+    },
+    async ({ days }) => {
+      try {
+        const res = await request("GET", `/api/granola/digest?days=${days || 7}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_granola_sync_now",
+    "Trigger an immediate Granola sync. Pass full=true to run a complete backfill instead of incremental.",
+    {
+      full: z.boolean().optional().describe("Run full backfill instead of incremental (default false)"),
+    },
+    async ({ full }) => {
+      try {
+        const qs = full ? "?full=true" : "";
+        const res = await request("POST", `/api/granola/sync/now${qs}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}`);
+        return text(res.data);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── Research (Perplexity via Agent Brain) ───────────────────────────────
+
+  server.tool(
+    "agent_brain_research_search",
+    "Web search via Perplexity, returning ranked results with snippets and URLs. Cheap ($0.005 per request, regardless of how many queries it carries) and cached — prefer this for finding facts, sources, and recent news. Results are logged to Agent Brain's spend tracker.",
+    {
+      query: z.string().describe("Search query. For several related lookups, pass `queries` instead — a batch costs the same $0.005 as a single query."),
+      queries: z.array(z.string()).optional().describe("Batch of queries run in one request, billed as one request. Strongly preferred over repeated calls."),
+      recency: z.enum(["hour", "day", "week", "month", "year"]).optional().describe("Limit to recently published pages."),
+      domains: z.array(z.string()).optional().describe("Restrict to these domains (max 20)."),
+      country: z.string().optional().describe("ISO 3166-1 alpha-2 code for regional targeting (e.g. 'SS')."),
+      maxResults: z.number().optional().describe("Results per query, 1-20 (default 10)."),
+      caller: z.string().optional().describe("Label for spend attribution (e.g. 'my-project')."),
+    },
+    async ({ query, queries, recency, domains, country, maxResults, caller }) => {
+      try {
+        const res = await request("POST", "/api/research/search", {
+          queries: queries && queries.length ? queries : query,
+          recency, domains, country, maxResults,
+          caller: caller || "mcp",
+        });
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data)}`);
+        const { results = [], cost_usd, cached } = res.data;
+        if (!results.length) return text("No results.");
+        const body = results.map((r, i) =>
+          `[${i + 1}] ${r.title || "(untitled)"}\n${r.url}\n${r.date || "no date"} — ${(r.snippet || "").replace(/\s+/g, " ").slice(0, 500)}`
+        ).join("\n\n");
+        return text(`${body}\n\n---\n${results.length} results · ${cached ? "cached, $0" : `$${cost_usd}`}`);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_research_ask",
+    "Ask a question and get a web-grounded answer with citations, via Perplexity's Agent API. Costs more than search (~$0.004 fast to ~$0.025 deep) — use it when you want a synthesized cited answer rather than raw sources.",
+    {
+      input: z.string().describe("The question to answer."),
+      preset: z.enum(["fast", "low", "medium", "high", "xhigh"]).optional().describe("Depth/cost: fast (1 step, ~$0.004) → high (15 steps, ~$0.025). Default fast."),
+      recency: z.enum(["hour", "day", "week", "month", "year"]).optional(),
+      domains: z.array(z.string()).optional().describe("Restrict sources to these domains (max 20)."),
+      caller: z.string().optional().describe("Label for spend attribution."),
+    },
+    async ({ input, preset, recency, domains, caller }) => {
+      try {
+        const res = await request("POST", "/api/research/ask", {
+          input, preset, recency, domains, caller: caller || "mcp",
+        });
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data)}`);
+        const { answer, sources = [], cost_usd, cached } = res.data;
+        const cites = sources.length
+          ? "\n\nSources:\n" + sources.map((s, i) => `[${i + 1}] ${s.title || s.url}\n    ${s.url}`).join("\n")
+          : "";
+        return text(`${answer}${cites}\n\n---\n${cached ? "cached, $0" : `$${cost_usd}`}`);
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
+    "agent_brain_research_usage",
+    "Report Perplexity research spend over the trailing N days, broken down by caller.",
+    {
+      days: z.number().optional().describe("Lookback window in days (default 30)."),
+    },
+    async ({ days }) => {
+      try {
+        const res = await request("GET", `/api/research/usage?days=${days || 30}`);
+        if (res.status !== 200) return errorResult(`Status ${res.status}: ${JSON.stringify(res.data)}`);
+        const d = res.data;
+        const lines = Object.entries(d.byCaller || {})
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, v]) => `  ${k}: $${v}`);
+        return text(
+          `Perplexity spend, last ${d.days} days: $${d.total}\n` +
+          `${d.calls} calls (${d.cachedCalls} served from cache)\n` +
+          (lines.length ? `\nBy caller:\n${lines.join("\n")}` : "")
+        );
+      } catch (e) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  // ── Health Check ────────────────────────────────────────────────────────
+
+  server.tool(
+    "agent_brain_health",
+    "Check if the Agent Brain server is running and healthy.",
+    {},
+    async () => {
+      try {
+        const res = await request("GET", "/api/health");
+        if (res.status === 200) return text("Agent Brain is healthy and running on port 3030.");
+        return errorResult(`Agent Brain returned status ${res.status}`);
+      } catch (e) {
+        return errorResult(`Agent Brain is not reachable: ${e.message}`);
+      }
+    }
+  );
+
+  // ── Start Server ────────────────────────────────────────────────────────
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((err) => {
+  process.stderr.write(`MCP server error: ${err.message}\n`);
+  process.exit(1);
+});

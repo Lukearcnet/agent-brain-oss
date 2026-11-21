@@ -1,0 +1,146 @@
+#!/bin/bash
+# Agent Brain Uninstaller
+# Usage: bin/ab-uninstall
+#
+# Removes Agent Brain hooks, CLAUDE.md, background service, and optionally the project directory.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+echo "╔══════════════════════════════════════════╗"
+echo "║     Agent Brain Uninstaller              ║"
+echo "╚══════════════════════════════════════════╝"
+echo ""
+echo "This will remove Agent Brain from your system."
+echo ""
+
+# ── Step 1: Remove hooks from Claude Code settings ────────────────────────
+
+echo "── Step 1: Removing Claude Code hooks ────────"
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+if [ -f "$CLAUDE_SETTINGS" ]; then
+  python3 -c "
+import json, sys
+try:
+    with open('$CLAUDE_SETTINGS') as f:
+        d = json.load(f)
+    changed = False
+    hooks = d.get('hooks', {})
+    for event in list(hooks.keys()):
+        entries = hooks[event]
+        filtered = []
+        for entry in entries:
+            keep = True
+            for h in entry.get('hooks', []):
+                if 'agent-brain' in h.get('command', ''):
+                    keep = False
+                    break
+            if keep:
+                filtered.append(entry)
+        if len(filtered) != len(entries):
+            changed = True
+            if filtered:
+                hooks[event] = filtered
+            else:
+                del hooks[event]
+    if not hooks:
+        d.pop('hooks', None)
+    if changed:
+        with open('$CLAUDE_SETTINGS', 'w') as f:
+            json.dump(d, f, indent=2)
+        print('done')
+    else:
+        print('none')
+except Exception as e:
+    print(f'error: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null
+  STATUS=$?
+  if [ $STATUS -eq 0 ]; then
+    echo "✓ Hooks removed from $CLAUDE_SETTINGS"
+  else
+    echo "⚠ Could not auto-remove hooks. Edit $CLAUDE_SETTINGS manually."
+  fi
+else
+  echo "  No settings.json found — skipping"
+fi
+
+# ── Step 2: Remove global CLAUDE.md ─────────────────────────────────────
+
+echo ""
+echo "── Step 2: Removing global instruction files ─"
+
+GLOBAL_CLAUDE="$HOME/.claude/CLAUDE.md"
+if [ -f "$GLOBAL_CLAUDE" ]; then
+  if grep -q "Agent Brain" "$GLOBAL_CLAUDE" 2>/dev/null; then
+    rm -f "$GLOBAL_CLAUDE"
+    echo "✓ Removed $GLOBAL_CLAUDE"
+  else
+    echo "  $GLOBAL_CLAUDE exists but doesn't mention Agent Brain — keeping"
+  fi
+else
+  echo "  No global CLAUDE.md found"
+fi
+
+GLOBAL_AGENTS="$HOME/.codex/AGENTS.md"
+if [ -f "$GLOBAL_AGENTS" ]; then
+  if grep -q "Agent Brain" "$GLOBAL_AGENTS" 2>/dev/null; then
+    rm -f "$GLOBAL_AGENTS"
+    echo "✓ Removed $GLOBAL_AGENTS"
+  else
+    echo "  $GLOBAL_AGENTS exists but doesn't mention Agent Brain — keeping"
+  fi
+else
+  echo "  No global AGENTS.md found"
+fi
+
+# ── Step 3: Stop and remove background service ───────────────────────────
+
+echo ""
+echo "── Step 3: Stopping background service ───────"
+
+if [ "$(uname)" = "Darwin" ]; then
+  PLIST_PATH="$HOME/Library/LaunchAgents/com.agentbrain.server.plist"
+  if [ -f "$PLIST_PATH" ]; then
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    rm -f "$PLIST_PATH"
+    echo "✓ LaunchAgent removed"
+  else
+    echo "  No LaunchAgent found"
+  fi
+fi
+
+# Kill any running Agent Brain server
+PIDS=$(pgrep -f "node.*server.js" 2>/dev/null | head -5 || true)
+if [ -n "$PIDS" ]; then
+  echo "$PIDS" | xargs kill 2>/dev/null || true
+  echo "✓ Stopped running server"
+else
+  echo "  No running server found"
+fi
+
+# ── Step 4: Remove inbox/locks cache ──────────────────────────────────────
+
+echo ""
+echo "── Step 4: Cleaning local cache ──────────────"
+
+rm -rf "$HOME/.claude/inbox" 2>/dev/null && echo "✓ Removed inbox cache" || echo "  No inbox cache"
+rm -rf "$HOME/.claude/locks" 2>/dev/null && echo "✓ Removed locks cache" || echo "  No locks cache"
+
+# ── Done ──────────────────────────────────────────────────────────────────
+
+echo ""
+echo "╔══════════════════════════════════════════╗"
+echo "║       Uninstall Complete                 ║"
+echo "╚══════════════════════════════════════════╝"
+echo ""
+echo "  Agent Brain hooks, instructions, and services have been removed."
+echo "  Your Supabase data is still intact (sessions, memory, etc.)."
+echo ""
+echo "  The project directory is still at: $PROJECT_DIR"
+echo "  To fully remove: rm -rf $PROJECT_DIR"
+echo ""
+echo "  To reinstall later: bin/ab-setup"
+echo ""

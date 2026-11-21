@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <script src="/voice.js"></script>
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { overflow-x: hidden; max-width: 100vw; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .header a {
+      color: rgba(255,255,255,0.85);
+      text-decoration: none;
+      font-size: 22px;
+      padding: 4px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .header .title {
+      font-size: 17px;
+      font-weight: 600;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #fff;
+    }
+    .copy-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.85);
+      cursor: pointer;
+      flex-shrink: 0;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .copy-btn:active { background: rgba(255,255,255,0.25); }
+    .copy-btn.copied { background: rgba(52,199,89,0.3); color: #fff; }
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      -webkit-overflow-scrolling: touch;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .msg {
+      max-width: 82%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      word-wrap: break-word;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    .msg.user {
+      background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
+      color: #fff;
+      align-self: flex-end;
+      border-bottom-right-radius: 6px;
+      white-space: pre-wrap;
+    }
+    .msg.assistant {
+      background: #fff;
+      color: #1c1c1e;
+      align-self: flex-start;
+      border-bottom-left-radius: 6px;
+      white-space: normal;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .msg.assistant p { margin: 0 0 8px 0; }
+    .msg.assistant p:last-child { margin-bottom: 0; }
+    .msg.assistant ul, .msg.assistant ol { margin: 0 0 8px 20px; }
+    .msg.assistant li { margin-bottom: 2px; }
+    .msg.assistant code {
+      background: #f2f2f7;
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
+      font-size: 14px;
+      color: #c41a68;
+    }
+    .msg.assistant pre {
+      background: #1c1c1e;
+      color: #f2f2f7;
+      padding: 12px 14px;
+      border-radius: 10px;
+      overflow-x: auto;
+      margin: 0 0 8px 0;
+      font-size: 13px;
+    }
+    .msg.assistant pre code { background: none; padding: 0; color: inherit; }
+    .msg.assistant h1, .msg.assistant h2, .msg.assistant h3 {
+      font-size: 15px;
+      font-weight: 700;
+      margin: 0 0 6px 0;
+      color: #1c1c1e;
+    }
+    .msg.assistant strong { font-weight: 600; }
+    .msg.assistant a { color: #007aff; text-decoration: none; }
+    .msg.thinking {
+      background: #fff;
+      color: #8e8e93;
+      align-self: flex-start;
+      border-bottom-left-radius: 6px;
+      font-style: italic;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .msg.thinking { animation: pulse 1.5s ease-in-out infinite; }
+    .tool-block {
+      align-self: flex-start;
+      max-width: 88%;
+      font-size: 13px;
+      color: #8e8e93;
+      background: #fff;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-family: 'SF Mono', ui-monospace, SFMono-Regular, monospace;
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      border: 1px solid #e8e8ed;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tool-block .tool-header { display: flex; gap: 6px; align-items: center; }
+    .tool-block .tool-icon { font-size: 11px; }
+    .tool-block .tool-output {
+      display: none;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #e8e8ed;
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow-y: auto;
+      color: #636366;
+    }
+    .tool-block.expanded .tool-output { display: block; }
+    /* Embed mode: hide header when loaded in iframe, keep functional elements */
+    body.embed-mode .header { display: none; }
+    body.embed-mode .messages { padding-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="#" onclick="goBack(); return false;">&larr;</a>
+    <div class="title" id="chat-title">Chat</div>
+    <button class="copy-btn" onclick="copyChat(this)">Copy</button>
+    <button class="copy-btn" onclick="openActionMenu()" style="font-size:16px; padding:6px 10px;">&middot;&middot;&middot;</button>
+  </div>
+  <div class="messages" id="messages"></div>
+  <div id="session-state-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#eef3ff; padding:10px 14px; font-size:13px; color:#334155;"></div>
+  <div id="checkpoint-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:linear-gradient(135deg,#f5f3ff,#ede9fe); padding:12px 14px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <span style="font-size:12px;font-weight:600;color:#fff;background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:3px 10px;border-radius:6px;">Checkpoint</span>
+      <span style="font-size:12px;color:#8e8e93;" id="checkpoint-time"></span>
+      <button id="checkpoint-speak" onclick="toggleSpeakCheckpoint()" title="Read this checkpoint aloud" style="display:none;border:none;background:#eef2ff;color:#4338ca;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;cursor:pointer;">&#128266; Listen</button>
+      <span id="checkpoint-collapse-btn" onclick="toggleCheckpointBar()" style="margin-left:auto;font-size:12px;color:#6366f1;font-weight:600;cursor:pointer;padding:2px 8px;background:#e8e4fc;border-radius:6px;user-select:none;">▲ Hide</span>
+    </div>
+    <div id="checkpoint-body">
+      <div style="font-size:14px; color:#1c1c1e; margin-bottom:10px; white-space:pre-wrap; max-height:200px; overflow-y:auto;" id="checkpoint-question"></div>
+      <div id="checkpoint-options" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+      <div style="display:flex;gap:8px;">
+        <textarea id="checkpoint-input" placeholder="Type a response..." style="flex:1;border:1px solid #e5e5ea;border-radius:10px;padding:10px 14px;font-size:15px;font-family:inherit;resize:none;min-height:44px;outline:none;"></textarea>
+        <button id="checkpoint-mic" onclick="toggleRecordCheckpoint()" title="Record a spoken reply" style="display:none;background:#eef2ff;color:#4338ca;border:none;border-radius:10px;padding:10px 14px;font-size:15px;font-weight:600;cursor:pointer;white-space:nowrap;">&#127908; Record</button>
+        <button onclick="respondToCheckpoint()" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-size:15px;font-weight:600;cursor:pointer;">Send</button>
+      </div>
+    </div>
+  </div>
+  <div id="permission-bar" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#f0f4ff; padding:10px 14px;">
+    <div style="font-size:13px; font-weight:600; color:#1c1c1e; margin-bottom:6px;" id="permission-label">Permission requested</div>
+    <div style="font-size:11px; color:#666; margin-bottom:8px; word-break:break-all;" id="permission-detail"></div>
+    <div style="display:flex; gap:10px;">
+      <button onclick="handlePermission('approve')" style="flex:1; padding:10px; border-radius:10px; border:none; background:#34c759; color:#fff; font-size:15px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent;">Allow</button>
+      <button onclick="handlePermission('deny')" style="flex:1; padding:10px; border-radius:10px; border:none; background:#ff3b30; color:#fff; font-size:15px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent;">Deny</button>
+    </div>
+  </div>
+  <div id="provider-note" style="display:none; flex-shrink:0; border-top:1px solid #e8e8ed; background:#f7f8fa; padding:10px 14px; font-size:13px; color:#636366;">
+    This session is controlled through checkpoints. Direct message injection is only available for Claude Desktop sessions.
+  </div>
+  <div id="inject-area" style="flex-shrink:0;">
+    <div style="padding:6px 12px; padding-bottom:max(10px, env(safe-area-inset-bottom)); background:#fff; border-top:1px solid #e8e8ed; display:flex; gap:8px; align-items:flex-end;">
+      <textarea id="inject-input" rows="1" placeholder="Message..." oninput="autoResize(this)" style="flex:1; font-size:16px; padding:10px 16px; border:1px solid #e0e0e0; border-radius:22px; resize:none; max-height:120px; min-height:42px; font-family:-apple-system,system-ui,sans-serif; line-height:1.35; background:#f9f9f9; color:#1c1c1e;"></textarea>
+      <button id="inject-btn" onclick="injectMessage()" style="background:linear-gradient(135deg,#007aff 0%,#5856d6 100%); color:#fff; border:none; border-radius:50%; width:42px; height:42px; font-size:20px; font-weight:700; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent;">&#8593;</button>
+    </div>
+  </div>
+
+  <!-- Action modal -->
+  <div id="action-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.45); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); z-index:100; justify-content:center; align-items:flex-end; padding:0 10px; padding-bottom:max(12px, env(safe-area-inset-bottom));" onclick="closeActionMenu(event)">
+    <div style="width:100%; max-width:400px;">
+      <div style="background:rgba(255,255,255,0.95); -webkit-backdrop-filter:blur(20px); backdrop-filter:blur(20px); border-radius:14px; width:100%; overflow:hidden;" onclick="event.stopPropagation()">
+        <div id="action-title" style="padding:14px 16px; font-size:13px; font-weight:600; text-align:center; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-transform:uppercase; letter-spacing:0.5px;"></div>
+        <div id="rename-row" style="display:none; padding:12px 16px; gap:8px; border-bottom:1px solid rgba(0,0,0,0.08);">
+          <input type="text" id="rename-input" placeholder="New name..." style="flex:1; font-size:16px; padding:10px 14px; border:1px solid #d1d1d6; border-radius:10px; background:#fff; -webkit-appearance:none;">
+          <button onclick="doRename()" style="padding:10px 18px; background:#007aff; color:#fff; border:none; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer;">Save</button>
+        </div>
+        <div id="main-actions">
+          <button class="action-btn" onclick="showRename()">Rename</button>
+          <button class="action-btn" onclick="showFolderPicker()">Move to Project</button>
+          <button class="action-btn" onclick="doHandoff()">Handoff to New Session</button>
+          <button class="action-btn" onclick="showConnectInstructions()">Connect to Agent Brain</button>
+          <button class="action-btn" onclick="doArchive()" style="color:#ff3b30;">Archive</button>
+        </div>
+        <div id="folder-picker" style="display:none;">
+          <div style="padding:14px 16px; font-size:13px; font-weight:600; color:#8e8e93; border-bottom:1px solid rgba(0,0,0,0.08); text-transform:uppercase; letter-spacing:0.5px;">Move to project</div>
+          <button class="action-btn" onclick="doMoveToFolder(null)" style="color:#8e8e93;">Remove from project</button>
+          <div id="folder-list-picker"></div>
+          <div style="display:flex; padding:12px 16px; gap:8px; border-bottom:1px solid rgba(0,0,0,0.08);">
+            <input type="text" id="new-folder-input" placeholder="New project name..." style="flex:1; font-size:16px; padding:10px 14px; border:1px solid #d1d1d6; border-radius:10px; background:#fff; -webkit-appearance:none;">
+            <button onclick="doCreateFolderAndMove()" style="padding:10px 18px; background:#007aff; color:#fff; border:none; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer;">Create</button>
+          </div>
+        </div>
+      </div>
+      <button onclick="closeActionMenu()" style="display:block; width:100%; margin-top:8px; padding:16px; border:none; background:rgba(255,255,255,0.95); -webkit-backdrop-filter:blur(20px); backdrop-filter:blur(20px); border-radius:14px; font-size:18px; font-weight:600; cursor:pointer; color:#007aff; -webkit-tap-highlight-color:transparent;">Cancel</button>
+    </div>
+  </div>
+  <style>
+    .action-btn {
+      display: block; width: 100%; padding: 16px; border: none; background: none;
+      font-size: 18px; cursor: pointer; text-align: center;
+      border-bottom: 1px solid rgba(0,0,0,0.08); color: #007aff;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .action-btn:last-child { border-bottom: none; }
+    .action-btn:active { background: rgba(0,0,0,0.04); }
+  </style>
+
+  <script>
+    const SESSION_ID = "{{SESSION_ID}}";
+    const messagesEl = document.getElementById("messages");
+    let allFolders = [];
+
+    // Detect embed mode (?embed=1) for iframe preview
+    const embedMode = new URLSearchParams(window.location.search).get("embed") === "1";
+    if (embedMode) document.body.classList.add("embed-mode");
+
+    // ── Action menu ──
+    function openActionMenu() {
+      const title = document.getElementById("chat-title").textContent;
+      document.getElementById("action-title").textContent = title;
+      document.getElementById("rename-input").value = title;
+      document.getElementById("rename-row").style.display = "none";
+      document.getElementById("main-actions").style.display = "";
+      document.getElementById("folder-picker").style.display = "none";
+      document.getElementById("action-modal").style.display = "flex";
+    }
+
+    function goBack() {
+      // When chat is rendered inside the sessions preview iframe on mobile,
+      // route the back action to the parent so it can restore the session list.
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "agent-brain-sessions-back" }, window.location.origin);
+        return;
+      }
+
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        window.location.href = "/chat";
+      }
+    }
+
+    function closeActionMenu(e) {
+      if (e && e.target !== document.getElementById("action-modal")) return;
+      document.getElementById("action-modal").style.display = "none";
+    }
+
+    function showConnectInstructions() {
+      closeActionMenu();
+      const host = window.location.origin;
+      const instructions = `I want you to connect to Agent Brain for checkpoints and persistent memory. Agent Brain is running at ${host}.
+
+From now on, follow these rules:
+
+1. At session start, determine your project key and load memory:
+PROJECT_KEY=$(pwd | sed 's|/|-|g')
+curl -s ${host}/api/memory/$PROJECT_KEY | jq -r '.content // "No prior memory."'
+
+2. When you need my input (plan approval, design decisions, clarifying questions), use a BLOCKING checkpoint instead of asking in chat:
+PROJECT_KEY=$(pwd | sed 's|/|-|g')
+RESPONSE=$(curl -s --max-time 86410 -X POST ${host}/api/checkpoints -H "Content-Type: application/json" -d '{"project_dir": "'$PROJECT_KEY'", "question": "Your question here", "options": ["Option 1", "Option 2"]}')
+echo "$RESPONSE"
+
+This blocks until I respond from my phone (up to 24 hours).
+
+3. When you complete a task, ALWAYS post a checkpoint asking what's next. Never go idle.
+
+4. Before ending, save your progress:
+curl -s -X PUT ${host}/api/memory/$PROJECT_KEY -H "Content-Type: application/json" -d '{"content": "<summary of what you did and what is next>"}'
+
+Start by loading memory for this project now.`;
+
+      // Show modal with instructions
+      const modal = document.createElement("div");
+      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px;";
+      modal.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:440px;width:100%;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;" onclick="event.stopPropagation()">' +
+        '<div style="padding:16px;border-bottom:1px solid #e5e5ea;font-weight:600;font-size:15px;text-align:center;">Connect Session to Agent Brain</div>' +
+        '<div style="padding:12px 16px;font-size:13px;color:#666;">Paste this into your running Claude Code session to enable checkpoints, memory, and phone control:</div>' +
+        '<textarea id="connect-instructions" readonly style="flex:1;min-height:200px;margin:0 16px;padding:12px;font-size:12px;font-family:monospace;border:1px solid #d1d1d6;border-radius:10px;background:#f9f9f9;resize:none;color:#1c1c1e;"></textarea>' +
+        '<div style="padding:12px 16px;display:flex;gap:8px;">' +
+        '  <button onclick="this.closest(\'div\').closest(\'div\').closest(\'div\').remove()" style="flex:1;padding:12px;border:1px solid #d1d1d6;border-radius:10px;background:#fff;font-size:15px;cursor:pointer;">Close</button>' +
+        '  <button id="connect-copy-btn" style="flex:1;padding:12px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Copy</button>' +
+        '</div></div>';
+      modal.onclick = () => modal.remove();
+      document.body.appendChild(modal);
+      document.getElementById("connect-instructions").value = instructions;
+      document.getElementById("connect-copy-btn").onclick = async function() {
+        const copied = await copyToClipboard(instructions);
+        if (copied) {
+          this.textContent = "Copied!";
+          this.style.background = "#34c759";
+          setTimeout(() => { this.textContent = "Copy"; this.style.background = "#007aff"; }, 2000);
+        }
+      };
+    }
+
+    function showRename() {
+      document.getElementById("rename-row").style.display = "flex";
+      document.getElementById("rename-input").focus();
+    }
+
+    async function doRename() {
+      const name = document.getElementById("rename-input").value.trim();
+      if (!name) return;
+      await fetch("/api/sessions/" + SESSION_ID, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: name })
+      });
+      document.getElementById("chat-title").textContent = name;
+      closeActionMenu();
+    }
+
+    async function showFolderPicker() {
+      document.getElementById("main-actions").style.display = "none";
+      document.getElementById("folder-picker").style.display = "";
+      try {
+        const resp = await fetch("/api/folders");
+        allFolders = await resp.json();
+      } catch (_) {}
+      const listEl = document.getElementById("folder-list-picker");
+      listEl.innerHTML = allFolders.map(f =>
+        '<button class="action-btn" onclick="doMoveToFolder(\'' + f.id + '\')">' + escHtml(f.name) + '</button>'
+      ).join("");
+      document.getElementById("new-folder-input").value = "";
+    }
+
+    async function doMoveToFolder(folderId) {
+      await fetch("/api/sessions/" + SESSION_ID + "/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_id: folderId })
+      });
+      closeActionMenu();
+    }
+
+    async function doCreateFolderAndMove() {
+      const name = document.getElementById("new-folder-input").value.trim();
+      if (!name) return;
+      const resp = await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const folders = await resp.json();
+      const newFolder = folders[folders.length - 1];
+      await doMoveToFolder(newFolder.id);
+    }
+
+    async function doArchive() {
+      if (!confirm("Archive this session?")) return;
+      await fetch("/api/sessions/" + SESSION_ID + "/archive", { method: "POST" });
+      window.location.href = "/chat";
+    }
+
+    async function doHandoff() {
+      closeActionMenu();
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID + "/handoff", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ handoff_notes: "" })
+        });
+        const data = await resp.json();
+        if (data.ok && data.handoff_id) {
+          // Show handoff modal with spawn + copy options
+          const modal = document.createElement("div");
+          modal.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);z-index:200;display:flex;flex-direction:column;justify-content:flex-end;padding:0 10px;padding-bottom:max(12px,env(safe-area-inset-bottom));";
+          modal.innerHTML =
+            '<div style="width:100%;max-width:400px;margin:0 auto;">' +
+            '  <div style="background:rgba(255,255,255,0.97);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;">' +
+            '    <div style="padding:14px 16px;font-size:15px;font-weight:600;text-align:center;color:#1c1c1e;border-bottom:1px solid rgba(0,0,0,0.08);">Handoff Ready</div>' +
+            '    <div style="padding:12px 16px;font-size:13px;color:#8e8e93;">Briefing compiled (' + Math.round(data.briefing_length / 1024) + 'KB). Choose target:</div>' +
+            '    <div id="handoff-model-wrap" style="padding:0 16px 12px;">' +
+            '      <div style="font-size:12px;font-weight:600;color:#8e8e93;margin-bottom:6px;">Model (Claude)</div>' +
+            '      <div id="handoff-model-list" style="max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;border:1px solid #e8e8ed;border-radius:10px;padding:6px;background:#fafafa;-webkit-overflow-scrolling:touch;"></div>' +
+            '    </div>' +
+            '    <div style="display:flex;gap:8px;padding:0 16px 12px;">' +
+            '      <button onclick="spawnHandoff(\'' + data.handoff_id + '\', \'claude\', this)" style="flex:1;padding:14px;background:linear-gradient(135deg,#d4a574,#a55b2a);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Claude</button>' +
+            '      <button onclick="spawnHandoff(\'' + data.handoff_id + '\', \'codex\', this)" style="flex:1;padding:14px;background:linear-gradient(135deg,#64b5f6,#1565c0);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Codex</button>' +
+            '    </div>' +
+            '    <div style="padding:0 16px 12px;">' +
+            '      <button onclick="showHandoffBriefing(\'' + data.handoff_id + '\', this)" style="width:100%;padding:14px;background:#e8e8ed;color:#1c1c1e;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">View & Copy Briefing</button>' +
+            '    </div>' +
+            '  </div>' +
+            '  <button onclick="this.closest(\'div[style]\').parentElement.remove()" style="display:block;width:100%;margin-top:8px;padding:16px;border:none;background:rgba(255,255,255,0.95);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-radius:14px;font-size:18px;font-weight:600;cursor:pointer;color:#007aff;">Close</button>' +
+            '</div>';
+          document.body.appendChild(modal);
+          loadHandoffModels();
+          modal.addEventListener("click", function(e) { if (e.target === modal) modal.remove(); });
+        } else {
+          alert("Handoff failed: " + (data.error || "Unknown error"));
+        }
+      } catch (err) {
+        alert("Handoff failed: " + err.message);
+      }
+    }
+
+    // Populate the handoff model picker (Claude only): scrollable list, defaults to Fable.
+    async function loadHandoffModels() {
+      const listEl = document.getElementById("handoff-model-list");
+      if (!listEl) return;
+      let models = [], def = "";
+      try {
+        const resp = await fetch("/api/spawn-models");
+        const data = await resp.json();
+        models = Array.isArray(data.models) ? data.models : [];
+        def = data.default || (models[0] && models[0].id) || "";
+      } catch (e) {}
+      let initial = def;
+      try {
+        const stored = localStorage.getItem("spawnModel:last");
+        if (stored && models.some(m => m.id === stored)) initial = stored;
+      } catch (e) {}
+      listEl.dataset.model = initial;
+      listEl.innerHTML = "";
+      models.forEach(m => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.dataset.modelId = m.id;
+        const sel = m.id === initial;
+        row.style.cssText = "text-align:left;padding:9px 11px;border:1px solid " + (sel ? "#a55b2a" : "transparent") + ";border-radius:8px;background:" + (sel ? "#f5e6d3" : "#fff") + ";cursor:pointer;";
+        const tag = m.default ? ' <span style="font-size:10px;font-weight:700;color:#a55b2a;background:#f5e6d3;border-radius:5px;padding:1px 5px;">DEFAULT</span>' : "";
+        row.innerHTML = '<div style="font-size:14px;font-weight:600;color:#1c1c1e;">' + escHtml(m.label) + tag + '</div>' +
+                        '<div style="font-size:12px;color:#8e8e93;margin-top:2px;line-height:1.35;">' + escHtml(m.description || "") + '</div>';
+        row.onclick = function () {
+          listEl.dataset.model = m.id;
+          Array.from(listEl.children).forEach(c => {
+            const s = c.dataset.modelId === m.id;
+            c.style.borderColor = s ? "#a55b2a" : "transparent";
+            c.style.background = s ? "#f5e6d3" : "#fff";
+          });
+          try { localStorage.setItem("spawnModel:last", m.id); } catch (e) {}
+        };
+        listEl.appendChild(row);
+      });
+    }
+
+    async function spawnHandoff(handoffId, provider, btn) {
+      btn.textContent = "Spawning...";
+      btn.style.background = "#8e8e93";
+      let model = null;
+      if ((provider || "claude") === "claude") {
+        const listEl = document.getElementById("handoff-model-list");
+        model = (listEl && listEl.dataset.model) || null;
+        if (model) { try { localStorage.setItem("spawnModel:last", model); } catch (e) {} }
+      }
+      // Hide the model picker once a target is chosen (Codex ignores it)
+      const wrap = document.getElementById("handoff-model-wrap");
+      if (wrap) wrap.style.display = "none";
+      try {
+        const resp = await fetch("/api/handoffs/" + handoffId + "/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: provider || "claude", model })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          btn.textContent = "Spawned!";
+          btn.style.background = "#34c759";
+        } else {
+          btn.textContent = "Failed";
+          btn.style.background = "#ff3b30";
+          alert("Spawn failed: " + (data.error || "Unknown error"));
+        }
+      } catch (err) {
+        btn.textContent = "Failed";
+        btn.style.background = "#ff3b30";
+        alert("Spawn failed: " + err.message);
+      }
+    }
+
+    async function showHandoffBriefing(handoffId, btn) {
+      btn.textContent = "Loading...";
+      try {
+        const resp = await fetch("/api/handoffs/" + handoffId);
+        const data = await resp.json();
+        btn.textContent = "View & Copy Briefing";
+        // Replace the modal content with the briefing
+        const container = btn.closest("div[style*='border-radius:14px']");
+        if (!container) return;
+        container.innerHTML =
+          '<div style="padding:14px 16px;font-size:15px;font-weight:600;text-align:center;color:#1c1c1e;border-bottom:1px solid rgba(0,0,0,0.08);">Handoff Briefing</div>' +
+          '<textarea readonly style="flex:1;min-height:200px;max-height:50vh;margin:12px 16px;padding:10px;font-size:12px;font-family:SF Mono,ui-monospace,monospace;border:1px solid #d1d1d6;border-radius:8px;background:#f9f9f9;color:#1c1c1e;resize:none;" id="handoff-prompt-text"></textarea>' +
+          '<div style="display:flex;gap:8px;padding:12px 16px;">' +
+          '  <button onclick="copyHandoff(this)" style="flex:1;padding:12px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Copy Briefing</button>' +
+          '  <button onclick="spawnHandoff(\'' + handoffId + '\', this)" style="flex:1;padding:12px;background:#34c759;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">Spawn</button>' +
+          '</div>';
+        container.style.maxHeight = "70vh";
+        document.getElementById("handoff-prompt-text").value = data.briefing || "(no briefing)";
+      } catch (err) {
+        btn.textContent = "Failed to load";
+        alert("Error: " + err.message);
+      }
+    }
+
+    async function copyToClipboard(text) {
+      // Use Share API on mobile (works over HTTP on iOS)
+      if (navigator.share && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+        try { await navigator.share({ text }); return true; } catch (e) { if (e.name === "AbortError") return true; }
+      }
+      // Clipboard API (needs HTTPS on iOS)
+      if (navigator.clipboard && window.isSecureContext) {
+        try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall through */ }
+      }
+      // Fallback: visible textarea for manual copy
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:80vw;height:40vh;z-index:99999;font-size:14px;padding:12px;border-radius:12px;border:2px solid #007aff;background:#1c1c1e;color:#fff;";
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99998;";
+      overlay.onclick = () => { document.body.removeChild(ta); document.body.removeChild(overlay); };
+      document.body.appendChild(overlay);
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      return false; // user needs to manually copy
+    }
+
+    async function copyHandoff(btn) {
+      const text = document.getElementById("handoff-prompt-text").value;
+      const copied = await copyToClipboard(text);
+      if (copied) {
+        btn.textContent = "Copied!";
+        btn.style.background = "#34c759";
+        setTimeout(function() { btn.textContent = "Copy Briefing"; btn.style.background = "#007aff"; }, 2000);
+      } else {
+        btn.textContent = "Select All & Copy";
+        setTimeout(function() { btn.textContent = "Copy Briefing"; }, 3000);
+      }
+    }
+
+    function autoResize(el) {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 120) + "px";
+    }
+
+    function scrollToBottom() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function isNearBottom(threshold = 48) {
+      const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+      return distanceFromBottom <= threshold;
+    }
+
+    function escHtml(s) {
+      const div = document.createElement("div");
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    function addSystemContext(text) {
+      const div = document.createElement("div");
+      div.style.cssText = "text-align:center;font-size:12px;color:#8e8e93;padding:8px 16px;font-style:italic;";
+      div.textContent = text;
+      messagesEl.appendChild(div);
+    }
+
+    function addCheckpointQuestion(text) {
+      const div = document.createElement("div");
+      div.className = "msg assistant";
+      div.style.cssText += ";border-left:3px solid #ff9f0a;padding-left:12px;";
+      const label = document.createElement("div");
+      label.style.cssText = "font-size:11px;color:#ff9f0a;font-weight:600;margin-bottom:4px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;";
+      label.innerHTML = '<span class="ckpt-arrow" style="display:inline-block;transition:transform 0.2s;">▼</span> 📋 Checkpoint';
+      div.appendChild(label);
+      const content = document.createElement("div");
+      content.innerHTML = simpleMd(text);
+      content.style.cssText = "overflow:hidden;transition:max-height 0.25s ease,opacity 0.2s;";
+      div.appendChild(content);
+      label.onclick = function(e) {
+        e.stopPropagation();
+        const collapsed = content.style.display === "none";
+        content.style.display = collapsed ? "" : "none";
+        label.querySelector(".ckpt-arrow").style.transform = collapsed ? "" : "rotate(-90deg)";
+      };
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    function addCheckpointResponse(text) {
+      const div = document.createElement("div");
+      div.className = "msg user";
+      div.style.cssText += ";border-left:3px solid #30d158;padding-left:12px;";
+      const label = document.createElement("div");
+      label.style.cssText = "font-size:11px;color:#30d158;font-weight:600;margin-bottom:4px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;";
+      label.innerHTML = '<span class="ckpt-arrow" style="display:inline-block;transition:transform 0.2s;">▼</span> 📱 Response from phone';
+      div.appendChild(label);
+      const content = document.createElement("div");
+      content.textContent = text;
+      content.style.cssText = "overflow:hidden;transition:max-height 0.25s ease,opacity 0.2s;";
+      div.appendChild(content);
+      label.onclick = function(e) {
+        e.stopPropagation();
+        const collapsed = content.style.display === "none";
+        content.style.display = collapsed ? "" : "none";
+        label.querySelector(".ckpt-arrow").style.transform = collapsed ? "" : "rotate(-90deg)";
+      };
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    function addUserMsg(text) {
+      const div = document.createElement("div");
+      div.className = "msg user";
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    function simpleMd(text) {
+      // Escape HTML first
+      let s = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      // Code blocks: ```...```
+      s = s.replace(/```([\s\S]*?)```/g, function(_, code) {
+        return "<pre><code>" + code.trim() + "</code></pre>";
+      });
+      // Inline code
+      s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+      // Bold
+      s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      // Italic
+      s = s.replace(/(?<![*])\*(?![*])(.+?)(?<![*])\*(?![*])/g, "<em>$1</em>");
+      // Headers
+      s = s.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+      s = s.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+      s = s.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+      // Unordered lists
+      s = s.replace(/^[\-\*] (.+)$/gm, "<li>$1</li>");
+      s = s.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
+      // Ordered lists
+      s = s.replace(/^\d+\.\s(.+)$/gm, "<li>$1</li>");
+      // Paragraphs: split by double newline
+      s = s.split(/\n\n+/).map(function(block) {
+        block = block.trim();
+        if (!block) return "";
+        if (block.startsWith("<h") || block.startsWith("<pre") || block.startsWith("<ul") || block.startsWith("<ol") || block.startsWith("<li")) return block;
+        return "<p>" + block.replace(/\n/g, "<br>") + "</p>";
+      }).join("");
+      return s;
+    }
+
+    function addAssistantMsg(text) {
+      const div = document.createElement("div");
+      div.className = "msg assistant";
+      div.innerHTML = simpleMd(text);
+      messagesEl.appendChild(div);
+      scrollToBottom();
+      return div;
+    }
+
+    function addThinking() {
+      const div = document.createElement("div");
+      div.className = "msg thinking";
+      div.textContent = "Thinking...";
+      messagesEl.appendChild(div);
+      scrollToBottom();
+      return div;
+    }
+
+    function addToolBlock(name, args, output) {
+      const div = document.createElement("div");
+      div.className = "tool-block";
+      const truncOutput = output && output.length > 500 ? output.slice(0, 500) + "..." : output;
+      div.innerHTML =
+        '<div class="tool-header"><span class="tool-icon">&#9881;</span> <strong>' + escHtml(name) + '</strong></div>' +
+        (output ? '<div class="tool-output">' + escHtml(truncOutput) + '</div>' : '');
+      div.onclick = function() { div.classList.toggle("expanded"); };
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    function renderMessages(messages) {
+      // Track tool results by tool_call_id for pairing
+      const toolOutputs = {};
+      for (const m of messages) {
+        if (m.role === "tool") toolOutputs[m.tool_call_id] = m.content;
+      }
+
+      for (const m of messages) {
+        if (m.role === "system") continue;
+        if (m.role === "system_context") {
+          addSystemContext(m.content);
+        } else if (m.role === "checkpoint_question") {
+          addCheckpointQuestion(m.content);
+        } else if (m.role === "checkpoint_response") {
+          addCheckpointResponse(m.content);
+        } else if (m.role === "user") {
+          addUserMsg(m.content);
+        } else if (m.role === "tool_use") {
+          // Claude Code tool use blocks
+          for (const t of (m.tools || [])) {
+            addToolBlock(t.name, t.input, "");
+          }
+        } else if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+          for (const tc of m.tool_calls) {
+            const output = toolOutputs[tc.id] || "";
+            addToolBlock(tc.function.name, tc.function.arguments, output);
+          }
+        } else if (m.role === "assistant" && m.content) {
+          addAssistantMsg(m.content);
+        }
+        // skip standalone tool messages (already handled above)
+      }
+    }
+
+    function renderNewMessages(newMsgs) {
+      const toolOutputs = {};
+      for (const m of newMsgs) {
+        if (m.role === "tool") toolOutputs[m.tool_call_id] = m.content;
+      }
+      for (const m of newMsgs) {
+        if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+          for (const tc of m.tool_calls) {
+            const output = toolOutputs[tc.id] || "";
+            addToolBlock(tc.function.name, tc.function.arguments, output);
+          }
+        } else if (m.role === "assistant" && m.content) {
+          addAssistantMsg(m.content);
+        }
+      }
+    }
+
+    let isLinkedCC = false;
+    let isCodexSession = false;
+    let lastMessageCount = 0;
+    let pollTimer = null;
+    let currentProjectDir = null;
+    let currentCheckpointId = null;
+    let currentSessionTitle = null;
+    let currentProvider = null;
+    let currentSessionRawTitle = null;
+
+    function updateInputVisibility() {
+      const injectArea = document.getElementById("inject-area");
+      const providerNote = document.getElementById("provider-note");
+      const showComposer = !isCodexSession;
+      injectArea.style.display = showComposer ? "" : "none";
+      providerNote.style.display = showComposer ? "none" : "";
+    }
+
+    function normalizeProviderFamily(provider) {
+      return provider === "codex" ? "codex" : "claude";
+    }
+
+    // ── Checkpoint handling ──
+    function timeAgo(iso) {
+      if (!iso) return "";
+      const diff = Date.now() - new Date(iso).getTime();
+      const s = Math.floor(diff / 1000);
+      if (s < 10) return "just now";
+      if (s < 60) return s + "s ago";
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      return Math.floor(h / 24) + "d ago";
+    }
+
+    async function loadCheckpoints() {
+      if (!currentProjectDir) return;
+      try {
+        const shouldStick = isNearBottom();
+        const params = new URLSearchParams({
+          project_dir: currentProjectDir
+        });
+        if (SESSION_ID) params.set("session_id", SESSION_ID);
+        if (currentProvider) params.set("provider", currentProvider);
+        if (currentSessionTitle) params.set("session_title", currentSessionTitle);
+        const resp = await fetch("/api/checkpoints?" + params.toString());
+        let checkpoints = await resp.json();
+        checkpoints = checkpoints.filter(cp => {
+          const checkpointProvider = normalizeProviderFamily(cp.provider || currentProvider);
+          if (checkpointProvider !== currentProvider) return false;
+          if (cp.session_id) return cp.session_id === SESSION_ID;
+          if (cp.session_title) {
+            return cp.session_title === currentSessionTitle || cp.session_title === currentSessionRawTitle;
+          }
+          return false;
+        });
+        const bar = document.getElementById("checkpoint-bar");
+        const wasVisible = bar.style.display !== "none";
+        const previousCheckpointId = currentCheckpointId;
+        const previousQuestion = document.getElementById("checkpoint-question").textContent;
+
+        if (checkpoints.length === 0) {
+          if (currentCheckpointId) stopCheckpointVoice();
+          bar.style.display = "none";
+          currentCheckpointId = null;
+          return;
+        }
+
+        // Show the most recent pending checkpoint
+        const cp = checkpoints[0];
+        // A different checkpoint took over the bar — don't leave voice running
+        // against the one that just left.
+        if (currentCheckpointId && currentCheckpointId !== cp.id) stopCheckpointVoice();
+        currentCheckpointId = cp.id;
+        checkpointSpeechText = cp.question;
+        document.getElementById("checkpoint-question").textContent = cp.question;
+
+        const speakBtn = document.getElementById("checkpoint-speak");
+        if (speakBtn) speakBtn.style.display = ABVoice.canSpeak() ? "" : "none";
+        const micBtn = document.getElementById("checkpoint-mic");
+        if (micBtn) micBtn.style.display = ABVoice.canRecord() ? "" : "none";
+        setSpeakButtonState(ABVoice.speakingFor() === cp.id);
+        document.getElementById("checkpoint-time").textContent = timeAgo(cp.created_at);
+
+        // Render quick-reply options
+        const optsEl = document.getElementById("checkpoint-options");
+        if (cp.options && cp.options.length > 0) {
+          optsEl.innerHTML = cp.options.map(opt =>
+            '<button onclick="respondToCheckpointQuick(\'' + escHtml(opt).replace(/'/g, "\\'") + '\')" style="padding:8px 16px;background:#fff;border:1px solid #e5e5ea;border-radius:8px;font-size:14px;color:#1c1c1e;cursor:pointer;">' + escHtml(opt) + '</button>'
+          ).join("");
+          optsEl.style.display = "flex";
+        } else {
+          optsEl.style.display = "none";
+        }
+
+        bar.style.display = "";
+        if (shouldStick && (!wasVisible || previousCheckpointId !== cp.id || previousQuestion !== cp.question)) {
+          scrollToBottom();
+        }
+      } catch (_) {}
+    }
+
+    // ── Checkpoint voice: read aloud + spoken replies (engine in /voice.js) ──
+    var checkpointSpeechText = "";
+
+    function setSpeakButtonState(speaking) {
+      const btn = document.getElementById("checkpoint-speak");
+      if (!btn) return;
+      btn.innerHTML = speaking ? "&#9632; Stop" : "&#128266; Listen";
+      btn.style.background = speaking ? "#4338ca" : "#eef2ff";
+      btn.style.color = speaking ? "#fff" : "#4338ca";
+    }
+
+    function toggleSpeakCheckpoint() {
+      if (!currentCheckpointId) return;
+      ABVoice.speak(currentCheckpointId, checkpointSpeechText, setSpeakButtonState);
+    }
+
+    function setMicButtonState(label, active) {
+      const btn = document.getElementById("checkpoint-mic");
+      if (!btn) return;
+      btn.innerHTML = label;
+      btn.style.background = active ? "#dc2626" : "#eef2ff";
+      btn.style.color = active ? "#fff" : "#4338ca";
+    }
+
+    function micStateLabel(s) {
+      if (s.state === "recording") {
+        const mm = Math.floor(s.elapsed / 60);
+        const ss = String(s.elapsed % 60).padStart(2, "0");
+        return "&#9632; " + mm + ":" + ss;
+      }
+      if (s.state === "transcribing") return "&hellip;";
+      if (s.state === "error") return "&#9888;";
+      return "&#127908; Record";
+    }
+
+    function toggleRecordCheckpoint() {
+      if (!currentCheckpointId) return;
+      ABVoice.record(currentCheckpointId, (s) => {
+        setMicButtonState(micStateLabel(s), s.state === "recording");
+        const micBtn = document.getElementById("checkpoint-mic");
+        if (micBtn) micBtn.title = s.state === "error" ? s.message : "Record a spoken reply";
+        if (s.state === "error") return;
+        if (s.state !== "done") return;
+        // Land it in the box for review — never send straight to the agent.
+        const input = document.getElementById("checkpoint-input");
+        if (input && s.text) {
+          input.value = input.value.trim() ? input.value.trim() + " " + s.text : s.text;
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+        setMicButtonState("&#127908; Record", false);
+      });
+    }
+
+    function stopCheckpointVoice() {
+      ABVoice.stopSpeaking();
+      ABVoice.stopRecording();
+    }
+
+    function toggleCheckpointBar() {
+      const body = document.getElementById("checkpoint-body");
+      const btn = document.getElementById("checkpoint-collapse-btn");
+      if (!body) return;
+      const isHidden = body.style.display === "none";
+      body.style.display = isHidden ? "" : "none";
+      btn.textContent = isHidden ? "▲ Hide" : "▼ Show";
+    }
+
+    async function respondToCheckpoint() {
+      const input = document.getElementById("checkpoint-input");
+      const response = input.value.trim();
+      if (!response || !currentCheckpointId) return;
+      await sendCheckpointResponse(response);
+      input.value = "";
+    }
+
+    async function respondToCheckpointQuick(response) {
+      if (!currentCheckpointId) return;
+      await sendCheckpointResponse(response);
+    }
+
+    async function sendCheckpointResponse(response) {
+      stopCheckpointVoice();
+      try {
+        await fetch("/api/checkpoints/" + encodeURIComponent(currentCheckpointId) + "/respond", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ response })
+        });
+        document.getElementById("checkpoint-bar").style.display = "none";
+        currentCheckpointId = null;
+      } catch (_) {}
+    }
+
+    async function loadSessionState() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID + "/runtime-state");
+        const data = await resp.json();
+        const bar = document.getElementById("session-state-bar");
+        const startup = data.startup || null;
+        const runtime = data.runtime || null;
+
+        let message = "";
+        let bg = "#eef3ff";
+        let color = "#334155";
+
+        if (startup && startup.requires_initial_direction && startup.authorization_status !== "granted") {
+          message = "Startup gate: waiting for explicit direction before any work can begin.";
+          bg = "#fff7ed";
+          color = "#9a3412";
+        } else if (runtime && runtime.response_ready) {
+          message = "Checkpoint response ready: this session can resume by consuming the stored response from Agent Brain.";
+          bg = "#ecfdf5";
+          color = "#166534";
+        } else if (runtime && runtime.wait_required && runtime.state === "waiting_on_checkpoint") {
+          message = "Checkpoint pending: Agent Brain is holding the wait state for this session.";
+          bg = "#eff6ff";
+          color = "#1d4ed8";
+        }
+
+        if (!message) {
+          bar.style.display = "none";
+          return;
+        }
+
+        bar.textContent = message;
+        bar.style.background = bg;
+        bar.style.color = color;
+        bar.style.display = "";
+      } catch (_) {}
+    }
+
+    async function loadSession() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        if (data.title) document.getElementById("chat-title").textContent = data.title;
+        currentSessionTitle = data.title || null;
+        currentSessionRawTitle = data.raw_title || data.title || null;
+        currentProvider = data.provider === "codex" ? "codex" : "claude";
+        isLinkedCC = !!(data.cc_project_dir && data.claude_session_id);
+        isCodexSession = data.provider === "codex";
+        currentProjectDir = data.cc_project_dir || null;
+        updateInputVisibility();
+        if (data.messages) {
+          renderMessages(data.messages);
+          lastMessageCount = data.messages.length;
+        }
+        loadSessionState();
+        // Load checkpoints for this project
+        if (currentProjectDir) loadCheckpoints();
+        // Poll any live-backed session or any session with project checkpoints.
+        if (isLinkedCC || isCodexSession || currentProjectDir) startPolling();
+      } catch (e) {}
+    }
+
+    function startPolling() {
+      if (pollTimer) return;
+      pollTimer = setInterval(pollRefresh, 3000);
+    }
+
+    async function pollRefresh() {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        if (data.messages && data.messages.length !== lastMessageCount) {
+          messagesEl.innerHTML = "";
+          renderMessages(data.messages);
+          lastMessageCount = data.messages.length;
+        }
+        if (isLinkedCC) {
+          const pResp = await fetch("/api/sessions/" + SESSION_ID + "/pending-permission");
+          const pData = await pResp.json();
+          updatePermissionBar(pData);
+        }
+        // Also refresh checkpoints
+        if (currentProjectDir) loadCheckpoints();
+        loadSessionState();
+      } catch (_) {}
+    }
+
+    // Poll immediately when tab becomes visible (Mobile Safari suspends timers in background)
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && (isLinkedCC || isCodexSession || currentProjectDir)) {
+        pollRefresh();
+      }
+    });
+
+    // Cooldown: suppress permission bar for 10s after Allow/Deny to prevent ghost reappearance
+    let permissionCooldownUntil = 0;
+
+    function updatePermissionBar(data) {
+      const bar = document.getElementById("permission-bar");
+      const shouldStick = isNearBottom();
+      const wasVisible = bar.style.display !== "none";
+      const previousLabel = document.getElementById("permission-label").textContent;
+      const previousDetail = document.getElementById("permission-detail").textContent;
+      if (Date.now() < permissionCooldownUntil) {
+        bar.style.display = "none";
+        return;
+      }
+      if (data && data.pending && data.tools) {
+        const toolNames = data.tools.map(t => t.name).join(", ");
+        const detail = data.tools.map(t => t.name + ": " + t.input).join("\n");
+        document.getElementById("permission-label").textContent = "Approve " + toolNames + "?";
+        document.getElementById("permission-detail").textContent = detail;
+        bar.style.display = "";
+        if (shouldStick && (!wasVisible || previousLabel !== document.getElementById("permission-label").textContent || previousDetail !== detail)) {
+          scrollToBottom();
+        }
+      } else {
+        bar.style.display = "none";
+      }
+    }
+
+    async function handlePermission(action) {
+      const bar = document.getElementById("permission-bar");
+      const buttons = bar.querySelectorAll("button");
+      buttons.forEach(b => { b.disabled = true; b.style.opacity = "0.5"; });
+      try {
+        await fetch("/api/sessions/" + SESSION_ID + "/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action })
+        });
+        bar.style.display = "none";
+        // Suppress permission bar for 10 seconds to prevent ghost reappearance
+        permissionCooldownUntil = Date.now() + 10000;
+      } catch (_) {}
+      buttons.forEach(b => { b.disabled = false; b.style.opacity = "1"; });
+    }
+
+    // ── Inject message into Claude Desktop ──
+    let injecting = false;
+
+    async function injectMessage() {
+      if (injecting) return;
+      if (isCodexSession) return;
+      const injectInput = document.getElementById("inject-input");
+      const injectBtn = document.getElementById("inject-btn");
+      const content = injectInput.value.trim();
+      if (!content) return;
+
+      injecting = true;
+      injectBtn.disabled = true;
+      injectBtn.style.opacity = "0.5";
+      injectInput.value = "";
+      injectInput.style.height = "auto";
+
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID + "/message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content })
+        });
+        const data = await resp.json();
+        if (data.error) {
+          alert("Send failed: " + data.error);
+        }
+        // The live refresh will pick up the new messages automatically
+      } catch (err) {
+        alert("Inject failed: " + err.message);
+      }
+
+      injecting = false;
+      injectBtn.disabled = false;
+      injectBtn.style.opacity = "1";
+      injectInput.focus();
+    }
+
+    // Wire up Enter key for inject input
+    document.addEventListener("DOMContentLoaded", () => {
+      const injectInput = document.getElementById("inject-input");
+      if (injectInput) {
+        injectInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            injectMessage();
+          }
+        });
+      }
+    });
+
+    async function copyChat(btn) {
+      try {
+        const resp = await fetch("/api/sessions/" + SESSION_ID);
+        const data = await resp.json();
+        let text = "";
+        for (const m of (data.messages || [])) {
+          if (m.role === "system") continue;
+          if (m.role === "user") text += "You: " + m.content + "\n\n";
+          else if (m.role === "checkpoint_question") text += "Agent (checkpoint): " + m.content + "\n\n";
+          else if (m.role === "checkpoint_response") text += "You (phone): " + m.content + "\n\n";
+          else if (m.role === "assistant" && m.content) text += "Agent: " + m.content + "\n\n";
+        }
+        const str = text.trim();
+        const copied = await copyToClipboard(str);
+        if (copied) {
+          btn.textContent = "Copied!";
+          btn.classList.add("copied");
+          setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
+        } else {
+          btn.textContent = "Select & Copy";
+          setTimeout(() => { btn.textContent = "Copy"; }, 3000);
+        }
+      } catch (e) {
+        btn.textContent = "Failed";
+        setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+      }
+    }
+
+    loadSession();
+  </script>
+</body>
+</html>

@@ -1,0 +1,1849 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>Email</title>
+  <style>
+    :root {
+      --shell-bg: #f4efe6;
+      --panel-bg: rgba(255, 255, 255, 0.9);
+      --panel-border: rgba(132, 111, 82, 0.18);
+      --text-main: #231f1a;
+      --text-muted: #756757;
+      --accent: #c46d2d;
+      --accent-soft: #f6dfc8;
+      --accent-strong: #9f4b1f;
+      --ink-blue: #245c73;
+      --shadow-soft: 0 18px 40px rgba(73, 52, 31, 0.08);
+      --desktop-shell-offset: 210px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.88), transparent 38%),
+        linear-gradient(180deg, #f8f3ea 0%, var(--shell-bg) 100%);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+      color: var(--text-main);
+      padding-bottom: max(32px, env(safe-area-inset-bottom));
+    }
+
+    /* ── Header ───────────────────────────────────────────────────────── */
+    .hdr {
+      background: rgba(244, 239, 230, 0.92);
+      backdrop-filter: blur(18px);
+      padding: 14px 14px 10px;
+      padding-top: max(14px, env(safe-area-inset-top));
+      border-bottom: 1px solid rgba(132, 111, 82, 0.12);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .hdr-inner {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 24px;
+      box-shadow: var(--shadow-soft);
+      padding: 14px;
+    }
+    .hdr-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; flex-wrap: wrap; }
+    .hdr-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+    .hdr-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.74);
+      border: 1px solid rgba(132, 111, 82, 0.14);
+      color: var(--text-main);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+      flex-shrink: 0;
+    }
+    .hdr-brand-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
+    .hdr-brand-title { font-size: 13px; font-weight: 700; }
+    .hdr-title-wrap { min-width: 0; }
+    .hdr-title { font-size: 26px; line-height: 1; font-weight: 700; color: var(--text-main); letter-spacing: -0.04em; }
+    .hdr-subtitle { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+    .hdr-right { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+    .hdr-count { font-size: 12px; color: var(--accent-strong); background: var(--accent-soft); border-radius: 999px; padding: 4px 9px; font-weight: 700; }
+    .ib {
+      background: #fff;
+      border: 1px solid rgba(132, 111, 82, 0.16);
+      font-size: 18px;
+      width: 40px;
+      height: 40px;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: 50%;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 8px 18px rgba(73, 52, 31, 0.08);
+    }
+    .ib:active { background: #f6f1e8; }
+    .app-switch { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .app-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.72);
+      border: 1px solid rgba(132, 111, 82, 0.16);
+    }
+    .app-pill.active {
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      border-color: rgba(196, 109, 45, 0.22);
+    }
+    .app-pill.dashboard { color: var(--ink-blue); }
+    .search-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .search-shell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      background: rgba(255,255,255,0.82);
+      border: 1px solid rgba(132, 111, 82, 0.16);
+      border-radius: 16px;
+      padding: 10px 14px;
+    }
+    .search-icon { color: var(--text-muted); font-size: 14px; line-height: 1; }
+    .search-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      font: inherit;
+      font-size: 14px;
+      color: var(--text-main);
+      outline: none;
+      min-width: 0;
+    }
+    .search-input::placeholder { color: #9b8e7f; }
+    .search-clear {
+      border: none;
+      background: rgba(35, 31, 26, 0.08);
+      color: var(--text-muted);
+      border-radius: 999px;
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 14px;
+    }
+    .search-clear.hide { display: none !important; }
+    .search-status { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 8px; }
+    .tab {
+      flex: 1;
+      padding: 10px 8px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      border: 1px solid transparent;
+      background: rgba(255,255,255,0.72);
+      border-radius: 14px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tab.on {
+      color: var(--accent-strong);
+      border-color: rgba(196, 109, 45, 0.22);
+      background: var(--accent-soft);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+    }
+    .tab .tab-count { font-size: 10px; background: rgba(36,92,115,0.08); border-radius: 8px; padding: 1px 5px; margin-left: 3px; }
+    .tab.on .tab-count { background: rgba(196, 109, 45, 0.14); color: var(--accent-strong); }
+
+    /* Account chips */
+    .chips { display: flex; gap: 6px; overflow-x: auto; padding: 10px 0 2px; -webkit-overflow-scrolling: touch; }
+    .chips::-webkit-scrollbar { display: none; }
+    .chip { flex-shrink: 0; display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 16px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1.5px solid transparent; -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
+    .chip.on { opacity: 1; }
+    .chip.off { opacity: 0.3; }
+    .chip-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+    /* ── Email List ───────────────────────────────────────────────────── */
+    .email-workspace { padding: 14px; }
+    .email-list { background: rgba(255,255,255,0.9); border: 1px solid var(--panel-border); border-radius: 22px; box-shadow: var(--shadow-soft); overflow: hidden; padding-bottom: max(92px, env(safe-area-inset-bottom)); }
+    .email-empty { text-align: center; padding: 40px 20px; color: #70757a; font-size: 14px; }
+    .email-item { display: flex; align-items: stretch; border-bottom: 1px solid rgba(132, 111, 82, 0.12); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background 0.16s ease, transform 0.16s ease; }
+    .email-item:active { background: #f8f1e8; }
+    .email-item.unread { background: #f8f3ec; }
+    .email-item.selected { background: linear-gradient(90deg, rgba(196,109,45,0.12), rgba(255,255,255,0.9)); }
+    .ei-bar { width: 4px; flex-shrink: 0; }
+    .ei-body { flex: 1; padding: 12px 12px 12px 10px; min-width: 0; display: flex; gap: 10px; }
+    .ei-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; color: #fff; flex-shrink: 0; }
+    .ei-content { flex: 1; min-width: 0; }
+    .ei-row1 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+    .ei-sender { font-size: 14px; font-weight: 400; color: #202124; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .email-item.unread .ei-sender { font-weight: 600; }
+    .ei-time { font-size: 12px; color: #70757a; flex-shrink: 0; margin-left: 8px; }
+    .ei-subject { font-size: 13px; color: #202124; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
+    .email-item.unread .ei-subject { font-weight: 600; }
+    .ei-snippet { font-size: 12px; color: #5f6368; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ei-badges { display: flex; gap: 4px; margin-top: 3px; }
+    .ei-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+    .badge-rn { background: #fce8e6; color: #c5221f; }
+    .badge-rt { background: #fef7e0; color: #e37400; }
+    .badge-fyi { background: #e8f0fe; color: #1a73e8; }
+    .badge-sens { background: #fce8e6; color: #c5221f; }
+    .badge-responded { background: #e6f4ea; color: #137333; }
+    .badge-sent { background: #e8f0fe; color: #1a73e8; }
+    .badge-draft { background: #f1f3f4; color: #5f6368; }
+    .badge-search-source { background: rgba(36,92,115,0.12); color: var(--ink-blue); }
+
+    /* ── Reading View ─────────────────────────────────────────────────── */
+    .reader { display: none; position: fixed; inset: 0; background: rgba(255,255,255,0.98); z-index: 200; flex-direction: column; overflow: hidden; }
+    .reader.open { display: flex; }
+    .rd-hdr { display: flex; align-items: center; gap: 8px; padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top)); border-bottom: 1px solid rgba(132, 111, 82, 0.12); flex-shrink: 0; background: rgba(255,255,255,0.94); }
+    .rd-back { background: none; border: none; font-size: 24px; color: #5f6368; cursor: pointer; padding: 4px; }
+    .rd-hdr-title { flex: 1; font-size: 14px; font-weight: 500; color: #202124; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rd-hdr-acct { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500; flex-shrink: 0; }
+    .rd-hdr-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .rd-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+    .rd-subject { font-size: 20px; font-weight: 400; color: #202124; padding: 16px 16px 8px; line-height: 1.3; }
+    .rd-meta { padding: 8px 16px 12px; display: flex; align-items: flex-start; gap: 10px; }
+    .rd-avatar { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; color: #fff; flex-shrink: 0; }
+    .rd-meta-body { flex: 1; min-width: 0; }
+    .rd-from { font-size: 14px; font-weight: 500; color: #202124; }
+    .rd-from-email { font-size: 13px; color: #5f6368; font-weight: 400; }
+    .rd-to { font-size: 12px; color: #70757a; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rd-date { font-size: 12px; color: #70757a; flex-shrink: 0; text-align: right; max-width: 100px; }
+    .rd-body-frame { display: block; border: none; width: 100%; min-height: 300px; padding: 0; overflow: hidden; }
+    .rd-body-text { padding: 16px; font-size: 14px; color: #202124; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .rd-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); border-top: 1px solid rgba(132, 111, 82, 0.12); flex-shrink: 0; background: rgba(255,255,255,0.94); }
+    .rd-placeholder { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; height: 100%; padding: 28px; background: linear-gradient(180deg, rgba(246,223,200,0.24), rgba(255,255,255,0)); }
+    .rd-placeholder-kicker { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .rd-placeholder-title { font-size: 28px; line-height: 1.05; font-weight: 700; color: var(--text-main); max-width: 12ch; margin-bottom: 12px; }
+    .rd-placeholder-copy { font-size: 14px; line-height: 1.5; color: var(--text-muted); max-width: 34ch; }
+    .rd-btn { flex: 1 1 140px; min-width: 0; padding: 10px; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dadce0; background: #fff; color: #202124; cursor: pointer; text-align: center; font-family: inherit; -webkit-tap-highlight-color: transparent; }
+    .rd-btn:active { background: #f1f3f4; }
+    .rd-btn.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    .rd-btn.primary:active { background: #1557b0; }
+    .rd-btn.done { background: #e6f4ea; color: #137333; border-color: #e6f4ea; }
+
+    /* ── Compose Modal ────────────────────────────────────────────────── */
+    .cmp-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: none; align-items: flex-end; justify-content: center; }
+    .cmp-bg.open { display: flex; }
+    .cmp { background: #fff; border-radius: 16px 16px 0 0; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; }
+    .cmp-hdr { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #e8eaed; flex-shrink: 0; }
+    .cmp-hdr h3 { font-size: 18px; font-weight: 600; color: #202124; }
+    .cmp-close { background: none; border: none; font-size: 22px; color: #5f6368; cursor: pointer; padding: 4px; }
+    .cmp-body { padding: 12px 16px; flex: 1; overflow-y: auto; }
+    .cmp-field { display: flex; align-items: center; border-bottom: 1px solid #f1f3f4; padding: 8px 0; flex-wrap: wrap; gap: 8px; }
+    .cmp-label { font-size: 14px; color: #70757a; width: 50px; flex-shrink: 0; }
+    .cmp-field-stack { position: relative; flex: 1; min-width: 0; }
+    .cmp-input { width: 100%; border: none; font-size: 14px; color: #202124; font-family: inherit; outline: none; padding: 4px 0; background: transparent; }
+    .cmp-select { flex: 1; border: none; font-size: 14px; color: #202124; font-family: inherit; outline: none; background: none; padding: 4px 0; -webkit-appearance: none; }
+    .cmp-subj { border: none; font-size: 16px; color: #202124; font-family: inherit; outline: none; width: 100%; padding: 12px 0; border-bottom: 1px solid #f1f3f4; font-weight: 500; }
+    .cmp-editor { border: none; font-size: 14px; color: #202124; font-family: inherit; outline: none; width: 100%; min-height: 200px; padding: 12px 0; resize: none; line-height: 1.5; }
+    .cmp-footer { display: flex; align-items: center; gap: 10px; padding: 10px 16px; padding-bottom: max(10px, env(safe-area-inset-bottom)); border-top: 1px solid #e8eaed; flex-shrink: 0; }
+    .cmp-send { background: #1a73e8; color: #fff; border: none; padding: 10px 24px; border-radius: 20px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; }
+    .cmp-send:active { background: #1557b0; }
+    .cmp-send:disabled { opacity: 0.5; }
+    .cmp-cc-toggle { font-size: 13px; color: #1a73e8; cursor: pointer; background: none; border: none; font-family: inherit; }
+    .cmp-cc-fields { display: none; }
+    .cmp-cc-fields.show { display: block; }
+    .cmp-suggest {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      z-index: 30;
+      background: #fff;
+      border: 1px solid rgba(132, 111, 82, 0.18);
+      border-radius: 14px;
+      box-shadow: 0 18px 32px rgba(73, 52, 31, 0.12);
+      overflow: hidden;
+      display: none;
+    }
+    .cmp-suggest.open { display: block; }
+    .cmp-suggest-item {
+      width: 100%;
+      border: none;
+      background: #fff;
+      text-align: left;
+      padding: 10px 12px;
+      cursor: pointer;
+      font: inherit;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .cmp-suggest-item + .cmp-suggest-item { border-top: 1px solid #f1f3f4; }
+    .cmp-suggest-item:active { background: #f8f1e8; }
+    .cmp-suggest-name { font-size: 13px; font-weight: 600; color: #202124; }
+    .cmp-suggest-email { font-size: 12px; color: #756757; }
+
+    /* ── Settings Panel ───────────────────────────────────────────────── */
+    .settings-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 400; display: none; }
+    .settings-bg.open { display: block; }
+    .settings { position: fixed; top: 0; right: -320px; bottom: 0; width: 310px; max-width: 90vw; background: #fff; z-index: 401; transition: right 0.25s ease; overflow-y: auto; box-shadow: -2px 0 24px rgba(73,52,31,0.14); }
+    .settings-bg.open .settings { right: 0; }
+    .st-hdr { display: flex; align-items: center; justify-content: space-between; padding: 16px; padding-top: max(16px, env(safe-area-inset-top)); border-bottom: 1px solid #e8eaed; }
+    .st-hdr h3 { font-size: 18px; font-weight: 600; color: #202124; }
+    .st-close { background: none; border: none; font-size: 22px; color: #5f6368; cursor: pointer; padding: 4px; }
+    .st-section { padding: 16px; }
+    .st-section-title { font-size: 11px; font-weight: 600; color: #5f6368; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .st-acct { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f1f3f4; }
+    .st-acct:last-child { border-bottom: none; }
+    .st-acct-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .st-acct-info { flex: 1; min-width: 0; }
+    .st-acct-label { font-size: 14px; font-weight: 500; color: #202124; }
+    .st-acct-email { font-size: 12px; color: #5f6368; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .st-btn { font-size: 12px; font-weight: 500; padding: 6px 12px; border-radius: 6px; border: 1px solid #dadce0; background: #fff; color: #1a73e8; cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; white-space: nowrap; }
+    .st-btn:active { background: #f8f9fa; }
+    .st-btn.reauthing { color: #5f6368; pointer-events: none; }
+    .st-add-btn { display: flex; align-items: center; gap: 6px; width: 100%; padding: 10px; margin-top: 8px; border: 1px dashed #dadce0; border-radius: 8px; background: none; color: #1a73e8; font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; }
+    .st-add-btn:active { background: #f8f9fa; }
+
+    /* ── FAB ───────────────────────────────────────────────────────────── */
+    .fab { position: fixed; bottom: max(24px, env(safe-area-inset-bottom)); right: 24px; display: flex; align-items: center; gap: 10px; background: linear-gradient(135deg, #fff3e0, #f0c39a); color: #4c240e; border: 1px solid rgba(196,109,45,0.24); padding: 14px 20px; border-radius: 18px; font-size: 14px; font-weight: 700; cursor: pointer; box-shadow: 0 18px 32px rgba(92,57,28,0.18); -webkit-tap-highlight-color: transparent; z-index: 230; font-family: inherit; }
+    .fab:active { background: #f4d6b8; }
+    .fab-icon { font-size: 22px; line-height: 1; }
+
+    /* ── Loading ───────────────────────────────────────────────────────── */
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid #dadce0; border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-row { display: flex; align-items: center; justify-content: center; padding: 20px; gap: 8px; color: #70757a; font-size: 13px; }
+
+    .hide { display: none !important; }
+
+    /* ── AI Chat FAB and Panel ─────────────────────────────────────────── */
+    .ai-fab {
+      position: fixed;
+      bottom: max(90px, calc(env(safe-area-inset-bottom) + 70px));
+      right: 20px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+      z-index: 229;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .ai-chat-panel {
+      position: fixed;
+      bottom: 0;
+      right: 0;
+      width: 100%;
+      max-width: 420px;
+      height: 55vh;
+      max-height: 450px;
+      background: #fff;
+      border-radius: 16px 16px 0 0;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+      z-index: 300;
+      display: none;
+      flex-direction: column;
+    }
+    .ai-chat-panel.open { display: flex; }
+    .ai-chat-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #e8e8ed; }
+    .ai-chat-header h3 { font-size: 16px; font-weight: 600; color: #202124; margin: 0; }
+    .ai-chat-close { background: none; border: none; font-size: 22px; color: #5f6368; cursor: pointer; }
+    .ai-chat-messages { flex: 1; overflow-y: auto; padding: 14px 18px; }
+    .ai-chat-msg { margin-bottom: 10px; padding: 10px 12px; border-radius: 12px; max-width: 85%; font-size: 13px; line-height: 1.4; }
+    .ai-chat-msg.user { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; margin-left: auto; }
+    .ai-chat-msg.assistant { background: #f1f3f4; color: #202124; }
+    .ai-chat-msg.error { background: #fce8e6; color: #c5221f; }
+    .ai-chat-msg.success { background: #e6f4ea; color: #137333; }
+    .ai-chat-input-area { display: flex; gap: 8px; padding: 10px 14px; padding-bottom: max(10px, env(safe-area-inset-bottom)); border-top: 1px solid #e8eaed; background: #fafafa; }
+    .ai-chat-input { flex: 1; border: 1px solid #dadce0; border-radius: 20px; padding: 8px 14px; font-size: 14px; font-family: inherit; outline: none; resize: none; }
+    .ai-chat-input:focus { border-color: #667eea; }
+    .ai-chat-send { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; font-size: 16px; cursor: pointer; }
+    .ai-chat-send:disabled { opacity: 0.5; }
+    .ai-chat-from-select { padding: 6px 10px; margin: 0 18px 6px; border: 1px solid #dadce0; border-radius: 6px; font-size: 12px; background: #fff; }
+
+    /* ── AI Outbox Section ─────────────────────────────────────────────── */
+    .outbox-section { padding: 12px; background: #f8f9fa; border-bottom: 1px solid #e8eaed; }
+    .outbox-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .outbox-section-title { font-size: 13px; font-weight: 600; color: #5f6368; }
+    .outbox-section-count { font-size: 11px; background: #1a73e8; color: #fff; padding: 2px 8px; border-radius: 10px; margin-left: 6px; }
+    .outbox-card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .outbox-item { padding: 10px 12px; border-bottom: 1px solid #f1f3f4; cursor: pointer; }
+    .outbox-item:last-child { border-bottom: none; }
+    .outbox-item:active { background: #f8f9fa; }
+    .outbox-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .outbox-type { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+    .outbox-type.email { background: #e8f0fe; color: #1a73e8; }
+    .outbox-type.event { background: #e6f4ea; color: #137333; }
+    .outbox-subject { font-size: 13px; font-weight: 500; color: #202124; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .outbox-preview { font-size: 12px; color: #5f6368; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .outbox-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .outbox-btn { padding: 6px 12px; border-radius: 6px; border: none; font-size: 12px; font-weight: 500; cursor: pointer; }
+    .outbox-btn.approve { background: #1a73e8; color: #fff; }
+    .outbox-btn.reject { background: #f1f3f4; color: #5f6368; }
+    .outbox-btn:disabled { opacity: 0.5; }
+
+    /* ── Outbox Modal ──────────────────────────────────────────────────── */
+    .outbox-modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 600; display: none; align-items: center; justify-content: center; padding: 16px; }
+    .outbox-modal-bg.open { display: flex; }
+    .outbox-modal { background: #fff; border-radius: 12px; width: 100%; max-width: 500px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+    .outbox-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #e8eaed; }
+    .outbox-modal-header h3 { font-size: 16px; font-weight: 600; color: #202124; margin: 0; }
+    .outbox-modal-close { background: none; border: none; font-size: 22px; color: #5f6368; cursor: pointer; }
+    .outbox-modal-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+    .outbox-modal-field { margin-bottom: 12px; }
+    .outbox-modal-label { font-size: 11px; color: #5f6368; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+    .outbox-modal-value { font-size: 14px; color: #202124; line-height: 1.4; }
+    .outbox-modal-body-content { background: #f8f9fa; border-radius: 6px; padding: 10px; font-size: 13px; line-height: 1.5; max-height: 180px; overflow-y: auto; }
+    .outbox-modal-footer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid #e8eaed; }
+    .outbox-modal-btn { flex: 1; padding: 10px; border-radius: 8px; border: none; font-size: 14px; font-weight: 500; cursor: pointer; }
+    .outbox-modal-btn.approve { background: #1a73e8; color: #fff; }
+    .outbox-modal-btn.reject { background: #f1f3f4; color: #5f6368; }
+    .outbox-modal-btn:disabled { opacity: 0.5; }
+
+    @media (min-width: 1100px) {
+      body { padding-bottom: 40px; overflow-y: hidden; }
+      .email-workspace {
+        display: grid;
+        grid-template-columns: minmax(360px, 470px) minmax(0, 1fr);
+        gap: 18px;
+        align-items: stretch;
+        padding: 18px;
+        height: calc(100vh - var(--desktop-shell-offset));
+        overflow: hidden;
+      }
+      .email-list {
+        padding-bottom: 24px;
+        min-height: 0;
+        max-height: 100%;
+        overflow-y: auto;
+      }
+      .reader {
+        display: flex;
+        position: sticky;
+        inset: auto;
+        top: 0;
+        align-self: stretch;
+        min-height: 0;
+        max-height: 100%;
+        height: 100%;
+        border: 1px solid var(--panel-border);
+        border-radius: 24px;
+        box-shadow: var(--shadow-soft);
+        background: rgba(255,255,255,0.94);
+        overflow: hidden;
+      }
+      .reader.open { display: flex; }
+      .rd-back { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<div class="hdr" id="list-hdr">
+  <div class="hdr-inner">
+    <div class="hdr-top">
+      <div class="hdr-left">
+        <div class="hdr-brand">
+          <span class="hdr-brand-kicker">Agent Brain</span>
+          <span class="hdr-brand-title">Workspace</span>
+        </div>
+        <div class="hdr-title-wrap">
+          <div class="hdr-title">Email</div>
+          <div class="hdr-subtitle">Preview first, act fast, and jump back to the rest of the workspace without getting lost.</div>
+        </div>
+        <span class="hdr-count" id="unread-count"></span>
+      </div>
+      <div class="hdr-right">
+        <button class="ib" onclick="pollNow()" id="poll-btn" title="Refresh">&#x27F3;</button>
+        <button class="ib" onclick="openSettings()" title="Settings">&#x2699;</button>
+      </div>
+    </div>
+    <div class="app-switch">
+      <a href="/" class="app-pill dashboard">Dashboard</a>
+      <a href="/email-triage" class="app-pill active">Email</a>
+      <a href="/calendar" class="app-pill">Calendar</a>
+    </div>
+    <div class="search-row">
+      <label class="search-shell" for="email-search">
+        <span class="search-icon">&#128269;</span>
+        <input id="email-search" class="search-input" type="search" placeholder="Search inbox, sent, and drafts" oninput="handleSearchInput(this.value)">
+        <button class="search-clear hide" id="search-clear" type="button" onclick="clearSearch()">&times;</button>
+      </label>
+      <div class="search-status" id="search-status"></div>
+    </div>
+    <div class="tabs" id="tabs">
+      <div class="tab on" data-t="inbox" onclick="switchTab('inbox')">Inbox</div>
+      <div class="tab" data-t="sent" onclick="switchTab('sent')">Sent</div>
+      <div class="tab" data-t="drafts" onclick="switchTab('drafts')">Drafts</div>
+    </div>
+    <div class="chips" id="chips"></div>
+  </div>
+</div>
+
+<!-- ── AI Outbox Section ───────────────────────────────────────────────────── -->
+<div id="outbox-section" class="outbox-section" style="display:none"></div>
+
+<div class="email-workspace">
+  <!-- ── Email List ────────────────────────────────────────────────────────── -->
+  <div id="email-list" class="email-list"></div>
+
+  <!-- ── Reading View ──────────────────────────────────────────────────────── -->
+  <div class="reader" id="reader">
+    <div class="rd-hdr">
+      <button class="rd-back" onclick="closeReader()">&#8249;</button>
+      <span class="rd-hdr-title" id="rd-hdr-title">Preview</span>
+      <div class="rd-hdr-acct" id="rd-hdr-acct"></div>
+    </div>
+    <div class="rd-scroll" id="rd-scroll">
+      <div class="rd-placeholder">
+        <div class="rd-placeholder-kicker">Preview Mode</div>
+        <div class="rd-placeholder-title">Pick an email to read without leaving the list.</div>
+        <div class="rd-placeholder-copy">On desktop this stays side-by-side with the inbox. On mobile it opens the focused reader.</div>
+      </div>
+    </div>
+    <div class="rd-actions" id="rd-actions"></div>
+  </div>
+</div>
+
+<!-- ── Compose Modal ───────────────────────────────────────────────────────── -->
+<div class="cmp-bg" id="cmp-bg" onclick="if(event.target===this)closeCompose()">
+  <div class="cmp">
+    <div class="cmp-hdr">
+      <h3 id="cmp-title">Compose</h3>
+      <button class="cmp-close" onclick="closeCompose()">&#10005;</button>
+    </div>
+    <div class="cmp-body">
+      <div class="cmp-field">
+        <span class="cmp-label">From</span>
+        <select class="cmp-select" id="cmp-from"></select>
+      </div>
+      <div class="cmp-field">
+        <span class="cmp-label">To</span>
+        <div class="cmp-field-stack">
+          <input class="cmp-input" id="cmp-to" type="email" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" placeholder="Recipients" oninput="handleContactFieldInput('cmp-to')" onfocus="handleContactFieldFocus('cmp-to')" onblur="queueHideContactSuggestions('cmp-to')">
+          <div class="cmp-suggest" id="cmp-to-suggest"></div>
+        </div>
+        <button class="cmp-cc-toggle" id="cmp-cc-btn" onclick="toggleCc()">Cc/Bcc</button>
+      </div>
+      <div class="cmp-cc-fields" id="cmp-cc-wrap">
+        <div class="cmp-field">
+          <span class="cmp-label">Cc</span>
+          <div class="cmp-field-stack">
+            <input class="cmp-input" id="cmp-cc" type="email" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" placeholder="Cc" oninput="handleContactFieldInput('cmp-cc')" onfocus="handleContactFieldFocus('cmp-cc')" onblur="queueHideContactSuggestions('cmp-cc')">
+            <div class="cmp-suggest" id="cmp-cc-suggest"></div>
+          </div>
+        </div>
+        <div class="cmp-field">
+          <span class="cmp-label">Bcc</span>
+          <div class="cmp-field-stack">
+            <input class="cmp-input" id="cmp-bcc" type="email" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" placeholder="Bcc" oninput="handleContactFieldInput('cmp-bcc')" onfocus="handleContactFieldFocus('cmp-bcc')" onblur="queueHideContactSuggestions('cmp-bcc')">
+            <div class="cmp-suggest" id="cmp-bcc-suggest"></div>
+          </div>
+        </div>
+      </div>
+      <input class="cmp-subj" id="cmp-subj" placeholder="Subject">
+      <textarea class="cmp-editor" id="cmp-body" placeholder="Compose email"></textarea>
+    </div>
+    <div class="cmp-footer">
+      <button class="cmp-send" id="cmp-send" onclick="sendEmail()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings Panel ──────────────────────────────────────────────────────── -->
+<div class="settings-bg" id="settings-bg" onclick="if(event.target===this)closeSettings()">
+  <div class="settings">
+    <div class="st-hdr">
+      <h3>Accounts</h3>
+      <button class="st-close" onclick="closeSettings()">&#10005;</button>
+    </div>
+    <div class="st-section" id="st-accounts"></div>
+  </div>
+</div>
+
+<!-- ── FAB ──────────────────────────────────────────────────────────────────── -->
+<button class="fab" id="fab" onclick="openCompose()">
+  <span class="fab-icon">&#9998;</span> Compose
+</button>
+
+<!-- AI Chat FAB -->
+<button class="ai-fab" id="ai-fab" onclick="toggleAIChat()" title="AI Assistant">✨</button>
+
+<!-- AI Chat Panel -->
+<div class="ai-chat-panel" id="ai-chat-panel">
+  <div class="ai-chat-header">
+    <h3>AI Assistant</h3>
+    <button class="ai-chat-close" onclick="toggleAIChat()">&times;</button>
+  </div>
+  <select class="ai-chat-from-select" id="ai-chat-from">
+    <option value="">Select sending account...</option>
+  </select>
+  <div class="ai-chat-messages" id="ai-chat-messages">
+    <div class="ai-chat-msg assistant">
+      Hi! I can help you draft emails. Try:<br><br>
+      "Send an email to john@example.com about the project update"
+    </div>
+  </div>
+  <div class="ai-chat-input-area">
+    <textarea class="ai-chat-input" id="ai-chat-input" placeholder="Draft an email..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIChat()}"></textarea>
+    <button class="ai-chat-send" onclick="sendAIChat()" id="ai-chat-send">↑</button>
+  </div>
+</div>
+
+<!-- Outbox Preview Modal -->
+<div class="outbox-modal-bg" id="outbox-modal-bg" onclick="if(event.target===this)closeOutboxModal()">
+  <div class="outbox-modal">
+    <div class="outbox-modal-header">
+      <h3 id="outbox-modal-title">Email Preview</h3>
+      <button class="outbox-modal-close" onclick="closeOutboxModal()">&times;</button>
+    </div>
+    <div class="outbox-modal-body" id="outbox-modal-body"></div>
+    <div class="outbox-modal-footer">
+      <button class="outbox-modal-btn reject" onclick="rejectFromModal()">Reject</button>
+      <button class="outbox-modal-btn approve" onclick="approveFromModal()">Approve & Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═════════════════════════════════════════════════════════════════════════════
+// ── State ────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+let emails = [];
+let sentEmails = [];
+let draftEmails = [];
+let accounts = [];
+let activeAcct = new Set();
+let currentTab = 'inbox';
+let replyCtx = null;
+let currentEmail = null;
+let sentLoaded = false;
+let draftsLoaded = false;
+let searchQuery = '';
+let searchLoading = false;
+let masterContacts = [];
+let contactsLoaded = false;
+let contactsLoadPromise = null;
+let contactHideTimer = null;
+
+function useSplitPreview() {
+  return window.matchMedia('(min-width: 1100px)').matches;
+}
+
+function isSearchMode() {
+  return searchQuery.trim().length > 0;
+}
+
+function updateDesktopLayoutMetrics() {
+  if (!useSplitPreview()) return;
+  const header = document.getElementById('list-hdr');
+  const outbox = document.getElementById('outbox-section');
+  const outboxHeight = outbox && outbox.style.display !== 'none' ? outbox.offsetHeight : 0;
+  const offset = header.offsetHeight + outboxHeight + 18;
+  document.documentElement.style.setProperty('--desktop-shell-offset', `${offset}px`);
+}
+
+function resetReaderPlaceholder() {
+  if (!useSplitPreview()) return;
+  document.getElementById('rd-hdr-title').textContent = 'Preview';
+  document.getElementById('rd-hdr-acct').innerHTML = '';
+  document.getElementById('rd-scroll').innerHTML = `<div class="rd-placeholder">
+    <div class="rd-placeholder-kicker">Preview Mode</div>
+    <div class="rd-placeholder-title">Pick an email to read without leaving the list.</div>
+    <div class="rd-placeholder-copy">On desktop this stays side-by-side with the inbox. On mobile it opens the focused reader.</div>
+  </div>`;
+  document.getElementById('rd-actions').innerHTML = '';
+}
+
+function syncReaderState() {
+  const reader = document.getElementById('reader');
+  const fab = document.getElementById('fab');
+  const aiFab = document.getElementById('ai-fab');
+  const visibleItems = isSearchMode() ? getSearchResults().map(item => item.email) : getVisibleEmails();
+  const visibleIds = new Set(visibleItems.map(em => em.id));
+  const selectedVisible = currentEmail && visibleIds.has(currentEmail.id);
+
+  if (!selectedVisible) {
+    currentEmail = null;
+  }
+
+  if (useSplitPreview()) {
+    updateDesktopLayoutMetrics();
+    reader.classList.remove('open');
+    fab.classList.remove('hide');
+    aiFab.classList.remove('hide');
+    if (!currentEmail) {
+      resetReaderPlaceholder();
+    }
+    return;
+  }
+
+  if (!currentEmail) {
+    reader.classList.remove('open');
+    fab.classList.remove('hide');
+    aiFab.classList.remove('hide');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Helpers ──────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function esc(s) { const e = document.createElement('span'); e.textContent = s || ''; return e.innerHTML; }
+function clr(em) { return em.email_accounts?.calendar_color || '#1a73e8'; }
+function acctLabel(em) { return em.email_accounts?.label || ''; }
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), n = new Date(), diff = n - d;
+  if (diff < 86400000 && d.getDate() === n.getDate()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (diff < 7 * 86400000) return d.toLocaleDateString([], { weekday: 'short' });
+  if (d.getFullYear() === n.getFullYear()) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+function fmtDateFull(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) +
+    ' at ' + new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function searchHaystack(em) {
+  return [
+    em.subject,
+    em.snippet,
+    em.summary,
+    em.from_name,
+    em.from_address,
+    em.email_accounts?.label,
+    em.email_accounts?.email,
+    ...(em.to_addresses || []),
+    ...(em.cc_addresses || [])
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+async function loadMasterContacts() {
+  if (contactsLoaded) return masterContacts;
+  if (contactsLoadPromise) return contactsLoadPromise;
+
+  contactsLoadPromise = fetch('/api/email/contacts?limit=250')
+    .then(async (resp) => {
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load contacts');
+      }
+      masterContacts = await resp.json();
+      contactsLoaded = true;
+      return masterContacts;
+    })
+    .catch((err) => {
+      console.error('Load contacts:', err);
+      return [];
+    })
+    .finally(() => {
+      contactsLoadPromise = null;
+    });
+
+  return contactsLoadPromise;
+}
+
+function contactTokenParts(value) {
+  const source = value || '';
+  const segments = source.split(',');
+  const token = segments[segments.length - 1].trim().toLowerCase();
+  const used = new Set(
+    segments
+      .slice(0, -1)
+      .map(part => part.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  return { token, used };
+}
+
+function getContactMatches(fieldId) {
+  const input = document.getElementById(fieldId);
+  const { token, used } = contactTokenParts(input.value);
+  const pool = masterContacts.filter(contact => !used.has(contact.email.toLowerCase()));
+  if (!token) return pool.slice(0, 6);
+
+  return pool
+    .filter(contact => `${contact.name} ${contact.email}`.toLowerCase().includes(token))
+    .slice(0, 6);
+}
+
+function hideContactSuggestions(fieldId) {
+  const el = document.getElementById(`${fieldId}-suggest`);
+  if (el) {
+    el.classList.remove('open');
+    el.innerHTML = '';
+  }
+}
+
+function renderContactSuggestions(fieldId) {
+  const el = document.getElementById(`${fieldId}-suggest`);
+  if (!el) return;
+
+  const matches = getContactMatches(fieldId);
+  if (!matches.length) {
+    hideContactSuggestions(fieldId);
+    return;
+  }
+
+  el.innerHTML = matches.map(contact => `
+    <button class="cmp-suggest-item" type="button" onclick="applyContactSuggestion('${fieldId}', decodeURIComponent('${encodeURIComponent(contact.email)}'))">
+      <span class="cmp-suggest-name">${esc(contact.name || contact.email)}</span>
+      <span class="cmp-suggest-email">${esc(contact.email)}</span>
+    </button>
+  `).join('');
+  el.classList.add('open');
+}
+
+async function handleContactFieldFocus(fieldId) {
+  clearTimeout(contactHideTimer);
+  await loadMasterContacts();
+  renderContactSuggestions(fieldId);
+}
+
+async function handleContactFieldInput(fieldId) {
+  clearTimeout(contactHideTimer);
+  await loadMasterContacts();
+  renderContactSuggestions(fieldId);
+}
+
+function queueHideContactSuggestions(fieldId) {
+  contactHideTimer = setTimeout(() => hideContactSuggestions(fieldId), 120);
+}
+
+function applyContactSuggestion(fieldId, email) {
+  clearTimeout(contactHideTimer);
+  const input = document.getElementById(fieldId);
+  const segments = input.value.split(',');
+  segments[segments.length - 1] = ` ${email}`;
+  input.value = segments
+    .map((part, index) => index === 0 ? part.trim() : ` ${part.trim()}`)
+    .filter(Boolean)
+    .join(', ') + ', ';
+  hideContactSuggestions(fieldId);
+  input.focus();
+}
+
+function getSearchResults() {
+  const q = searchQuery.trim().toLowerCase();
+  if (!q) return [];
+
+  const merge = [
+    ...emails.map(em => ({ source: 'Inbox', kind: 'inbox', email: em })),
+    ...sentEmails.map(em => ({ source: 'Sent', kind: 'sent', email: em })),
+    ...draftEmails.map(em => ({ source: 'Drafts', kind: 'drafts', email: em }))
+  ];
+
+  return merge
+    .filter(({ email }) => activeAcct.size === accounts.length || activeAcct.has(email.account_id))
+    .filter(({ email }) => searchHaystack(email).includes(q))
+    .sort((a, b) => new Date(b.email.received_at || 0) - new Date(a.email.received_at || 0));
+}
+
+function updateSearchUi(results = null) {
+  const clear = document.getElementById('search-clear');
+  const status = document.getElementById('search-status');
+  clear.classList.toggle('hide', !isSearchMode());
+
+  if (!isSearchMode()) {
+    status.textContent = '';
+    return;
+  }
+
+  if (searchLoading) {
+    status.textContent = 'Searching...';
+    return;
+  }
+
+  const count = results ? results.length : getSearchResults().length;
+  status.textContent = count === 1 ? '1 result' : `${count} results`;
+}
+
+function initial(name, email) {
+  if (name) return name.charAt(0).toUpperCase();
+  if (email) return email.charAt(0).toUpperCase();
+  return '?';
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Tabs ────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+async function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.t === tab));
+
+  const listEl = document.getElementById('email-list');
+  if (tab === 'sent' && !sentLoaded) {
+    listEl.innerHTML = '<div class="loading-row"><span class="spinner"></span> Loading sent...</div>';
+    await loadSent();
+  } else if (tab === 'drafts' && !draftsLoaded) {
+    listEl.innerHTML = '<div class="loading-row"><span class="spinner"></span> Loading drafts...</div>';
+    await loadDrafts();
+  }
+  renderList();
+  syncReaderState();
+}
+
+async function ensureSearchDataLoaded() {
+  const pending = [];
+  if (!sentLoaded) pending.push(loadSent());
+  if (!draftsLoaded) pending.push(loadDrafts());
+  if (pending.length) {
+    searchLoading = true;
+    updateSearchUi();
+    await Promise.all(pending);
+    searchLoading = false;
+  }
+}
+
+async function handleSearchInput(value) {
+  searchQuery = value || '';
+  if (isSearchMode()) {
+    await ensureSearchDataLoaded();
+  } else {
+    searchLoading = false;
+  }
+  renderList();
+  syncReaderState();
+}
+
+function clearSearch() {
+  searchQuery = '';
+  document.getElementById('email-search').value = '';
+  searchLoading = false;
+  renderList();
+  syncReaderState();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Chips ───────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function renderChips() {
+  document.getElementById('chips').innerHTML = accounts.map(a => {
+    const on = activeAcct.has(a.id);
+    const c = a.calendar_color || '#1a73e8';
+    return `<div class="chip ${on ? 'on' : 'off'}" style="background:${c}15;border-color:${on ? c : 'transparent'}" onclick="toggleAcct('${a.id}')"><span class="chip-dot" style="background:${c}"></span><span style="color:${c}">${esc(a.label)}</span></div>`;
+  }).join('');
+}
+
+function toggleAcct(id) {
+  if (activeAcct.has(id)) {
+    if (activeAcct.size === 1) accounts.forEach(a => activeAcct.add(a.id));
+    else activeAcct.delete(id);
+  } else {
+    activeAcct.add(id);
+  }
+  renderChips();
+  renderList();
+  syncReaderState();
+}
+
+function getVisibleEmails() {
+  let list;
+  if (currentTab === 'sent') list = sentEmails;
+  else if (currentTab === 'drafts') list = draftEmails;
+  else list = emails;
+
+  if (activeAcct.size < accounts.length) {
+    list = list.filter(e => activeAcct.has(e.account_id));
+  }
+  return list;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Data Loading ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+async function loadAccounts() {
+  try {
+    const r = await fetch('/api/email/accounts');
+    accounts = await r.json();
+    accounts.forEach(a => activeAcct.add(a.id));
+    renderChips();
+  } catch (e) { console.error('Load accounts:', e); }
+}
+
+async function loadEmails() {
+  try {
+    const r = await fetch('/api/email/inbox?limit=200');
+    emails = await r.json();
+  } catch (e) { console.error('Load emails:', e); }
+}
+
+async function loadSent() {
+  try {
+    const r = await fetch('/api/email/sent?limit=30');
+    sentEmails = await r.json();
+    sentLoaded = true;
+  } catch (e) { console.error('Load sent:', e); }
+}
+
+async function loadDrafts() {
+  try {
+    const r = await fetch('/api/email/drafts?limit=20');
+    draftEmails = await r.json();
+    draftsLoaded = true;
+  } catch (e) { console.error('Load drafts:', e); }
+}
+
+async function loadAndRender() {
+  if (currentTab === 'inbox') {
+    await loadEmails();
+  } else if (currentTab === 'sent') {
+    await loadSent();
+  } else if (currentTab === 'drafts') {
+    await loadDrafts();
+  }
+  renderList();
+  updateCounts();
+  updateDesktopLayoutMetrics();
+  syncReaderState();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Email List ───────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function renderList() {
+  const c = document.getElementById('email-list');
+  if (isSearchMode()) {
+    const results = getSearchResults();
+    updateSearchUi(results);
+    if (results.length === 0) {
+      c.innerHTML = `<div class="email-empty">No results for "${esc(searchQuery.trim())}"</div>`;
+      return;
+    }
+    c.innerHTML = results.map(item => renderSearchItem(item)).join('');
+    return;
+  }
+
+  const list = getVisibleEmails();
+  updateSearchUi();
+
+  if (list.length === 0) {
+    const label = currentTab === 'sent' ? 'No sent emails' : currentTab === 'drafts' ? 'No drafts' : 'No emails in this view';
+    c.innerHTML = `<div class="email-empty">${label}</div>`;
+    return;
+  }
+
+  if (currentTab === 'sent') {
+    c.innerHTML = list.map(em => renderSentItem(em)).join('');
+  } else if (currentTab === 'drafts') {
+    c.innerHTML = list.map(em => renderDraftItem(em)).join('');
+  } else {
+    c.innerHTML = list.map(em => renderInboxItem(em)).join('');
+  }
+}
+
+function renderSearchItem({ source, kind, email: em }) {
+  const color = clr(em);
+  const isUnread = kind === 'inbox' && !em.responded && (em.classification === 'RESPOND_NOW' || em.classification === 'RESPOND_TODAY');
+  const isSelected = currentEmail && currentEmail.id === em.id;
+  let badges = `<span class="ei-badge badge-search-source">${source}</span>`;
+  if (kind === 'inbox' && em.classification === 'RESPOND_NOW') badges += '<span class="ei-badge badge-rn">Urgent</span>';
+  if (kind === 'inbox' && em.classification === 'RESPOND_TODAY') badges += '<span class="ei-badge badge-rt">Today</span>';
+  if (kind === 'inbox' && em.classification === 'FYI_NO_ACTION') badges += '<span class="ei-badge badge-fyi">FYI</span>';
+  if (kind === 'inbox' && em.is_sensitive) badges += '<span class="ei-badge badge-sens">Sensitive</span>';
+  if (kind === 'inbox' && em.responded) badges += '<span class="ei-badge badge-responded">Done</span>';
+  if (kind === 'drafts') badges += '<span class="ei-badge badge-draft">Draft</span>';
+
+  const sender = kind === 'inbox'
+    ? esc(em.from_name || em.from_address)
+    : kind === 'sent'
+      ? `To: ${esc((em.to_addresses || []).join(', ') || 'unknown')}`
+      : ((em.to_addresses || []).length ? `To: ${esc((em.to_addresses || []).join(', '))}` : '<span style="color:#70757a">No recipients</span>');
+  const avatar = kind === 'inbox'
+    ? initial(em.from_name, em.from_address)
+    : kind === 'sent'
+      ? '&#10148;'
+      : '&#9998;';
+  const avatarStyle = kind === 'drafts' ? `background:${color}; opacity:0.6` : `background:${color}`;
+  const openAction = kind === 'inbox'
+    ? `openEmail('${em.id}')`
+    : `openSentEmail('${em.id}','${em.account_id}')`;
+
+  return `<div class="email-item ${isUnread ? 'unread' : ''} ${isSelected ? 'selected' : ''}" onclick="${openAction}">
+    <div class="ei-bar" style="background:${color}"></div>
+    <div class="ei-body">
+      <div class="ei-avatar" style="${avatarStyle}">${avatar}</div>
+      <div class="ei-content">
+        <div class="ei-row1">
+          <span class="ei-sender">${sender}</span>
+          <span class="ei-time">${fmtTime(em.received_at)}</span>
+        </div>
+        <div class="ei-subject">${esc(em.subject || '(no subject)')}</div>
+        <div class="ei-snippet">${esc(em.snippet || em.summary || '')}</div>
+        <div class="ei-badges">${badges}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderInboxItem(em) {
+  const color = clr(em);
+  const isUnread = !em.responded && (em.classification === 'RESPOND_NOW' || em.classification === 'RESPOND_TODAY');
+  const isSelected = currentEmail && currentEmail.id === em.id;
+  let badges = '';
+  if (em.classification === 'RESPOND_NOW') badges += '<span class="ei-badge badge-rn">Urgent</span>';
+  if (em.classification === 'RESPOND_TODAY') badges += '<span class="ei-badge badge-rt">Today</span>';
+  if (em.classification === 'FYI_NO_ACTION') badges += '<span class="ei-badge badge-fyi">FYI</span>';
+  if (em.is_sensitive) badges += '<span class="ei-badge badge-sens">Sensitive</span>';
+  if (em.responded) badges += '<span class="ei-badge badge-responded">Done</span>';
+
+  return `<div class="email-item ${isUnread ? 'unread' : ''} ${isSelected ? 'selected' : ''}" onclick="openEmail('${em.id}')">
+    <div class="ei-bar" style="background:${color}"></div>
+    <div class="ei-body">
+      <div class="ei-avatar" style="background:${color}">${initial(em.from_name, em.from_address)}</div>
+      <div class="ei-content">
+        <div class="ei-row1">
+          <span class="ei-sender">${esc(em.from_name || em.from_address)}</span>
+          <span class="ei-time">${fmtTime(em.received_at)}</span>
+        </div>
+        <div class="ei-subject">${esc(em.subject || '(no subject)')}</div>
+        <div class="ei-snippet">${esc(em.snippet || em.summary || '')}</div>
+        ${badges ? '<div class="ei-badges">' + badges + '</div>' : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSentItem(em) {
+  const color = clr(em);
+  const toList = (em.to_addresses || []).join(', ');
+  const isSelected = currentEmail && currentEmail.id === em.id;
+  return `<div class="email-item ${isSelected ? 'selected' : ''}" onclick="openSentEmail('${em.id}','${em.account_id}')">
+    <div class="ei-bar" style="background:${color}"></div>
+    <div class="ei-body">
+      <div class="ei-avatar" style="background:${color}">&#10148;</div>
+      <div class="ei-content">
+        <div class="ei-row1">
+          <span class="ei-sender">To: ${esc(toList || 'unknown')}</span>
+          <span class="ei-time">${fmtTime(em.received_at)}</span>
+        </div>
+        <div class="ei-subject">${esc(em.subject || '(no subject)')}</div>
+        <div class="ei-snippet">${esc(em.snippet || '')}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderDraftItem(em) {
+  const color = clr(em);
+  const toList = (em.to_addresses || []).join(', ');
+  const isSelected = currentEmail && currentEmail.id === em.id;
+  return `<div class="email-item ${isSelected ? 'selected' : ''}" onclick="openSentEmail('${em.id}','${em.account_id}')">
+    <div class="ei-bar" style="background:${color}"></div>
+    <div class="ei-body">
+      <div class="ei-avatar" style="background:${color}; opacity:0.6">&#9998;</div>
+      <div class="ei-content">
+        <div class="ei-row1">
+          <span class="ei-sender">${toList ? 'To: ' + esc(toList) : '<span style="color:#70757a">No recipients</span>'}</span>
+          <span class="ei-time">${fmtTime(em.received_at)}</span>
+        </div>
+        <div class="ei-subject">${esc(em.subject || '(no subject)')}</div>
+        <div class="ei-snippet">${esc(em.snippet || '')}</div>
+        <div class="ei-badges"><span class="ei-badge badge-draft">Draft</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function updateCounts() {
+  const total = emails.length;
+  document.getElementById('unread-count').textContent = total > 0 ? total : '';
+
+  document.querySelectorAll('.tab').forEach(t => {
+    const existing = t.querySelector('.tab-count');
+    if (existing) existing.remove();
+    let count = 0;
+    if (t.dataset.t === 'inbox') count = total;
+    else if (t.dataset.t === 'sent' && sentLoaded) count = sentEmails.length;
+    else if (t.dataset.t === 'drafts' && draftsLoaded) count = draftEmails.length;
+    if (count > 0) {
+      const span = document.createElement('span');
+      span.className = 'tab-count';
+      span.textContent = count;
+      t.appendChild(span);
+    }
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Reading View ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+async function openEmail(id) {
+  const reader = document.getElementById('reader');
+  const scroll = document.getElementById('rd-scroll');
+  const actions = document.getElementById('rd-actions');
+
+  const em = emails.find(e => e.id === id);
+  if (!em) return;
+  currentEmail = em;
+
+  document.getElementById('rd-hdr-title').textContent = acctLabel(em);
+  document.getElementById('rd-hdr-acct').innerHTML =
+    `<span class="rd-hdr-dot" style="background:${clr(em)}"></span>${esc(em.email_accounts?.email || '')}`;
+
+  scroll.innerHTML = `<div class="rd-subject">${esc(em.subject || '(no subject)')}</div>
+    <div class="rd-meta">
+      <div class="rd-avatar" style="background:${clr(em)}">${initial(em.from_name, em.from_address)}</div>
+      <div class="rd-meta-body">
+        <div class="rd-from">${esc(em.from_name || em.from_address)} <span class="rd-from-email">&lt;${esc(em.from_address)}&gt;</span></div>
+        <div class="rd-to">to ${esc((em.to_addresses || []).join(', ') || 'me')}</div>
+      </div>
+      <div class="rd-date">${fmtTime(em.received_at)}</div>
+    </div>
+    <div class="loading-row"><span class="spinner"></span> Loading message...</div>`;
+  actions.innerHTML = '';
+
+  if (!useSplitPreview()) {
+    reader.classList.add('open');
+    document.getElementById('fab').classList.add('hide');
+    document.getElementById('ai-fab').classList.add('hide');
+  }
+  renderList();
+
+  try {
+    const r = await fetch(`/api/email/inbox/${id}/full`);
+    const full = await r.json();
+    currentEmail = { ...em, ...full };
+
+    const toStr = (full.fullTo || em.to_addresses || []).map(t => typeof t === 'string' ? t : (t.address || t)).join(', ');
+    const ccStr = (full.fullCc || em.cc_addresses || []).map(t => typeof t === 'string' ? t : (t.address || t)).join(', ');
+
+    scroll.innerHTML = `
+      <div class="rd-subject">${esc(em.subject || '(no subject)')}</div>
+      <div class="rd-meta">
+        <div class="rd-avatar" style="background:${clr(em)}">${initial(em.from_name, em.from_address)}</div>
+        <div class="rd-meta-body">
+          <div class="rd-from">${esc(em.from_name || em.from_address)} <span class="rd-from-email">&lt;${esc(em.from_address)}&gt;</span></div>
+          <div class="rd-to">to ${esc(toStr || 'me')}${ccStr ? ' · cc: ' + esc(ccStr) : ''}</div>
+        </div>
+        <div class="rd-date">${fmtDateFull(em.received_at)}</div>
+      </div>
+      <div id="rd-body-container"></div>`;
+
+    const bodyContainer = document.getElementById('rd-body-container');
+    if (full.htmlBody) {
+      const frame = document.createElement('iframe');
+      frame.className = 'rd-body-frame';
+      frame.setAttribute('scrolling', 'no');
+      frame.sandbox = 'allow-same-origin allow-popups allow-popups-to-escape-sandbox';
+      const wrapped = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>html,body{margin:0;padding:0;overflow:hidden}body{font-family:-apple-system,system-ui,sans-serif;font-size:14px;color:#202124;padding:16px;line-height:1.5;word-break:break-word;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#1a73e8}blockquote{border-left:3px solid #dadce0;margin:8px 0;padding:4px 12px;color:#5f6368}pre{overflow-x:auto;background:#f8f9fa;padding:8px;border-radius:4px;font-size:13px}table{max-width:100%;border-collapse:collapse}td,th{padding:4px 8px}</style></head><body>${full.htmlBody}</body></html>`;
+      frame.srcdoc = wrapped;
+      frame.onload = function() { try { this.style.height = Math.max(300, this.contentDocument.documentElement.scrollHeight + 16) + 'px'; } catch(e) {} };
+      bodyContainer.appendChild(frame);
+    } else {
+      bodyContainer.innerHTML = `<div class="rd-body-text">${esc(full.textBody || em.snippet || '')}</div>`;
+    }
+
+    const respondedBtn = em.responded
+      ? '<button class="rd-btn done">✓ Responded</button>'
+      : `<button class="rd-btn" onclick="markResponded('${em.id}')">Mark Done</button>`;
+    actions.innerHTML = `
+      <button class="rd-btn primary" onclick="replyTo()">Reply</button>
+      <button class="rd-btn" onclick="forwardEmail()">Forward</button>
+      ${respondedBtn}`;
+
+  } catch (err) {
+    scroll.innerHTML += `<div class="rd-body-text" style="color:#c5221f">Failed to load message: ${esc(err.message)}</div>`;
+  }
+}
+
+/** Open a sent/draft email for reading (fetches full body from Gmail API) */
+async function openSentEmail(msgId, accountId) {
+  const reader = document.getElementById('reader');
+  const scroll = document.getElementById('rd-scroll');
+  const actions = document.getElementById('rd-actions');
+
+  const list = currentTab === 'sent' ? sentEmails : draftEmails;
+  const em = list.find(e => e.id === msgId);
+  if (!em) return;
+  currentEmail = em;
+
+  document.getElementById('rd-hdr-title').textContent = acctLabel(em);
+  document.getElementById('rd-hdr-acct').innerHTML =
+    `<span class="rd-hdr-dot" style="background:${clr(em)}"></span>${esc(em.email_accounts?.email || '')}`;
+
+  const toStr = (em.to_addresses || []).join(', ');
+  scroll.innerHTML = `<div class="rd-subject">${esc(em.subject || '(no subject)')}</div>
+    <div class="rd-meta">
+      <div class="rd-avatar" style="background:${clr(em)}">&#10148;</div>
+      <div class="rd-meta-body">
+        <div class="rd-from">To: ${esc(toStr || 'unknown')}</div>
+        <div class="rd-to">from ${esc(em.email_accounts?.email || em.from_address || '')}</div>
+      </div>
+      <div class="rd-date">${fmtTime(em.received_at)}</div>
+    </div>
+    <div class="loading-row"><span class="spinner"></span> Loading message...</div>`;
+  actions.innerHTML = '';
+
+  if (!useSplitPreview()) {
+    reader.classList.add('open');
+    document.getElementById('fab').classList.add('hide');
+    document.getElementById('ai-fab').classList.add('hide');
+  }
+  renderList();
+
+  try {
+    // Fetch full body — reuse the inbox full endpoint (it just needs the gmail message ID + account)
+    const r = await fetch(`/api/email/inbox/${msgId}/full`);
+    let full;
+    if (r.ok) {
+      full = await r.json();
+    } else {
+      // Sent emails may not be in our DB — fetch directly via a special param
+      // Fall back to just showing the snippet
+      full = { textBody: em.snippet || '' };
+    }
+    currentEmail = { ...em, ...full };
+
+    scroll.innerHTML = `
+      <div class="rd-subject">${esc(em.subject || '(no subject)')}</div>
+      <div class="rd-meta">
+        <div class="rd-avatar" style="background:${clr(em)}">&#10148;</div>
+        <div class="rd-meta-body">
+          <div class="rd-from">To: ${esc(toStr || 'unknown')}</div>
+          <div class="rd-to">from ${esc(em.email_accounts?.email || em.from_address || '')}</div>
+        </div>
+        <div class="rd-date">${fmtDateFull(em.received_at)}</div>
+      </div>
+      <div id="rd-body-container"></div>`;
+
+    const bodyContainer = document.getElementById('rd-body-container');
+    if (full.htmlBody) {
+      const frame = document.createElement('iframe');
+      frame.className = 'rd-body-frame';
+      frame.setAttribute('scrolling', 'no');
+      frame.sandbox = 'allow-same-origin allow-popups allow-popups-to-escape-sandbox';
+      const wrapped = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>html,body{margin:0;padding:0;overflow:hidden}body{font-family:-apple-system,system-ui,sans-serif;font-size:14px;color:#202124;padding:16px;line-height:1.5;word-break:break-word;overflow-wrap:break-word}img{max-width:100%;height:auto}a{color:#1a73e8}blockquote{border-left:3px solid #dadce0;margin:8px 0;padding:4px 12px;color:#5f6368}pre{overflow-x:auto;background:#f8f9fa;padding:8px;border-radius:4px;font-size:13px}table{max-width:100%;border-collapse:collapse}td,th{padding:4px 8px}</style></head><body>${full.htmlBody}</body></html>`;
+      frame.srcdoc = wrapped;
+      frame.onload = function() { try { this.style.height = Math.max(300, this.contentDocument.documentElement.scrollHeight + 16) + 'px'; } catch(e) {} };
+      bodyContainer.appendChild(frame);
+    } else {
+      bodyContainer.innerHTML = `<div class="rd-body-text">${esc(full.textBody || em.snippet || '')}</div>`;
+    }
+
+    actions.innerHTML = `<button class="rd-btn" onclick="closeReader()">Close</button>`;
+
+  } catch (err) {
+    scroll.innerHTML += `<div class="rd-body-text" style="color:#c5221f">Failed to load: ${esc(err.message)}</div>`;
+  }
+}
+
+function closeReader() {
+  currentEmail = null;
+  renderList();
+  if (useSplitPreview()) {
+    resetReaderPlaceholder();
+    return;
+  }
+  document.getElementById('reader').classList.remove('open');
+  document.getElementById('fab').classList.remove('hide');
+  document.getElementById('ai-fab').classList.remove('hide');
+}
+
+async function markResponded(id) {
+  try {
+    await fetch(`/api/email/inbox/${id}/responded`, { method: 'POST' });
+    const em = emails.find(e => e.id === id);
+    if (em) em.responded = true;
+    renderList();
+    updateCounts();
+    const actions = document.getElementById('rd-actions');
+    const btns = actions.querySelectorAll('.rd-btn');
+    const last = btns[btns.length - 1];
+    if (last) { last.className = 'rd-btn done'; last.textContent = '✓ Responded'; last.onclick = null; }
+  } catch (e) { console.error('Mark responded:', e); }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Compose / Reply / Forward ────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function openCompose() {
+  replyCtx = null;
+  loadMasterContacts();
+  document.getElementById('cmp-title').textContent = 'Compose';
+  document.getElementById('cmp-from').innerHTML = accounts.map(a =>
+    `<option value="${a.id}">${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`
+  ).join('');
+  document.getElementById('cmp-to').value = '';
+  document.getElementById('cmp-cc').value = '';
+  document.getElementById('cmp-bcc').value = '';
+  document.getElementById('cmp-subj').value = '';
+  document.getElementById('cmp-body').value = '';
+  document.getElementById('cmp-cc-wrap').classList.remove('show');
+  document.getElementById('cmp-bg').classList.add('open');
+  setTimeout(() => document.getElementById('cmp-to').focus(), 100);
+}
+
+function replyTo() {
+  const em = currentEmail;
+  if (!em) return;
+  replyCtx = em;
+  loadMasterContacts();
+  document.getElementById('cmp-title').textContent = 'Reply';
+  document.getElementById('cmp-from').innerHTML = accounts.map(a =>
+    `<option value="${a.id}" ${a.id === em.account_id ? 'selected' : ''}>${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`
+  ).join('');
+  document.getElementById('cmp-to').value = em.from_address || '';
+  document.getElementById('cmp-subj').value = (em.subject || '').startsWith('Re:') ? em.subject : 'Re: ' + (em.subject || '');
+
+  const origBody = em.textBody || em.snippet || '';
+  const quote = `\n\n——— On ${fmtDateFull(em.received_at)}, ${em.from_name || em.from_address} wrote ———\n${origBody}`;
+  document.getElementById('cmp-body').value = '\n' + quote;
+  document.getElementById('cmp-cc').value = '';
+  document.getElementById('cmp-bcc').value = '';
+  document.getElementById('cmp-cc-wrap').classList.remove('show');
+  document.getElementById('cmp-bg').classList.add('open');
+  setTimeout(() => {
+    const el = document.getElementById('cmp-body');
+    el.focus();
+    el.setSelectionRange(0, 0);
+  }, 100);
+}
+
+function forwardEmail() {
+  const em = currentEmail;
+  if (!em) return;
+  replyCtx = null;
+  loadMasterContacts();
+  document.getElementById('cmp-title').textContent = 'Forward';
+  document.getElementById('cmp-from').innerHTML = accounts.map(a =>
+    `<option value="${a.id}" ${a.id === em.account_id ? 'selected' : ''}>${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`
+  ).join('');
+  document.getElementById('cmp-to').value = '';
+  document.getElementById('cmp-subj').value = (em.subject || '').startsWith('Fwd:') ? em.subject : 'Fwd: ' + (em.subject || '');
+  const fwd = `\n\n——— Forwarded message ———\nFrom: ${em.from_name || ''} <${em.from_address}>\nDate: ${fmtDateFull(em.received_at)}\nSubject: ${em.subject || ''}\n\n${em.textBody || em.snippet || ''}`;
+  document.getElementById('cmp-body').value = fwd;
+  document.getElementById('cmp-cc').value = '';
+  document.getElementById('cmp-bcc').value = '';
+  document.getElementById('cmp-cc-wrap').classList.remove('show');
+  document.getElementById('cmp-bg').classList.add('open');
+  setTimeout(() => document.getElementById('cmp-to').focus(), 100);
+}
+
+function closeCompose() {
+  document.getElementById('cmp-bg').classList.remove('open');
+  hideContactSuggestions('cmp-to');
+  hideContactSuggestions('cmp-cc');
+  hideContactSuggestions('cmp-bcc');
+  replyCtx = null;
+}
+
+function toggleCc() {
+  document.getElementById('cmp-cc-wrap').classList.toggle('show');
+}
+
+async function sendEmail() {
+  const btn = document.getElementById('cmp-send');
+  const orig = btn.textContent;
+  btn.textContent = 'Sending...';
+  btn.disabled = true;
+
+  const toVal = document.getElementById('cmp-to').value.trim();
+  if (!toVal || !toVal.includes('@')) {
+    alert('Please enter a valid email address in the To field.\n\nCurrent value: "' + toVal + '"');
+    btn.textContent = orig;
+    btn.disabled = false;
+    return;
+  }
+
+  const bodyText = document.getElementById('cmp-body').value;
+  const htmlBody = bodyText.split('\n').map(line => esc(line) || '<br>').join('<br>');
+
+  const payload = {
+    account_id: document.getElementById('cmp-from').value,
+    to: toVal,
+    cc: document.getElementById('cmp-cc').value || undefined,
+    bcc: document.getElementById('cmp-bcc').value || undefined,
+    subject: document.getElementById('cmp-subj').value,
+    body: htmlBody
+  };
+
+  if (replyCtx) {
+    payload.threadId = replyCtx.thread_id || replyCtx.threadId;
+    payload.inReplyTo = replyCtx.messageId;
+    payload.references = replyCtx.references;
+  }
+
+  try {
+    const r = await fetch('/api/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    if (data.ok) {
+      closeCompose();
+      if (replyCtx && currentEmail) await markResponded(currentEmail.id);
+      // Invalidate sent cache so next tab switch reloads
+      sentLoaded = false;
+    } else {
+      alert('Send failed: ' + (data.error || 'Unknown error'));
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+
+  btn.textContent = orig;
+  btn.disabled = false;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Settings Panel ──────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function openSettings() {
+  renderSettingsAccounts();
+  document.getElementById('settings-bg').classList.add('open');
+}
+
+function closeSettings() {
+  document.getElementById('settings-bg').classList.remove('open');
+}
+
+function renderSettingsAccounts() {
+  const el = document.getElementById('st-accounts');
+  el.innerHTML = `<div class="st-section-title">Connected Accounts</div>` +
+    accounts.map(a => {
+      const c = a.calendar_color || '#1a73e8';
+      return `<div class="st-acct">
+        <span class="st-acct-dot" style="background:${c}"></span>
+        <div class="st-acct-info">
+          <div class="st-acct-label">${esc(a.label)}</div>
+          <div class="st-acct-email">${esc(a.email)}</div>
+        </div>
+        <button class="st-btn" id="reauth-${a.id}" onclick="reauthorize('${a.id}','${esc(a.label)}')">Re-auth</button>
+      </div>`;
+    }).join('') +
+    `<button class="st-add-btn" onclick="addAccount()">
+      <span style="font-size:16px">+</span> Add Account
+    </button>`;
+}
+
+async function reauthorize(accountId, label) {
+  const btn = document.getElementById('reauth-' + accountId);
+  if (btn) { btn.textContent = 'Opening...'; btn.classList.add('reauthing'); }
+
+  try {
+    const r = await fetch('/api/email/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label })
+    });
+    const data = await r.json();
+    if (data.authUrl) {
+      const popup = window.open(data.authUrl, '_blank');
+      if (btn) { btn.textContent = 'Waiting...'; }
+      // Poll for popup close → means user completed or cancelled the flow
+      const pollClose = setInterval(async () => {
+        if (!popup || popup.closed) {
+          clearInterval(pollClose);
+          if (btn) {
+            btn.textContent = '✓ Connected';
+            btn.style.color = '#188038';
+            btn.style.borderColor = '#188038';
+          }
+          // Refresh accounts list
+          try {
+            const ar = await fetch('/api/email/accounts');
+            if (ar.ok) { accounts = await ar.json(); renderSettingsAccounts(); renderChips(); }
+          } catch(e) {}
+          // Reset button after a few seconds
+          setTimeout(() => {
+            if (btn) { btn.textContent = 'Re-auth'; btn.style.color = ''; btn.style.borderColor = ''; btn.classList.remove('reauthing'); }
+          }, 5000);
+        }
+      }, 500);
+      // Timeout fallback — stop polling after 2 minutes
+      setTimeout(() => {
+        clearInterval(pollClose);
+        if (btn && btn.textContent === 'Waiting...') {
+          btn.textContent = 'Re-auth'; btn.classList.remove('reauthing');
+        }
+      }, 120000);
+    }
+  } catch (e) {
+    console.error('Re-auth error:', e);
+    if (btn) { btn.textContent = 'Re-auth'; btn.classList.remove('reauthing'); }
+  }
+}
+
+async function addAccount() {
+  try {
+    const r = await fetch('/api/email/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'new' })
+    });
+    const data = await r.json();
+    if (data.authUrl) {
+      window.open(data.authUrl, '_blank');
+    }
+  } catch (e) {
+    console.error('Add account error:', e);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Polling ──────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+async function pollNow() {
+  const btn = document.getElementById('poll-btn');
+  btn.style.opacity = 0.4;
+  try {
+    if (currentTab === 'inbox') {
+      await fetch('/api/email/poll', { method: 'POST' });
+    }
+    await loadAndRender();
+  } catch (e) { console.error('Poll failed:', e); }
+  btn.style.opacity = 1;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── Init ─────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+(async function init() {
+  await loadAccounts();
+  await loadEmails();
+  renderList();
+  updateCounts();
+  updateDesktopLayoutMetrics();
+  syncReaderState();
+})();
+
+setInterval(loadAndRender, 90000);
+window.addEventListener('resize', () => {
+  updateDesktopLayoutMetrics();
+  syncReaderState();
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── AI Chat ──────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+function toggleAIChat() {
+  const panel = document.getElementById("ai-chat-panel");
+  panel.classList.toggle("open");
+  if (panel.classList.contains("open")) {
+    loadAIChatAccounts();
+    document.getElementById("ai-chat-input").focus();
+  }
+}
+
+async function loadAIChatAccounts() {
+  try {
+    const select = document.getElementById("ai-chat-from");
+    select.innerHTML = '<option value="">Select sending account...</option>' +
+      accounts.map(a => `<option value="${esc(a.email)}">${esc(a.label)} &lt;${esc(a.email)}&gt;</option>`).join("");
+    if (accounts.length === 1) {
+      select.value = accounts[0].email;
+    }
+  } catch (e) {
+    console.error("Load accounts:", e);
+  }
+}
+
+function addAIChatMessage(text, type) {
+  const msgs = document.getElementById("ai-chat-messages");
+  const div = document.createElement("div");
+  div.className = "ai-chat-msg " + type;
+  div.innerHTML = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function sendAIChat() {
+  const input = document.getElementById("ai-chat-input");
+  const btn = document.getElementById("ai-chat-send");
+  const fromSelect = document.getElementById("ai-chat-from");
+  const prompt = input.value.trim();
+
+  if (!prompt) return;
+  if (!fromSelect.value) {
+    addAIChatMessage("Please select a sending account first.", "error");
+    return;
+  }
+
+  addAIChatMessage(esc(prompt), "user");
+  input.value = "";
+  btn.disabled = true;
+
+  try {
+    const resp = await fetch("/api/ai-assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        from_account: fromSelect.value,
+        source_project: "email-page",
+        source_session: null
+      })
+    });
+    const data = await resp.json();
+
+    if (data.ok && data.item) {
+      const item = data.item;
+      let msg = "";
+      if (item.type === "email") {
+        msg = `<strong>✓ Email drafted</strong><br>To: ${esc((item.email_to || []).join(", "))}<br>Subject: ${esc(item.email_subject || "")}<br><br><em>${esc(data.ai_reasoning || "")}</em><br><br>Check the dashboard AI Outbox to approve.`;
+      } else {
+        msg = `<strong>✓ Event drafted</strong><br>Title: ${esc(item.event_title || "")}<br><br>Check the dashboard AI Outbox to approve.`;
+      }
+      addAIChatMessage(msg, "success");
+    } else {
+      addAIChatMessage("Error: " + (data.error || "Unknown error"), "error");
+    }
+  } catch (e) {
+    addAIChatMessage("Error: " + e.message, "error");
+  }
+
+  btn.disabled = false;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── AI Outbox ────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+let outboxItems = [];
+let currentOutboxId = null;
+
+async function refreshOutbox() {
+  try {
+    const resp = await fetch("/api/outbox?status=pending");
+    outboxItems = await resp.json();
+    const el = document.getElementById("outbox-section");
+
+    // Filter to only show emails
+    const emailItems = outboxItems.filter(i => i.type === "email");
+
+    if (emailItems.length === 0) {
+      el.style.display = "none";
+      updateDesktopLayoutMetrics();
+      return;
+    }
+
+    el.style.display = "block";
+    let html = '<div class="outbox-section-header">';
+    html += '  <span class="outbox-section-title">AI Outbox<span class="outbox-section-count">' + emailItems.length + '</span></span>';
+    html += '</div>';
+    html += '<div class="outbox-card">';
+
+    for (const item of emailItems) {
+      html += '<div class="outbox-item" onclick="openOutboxModal(\'' + item.id + '\')">';
+      html += '  <div class="outbox-item-header">';
+      html += '    <span class="outbox-type email">email</span>';
+      html += '  </div>';
+      html += '  <div class="outbox-subject">' + esc(item.email_subject || "No subject") + '</div>';
+      html += '  <div class="outbox-preview">To: ' + esc((item.email_to || []).join(", ")) + '</div>';
+      html += '  <div class="outbox-actions" onclick="event.stopPropagation()">';
+      html += '    <button class="outbox-btn approve" onclick="approveOutbox(\'' + item.id + '\', this)">Send</button>';
+      html += '    <button class="outbox-btn reject" onclick="rejectOutbox(\'' + item.id + '\', this)">Reject</button>';
+      html += '  </div>';
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+    updateDesktopLayoutMetrics();
+  } catch (e) {
+    console.error("Outbox refresh error:", e);
+  }
+}
+
+async function approveOutbox(id, btn) {
+  btn.disabled = true;
+  btn.textContent = "Sending...";
+  try {
+    await fetch("/api/outbox/" + id + "/approve", { method: "POST" });
+    setTimeout(refreshOutbox, 300);
+  } catch (_) {
+    btn.disabled = false;
+    btn.textContent = "Error";
+  }
+}
+
+async function rejectOutbox(id, btn) {
+  btn.disabled = true;
+  try {
+    await fetch("/api/outbox/" + id + "/reject", { method: "POST" });
+    setTimeout(refreshOutbox, 300);
+  } catch (_) {
+    btn.disabled = false;
+  }
+}
+
+function openOutboxModal(id) {
+  const item = outboxItems.find(i => i.id === id);
+  if (!item) return;
+
+  currentOutboxId = id;
+  document.getElementById("outbox-modal-title").textContent = "Email Preview";
+
+  let body = '';
+  body += '<div class="outbox-modal-field"><div class="outbox-modal-label">From</div><div class="outbox-modal-value">' + esc(item.from_account) + '</div></div>';
+  body += '<div class="outbox-modal-field"><div class="outbox-modal-label">To</div><div class="outbox-modal-value">' + esc((item.email_to || []).join(", ")) + '</div></div>';
+  if (item.email_cc && item.email_cc.length) {
+    body += '<div class="outbox-modal-field"><div class="outbox-modal-label">CC</div><div class="outbox-modal-value">' + esc(item.email_cc.join(", ")) + '</div></div>';
+  }
+  body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Subject</div><div class="outbox-modal-value">' + esc(item.email_subject || "No subject") + '</div></div>';
+  body += '<div class="outbox-modal-field"><div class="outbox-modal-label">Body</div><div class="outbox-modal-body-content">' + (item.email_body_html || esc(item.email_body_text || "")) + '</div></div>';
+  if (item.ai_reasoning) {
+    body += '<div class="outbox-modal-field"><div class="outbox-modal-label">AI Notes</div><div class="outbox-modal-value" style="font-style:italic;color:#5f6368">' + esc(item.ai_reasoning) + '</div></div>';
+  }
+
+  document.getElementById("outbox-modal-body").innerHTML = body;
+  document.getElementById("outbox-modal-bg").classList.add("open");
+}
+
+function closeOutboxModal() {
+  document.getElementById("outbox-modal-bg").classList.remove("open");
+  currentOutboxId = null;
+}
+
+async function approveFromModal() {
+  if (!currentOutboxId) return;
+  const btns = document.querySelectorAll(".outbox-modal-btn");
+  btns.forEach(b => b.disabled = true);
+  try {
+    await fetch("/api/outbox/" + currentOutboxId + "/approve", { method: "POST" });
+    closeOutboxModal();
+    setTimeout(refreshOutbox, 300);
+  } catch (_) {
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+async function rejectFromModal() {
+  if (!currentOutboxId) return;
+  const btns = document.querySelectorAll(".outbox-modal-btn");
+  btns.forEach(b => b.disabled = true);
+  try {
+    await fetch("/api/outbox/" + currentOutboxId + "/reject", { method: "POST" });
+    closeOutboxModal();
+    setTimeout(refreshOutbox, 300);
+  } catch (_) {
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+// Load outbox on page load
+refreshOutbox();
+setInterval(refreshOutbox, 15000);
+</script>
+
+</body>
+</html>

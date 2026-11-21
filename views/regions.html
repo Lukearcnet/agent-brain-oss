@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>Regional Briefs - Agent Brain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { overflow-x: hidden; max-width: 100vw; }
+    body {
+      font-family: -apple-system, system-ui, 'SF Pro Display', sans-serif;
+      background: #f2f2f7;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 20px 16px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .header p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+    .header-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .content { padding: 0 16px 32px; }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 20px 4px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .section-header a, .section-header button {
+      font-size: 12px;
+      color: #007aff;
+      text-decoration: none;
+      text-transform: none;
+      letter-spacing: 0;
+      font-weight: 500;
+      background: none;
+      border: none;
+      cursor: pointer;
+    }
+
+    /* Spend strip */
+    .spend {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .spend-tile {
+      flex: 1;
+      background: #fff;
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      text-align: center;
+    }
+    .spend-value { font-size: 22px; font-weight: 700; color: #1c1c1e; letter-spacing: -0.5px; }
+    .spend-label {
+      font-size: 11px;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      margin-top: 3px;
+    }
+
+    /* Region chips */
+    .region-row {
+      background: #fff;
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .region-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .region-name { font-size: 16px; font-weight: 600; color: #1c1c1e; }
+    .region-sub { font-size: 12px; color: #8e8e93; margin-top: 3px; }
+    .region-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .mini-btn {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 11px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      background: #f2f2f7;
+      color: #007aff;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .mini-btn:active { opacity: 0.6; }
+    .mini-btn.primary { background: linear-gradient(135deg,#6366f1,#8b5cf6); color: #fff; }
+    .mini-btn.danger { color: #ff3b30; }
+    .mini-btn:disabled { opacity: 0.45; cursor: default; }
+    .pill-off {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: #f2f2f7;
+      color: #8e8e93;
+    }
+    .query-tags { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
+    .query-tag {
+      font-size: 11px;
+      color: #48484a;
+      background: #f2f2f7;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+
+    /* Briefing cards */
+    .brief-card {
+      background: #fff;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .brief-head {
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .brief-head:active { background: #f8f8fa; }
+    .brief-region {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #6a1b9a;
+      background: #f3e5f5;
+      padding: 3px 9px;
+      border-radius: 6px;
+      display: inline-block;
+      margin-bottom: 7px;
+    }
+    .brief-headline {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1c1c1e;
+      line-height: 1.35;
+    }
+    .brief-meta { font-size: 12px; color: #8e8e93; margin-top: 6px; }
+    .chevron {
+      color: #c7c7cc;
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-top: 2px;
+      transition: transform 0.2s;
+    }
+    .brief-card.expanded .chevron { transform: rotate(90deg); }
+    .brief-body { display: none; padding: 0 16px 16px; }
+    .brief-card.expanded .brief-body { display: block; }
+
+    .md { font-size: 14px; color: #48484a; line-height: 1.55; }
+    .md h1, .md h2, .md h3 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #1c1c1e;
+      margin: 14px 0 6px;
+    }
+    .md p { margin: 0 0 10px; }
+    .md ul { margin: 0 0 10px 18px; }
+    .md li { margin-bottom: 4px; }
+    .md strong { color: #1c1c1e; font-weight: 650; }
+    .md a { color: #007aff; text-decoration: none; word-break: break-word; }
+
+    .sources { margin-top: 12px; border-top: 0.5px solid rgba(0,0,0,0.06); padding-top: 12px; }
+    .sources-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 8px;
+    }
+    .source-item { margin-bottom: 8px; }
+    .source-title { font-size: 13px; color: #1c1c1e; font-weight: 500; line-height: 1.35; }
+    .source-num {
+      display: inline-block;
+      min-width: 17px;
+      height: 17px;
+      line-height: 17px;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 700;
+      color: #6a1b9a;
+      background: #f3e5f5;
+      border-radius: 5px;
+      margin-right: 6px;
+      vertical-align: 1px;
+    }
+    .md .cite {
+      display: inline-block;
+      min-width: 15px;
+      height: 15px;
+      line-height: 15px;
+      text-align: center;
+      font-size: 9px;
+      font-weight: 700;
+      color: #6a1b9a;
+      background: #f3e5f5;
+      border-radius: 4px;
+      text-decoration: none;
+      margin: 0 1px;
+      vertical-align: 2px;
+    }
+    .source-link { font-size: 12px; color: #007aff; text-decoration: none; word-break: break-all; }
+
+    .empty { text-align: center; padding: 60px 16px; color: #8e8e93; }
+    .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.3; }
+    .empty p { font-size: 14px; line-height: 1.5; margin-top: 6px; }
+
+    .banner {
+      background: #fff8e1;
+      color: #8a6d00;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.45;
+      margin-top: 14px;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      background: rgba(28,28,30,0.95);
+      color: #fff;
+      padding: 11px 18px;
+      border-radius: 12px;
+      font-size: 14px;
+      z-index: 99;
+      max-width: 90vw;
+      text-align: center;
+      display: none;
+    }
+
+    /* Add/edit form */
+    .form-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      display: none;
+      margin-bottom: 12px;
+    }
+    .form-card.open { display: block; }
+    .field { margin-bottom: 12px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #8e8e93;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      margin-bottom: 5px;
+    }
+    .field input, .field textarea {
+      width: 100%;
+      border: 1px solid #e5e5ea;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 15px;
+      font-family: inherit;
+      background: #fafafa;
+      color: #1c1c1e;
+    }
+    .field textarea { min-height: 92px; resize: vertical; line-height: 1.5; }
+    .field .hint { font-size: 11px; color: #8e8e93; margin-top: 4px; }
+    .form-actions { display: flex; gap: 8px; }
+    .form-actions button { flex: 1; padding: 11px; font-size: 15px; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Regional Briefs</h1>
+      <p>Daily intelligence, retrieved by Perplexity</p>
+    </div>
+    <a href="/" class="header-btn">Dashboard</a>
+  </div>
+
+  <div class="content">
+    <div id="banner"></div>
+    <div id="spend" class="spend"></div>
+
+    <div class="section-header">
+      <span>Watched Regions</span>
+      <div>
+        <button onclick="runAll(this)">Run all</button>
+        &nbsp;&nbsp;
+        <button onclick="openForm()">+ Add</button>
+      </div>
+    </div>
+
+    <div id="region-form" class="form-card">
+      <div class="field">
+        <label>Name</label>
+        <input id="f-name" placeholder="South Sudan">
+      </div>
+      <div class="field">
+        <label>Country code</label>
+        <input id="f-country" placeholder="SS" maxlength="2">
+        <div class="hint">ISO 3166-1 alpha-2, optional. Biases results to that country.</div>
+      </div>
+      <div class="field">
+        <label>Queries</label>
+        <textarea id="f-queries" placeholder="South Sudan political developments&#10;South Sudan oil production export&#10;Juba security situation"></textarea>
+        <div class="hint">One per line. Batched 5 per request, so 5 queries cost the same as 1.</div>
+      </div>
+      <div class="field">
+        <label>Social sources</label>
+        <input id="f-social" placeholder="facebook.com">
+        <div class="hint">Comma-separated, optional. Searched in their own pass so news sites
+          can't outrank them — worth it where ministries and local radio post to Facebook
+          before their own site. Adds $0.005 per run.</div>
+      </div>
+      <div class="form-actions">
+        <button class="mini-btn" onclick="closeForm()">Cancel</button>
+        <button class="mini-btn primary" onclick="saveRegion(this)">Save</button>
+      </div>
+    </div>
+
+    <div id="regions"></div>
+
+    <div class="section-header">
+      <span>Recent Briefings</span>
+      <button onclick="load()">Refresh</button>
+    </div>
+    <div id="briefs"></div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    var regions = [];
+    var briefs = [];
+    var editingId = null;
+
+    function esc(s) {
+      var d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    }
+
+    function timeAgo(iso) {
+      if (!iso) return "";
+      var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (s < 60) return "just now";
+      var m = Math.floor(s / 60);
+      if (m < 60) return m + "m ago";
+      var h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      var d = Math.floor(h / 24);
+      if (d === 1) return "yesterday";
+      return d + "d ago";
+    }
+
+    function toast(msg) {
+      var t = document.getElementById("toast");
+      t.textContent = msg;
+      t.style.display = "block";
+      clearTimeout(t._timer);
+      t._timer = setTimeout(function () { t.style.display = "none"; }, 3200);
+    }
+
+    // Minimal markdown: escape first, then re-introduce only the tags we allow.
+    // `sources` (optional) turns the model's bare [1][2] citations into links
+    // pointing at the matching numbered source.
+    function md(src, sources) {
+      var out = esc(src || "");
+      out = out.replace(/^### (.*)$/gm, "<h3>$1</h3>")
+               .replace(/^## (.*)$/gm, "<h2>$1</h2>")
+               .replace(/^# (.*)$/gm, "<h1>$1</h1>");
+      out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+                        '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      // Group consecutive bullet lines into a single list.
+      out = out.replace(/(?:^[-*] .*(?:\n|$))+/gm, function (block) {
+        var items = block.trim().split("\n")
+          .map(function (l) { return "<li>" + l.replace(/^[-*] /, "") + "</li>"; }).join("");
+        return "<ul>" + items + "</ul>";
+      });
+      // Bare [n] citations -> links to source n. Skip any n without a source,
+      // and skip anything already inside a markdown link we just built.
+      if (sources && sources.length) {
+        out = out.replace(/\[(\d{1,2})\](?!\()/g, function (whole, n) {
+          var s = sources[Number(n) - 1];
+          if (!s || !s.url) return whole;
+          return '<a class="cite" href="' + esc(s.url) + '" target="_blank" rel="noopener" title="' +
+                 esc(s.title || s.url) + '">' + n + '</a>';
+        });
+      }
+      return out.split(/\n{2,}/).map(function (para) {
+        if (/^\s*<(h[123]|ul)/.test(para)) return para;
+        return "<p>" + para.replace(/\n/g, "<br>") + "</p>";
+      }).join("");
+    }
+
+    function renderSpend(u) {
+      var el = document.getElementById("spend");
+      if (!u) { el.innerHTML = ""; return; }
+      el.innerHTML =
+        '<div class="spend-tile"><div class="spend-value">$' + (u.total || 0).toFixed(2) + '</div>' +
+        '<div class="spend-label">Spend / ' + u.days + 'd</div></div>' +
+        '<div class="spend-tile"><div class="spend-value">' + (u.calls || 0) + '</div>' +
+        '<div class="spend-label">Calls</div></div>' +
+        '<div class="spend-tile"><div class="spend-value">' + (u.cachedCalls || 0) + '</div>' +
+        '<div class="spend-label">From cache</div></div>';
+    }
+
+    function renderRegions() {
+      var el = document.getElementById("regions");
+      if (!regions.length) {
+        el.innerHTML = '<div class="empty" style="padding:36px 16px;">' +
+          '<div class="empty-icon">🌍</div>' +
+          '<p>No regions yet. Add one to start getting daily briefings.</p></div>';
+        return;
+      }
+      el.innerHTML = regions.map(function (r) {
+        var qs = (r.queries || []).map(function (q) {
+          return '<span class="query-tag">' + esc(q) + '</span>';
+        }).join("");
+        return '<div class="region-row">' +
+          '<div class="region-top"><div>' +
+            '<div class="region-name">' + esc(r.name) +
+              (r.enabled ? "" : ' <span class="pill-off">off</span>') + '</div>' +
+            '<div class="region-sub">' + (r.queries || []).length + ' queries' +
+              (r.country_code ? " &middot; " + esc(r.country_code) : "") +
+              ((r.social_domains || []).length ? ' &middot; +' + esc(r.social_domains.join(", ")) : "") + '</div>' +
+          '</div><div class="region-actions">' +
+            '<button class="mini-btn primary" onclick="runRegion(this, \'' + esc(r.id) + '\')">Run</button>' +
+            '<button class="mini-btn" onclick="editRegion(\'' + esc(r.id) + '\')">Edit</button>' +
+            '<button class="mini-btn danger" onclick="deleteRegion(\'' + esc(r.id) + '\')">Delete</button>' +
+          '</div></div>' +
+          (qs ? '<div class="query-tags">' + qs + '</div>' : "") +
+        '</div>';
+      }).join("");
+    }
+
+    function renderBriefs() {
+      var el = document.getElementById("briefs");
+      if (!briefs.length) {
+        el.innerHTML = '<div class="empty">' +
+          '<div class="empty-icon">📰</div>' +
+          '<p>No briefings yet.<br>Hit <strong>Run</strong> on a region to generate one now.</p></div>';
+        return;
+      }
+      var names = {};
+      regions.forEach(function (r) { names[r.id] = r.name; });
+
+      el.innerHTML = briefs.map(function (b, i) {
+        var srcs = (b.sources || []).map(function (s, n) {
+          return '<div class="source-item">' +
+            '<div class="source-title"><span class="source-num">' + (n + 1) + '</span>' +
+              esc(s.title || "(untitled)") + '</div>' +
+            '<a class="source-link" href="' + esc(s.url) + '" target="_blank" rel="noopener">' + esc(s.url) + '</a>' +
+          '</div>';
+        }).join("");
+        return '<div class="brief-card" id="bc' + i + '">' +
+          '<div class="brief-head" onclick="document.getElementById(\'bc' + i + '\').classList.toggle(\'expanded\')">' +
+            '<div><span class="brief-region">' + esc(names[b.region_id] || b.region_id) + '</span>' +
+            '<div class="brief-headline">' + esc(b.headline || "(no headline)") + '</div>' +
+            '<div class="brief-meta">' + timeAgo(b.ts) + ' &middot; ' + (b.result_count || 0) +
+              ' sources &middot; $' + Number(b.cost_usd || 0).toFixed(3) + '</div></div>' +
+            '<div class="chevron">&#8250;</div>' +
+          '</div>' +
+          '<div class="brief-body"><div class="md">' + md(b.body_markdown, b.sources) + '</div>' +
+            (srcs ? '<div class="sources"><div class="sources-label">Sources</div>' + srcs + '</div>' : "") +
+          '</div></div>';
+      }).join("");
+    }
+
+    function openForm(r) {
+      editingId = r ? r.id : null;
+      document.getElementById("f-name").value = r ? r.name : "";
+      document.getElementById("f-country").value = r && r.country_code ? r.country_code : "";
+      document.getElementById("f-queries").value = r ? (r.queries || []).join("\n") : "";
+      document.getElementById("f-social").value = r && r.social_domains ? r.social_domains.join(", ") : "";
+      document.getElementById("region-form").classList.add("open");
+    }
+    function closeForm() {
+      editingId = null;
+      document.getElementById("region-form").classList.remove("open");
+    }
+    function editRegion(id) {
+      var r = regions.filter(function (x) { return x.id === id; })[0];
+      if (r) openForm(r);
+    }
+
+    function slugify(s) {
+      return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    }
+
+    async function saveRegion(btn) {
+      var name = document.getElementById("f-name").value.trim();
+      var country = document.getElementById("f-country").value.trim().toUpperCase();
+      var queries = document.getElementById("f-queries").value
+        .split("\n").map(function (q) { return q.trim(); }).filter(Boolean);
+      if (!name) return toast("Name is required");
+      if (!queries.length) return toast("Add at least one query");
+
+      // Accept "facebook.com", "https://facebook.com/x" or a comma-separated mix.
+      var social = document.getElementById("f-social").value
+        .split(",")
+        .map(function (d) { return d.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, ""); })
+        .filter(Boolean);
+
+      var id = editingId || slugify(name);
+      btn.disabled = true;
+      try {
+        var res = await fetch("/api/research/regions/" + encodeURIComponent(id), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name, country_code: country || null, queries: queries,
+                                 social_domains: social, enabled: true }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || res.status);
+        closeForm();
+        toast("Saved " + name);
+        await load();
+      } catch (e) {
+        toast("Save failed: " + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function deleteRegion(id) {
+      if (!confirm("Delete this region and all its briefings?")) return;
+      try {
+        var res = await fetch("/api/research/regions/" + encodeURIComponent(id), { method: "DELETE" });
+        if (!res.ok) throw new Error(res.status);
+        toast("Deleted");
+        await load();
+      } catch (e) {
+        toast("Delete failed: " + e.message);
+      }
+    }
+
+    async function runRegion(btn, id) {
+      btn.disabled = true;
+      btn.textContent = "...";
+      toast("Running " + id + " - this takes ~30s");
+      try {
+        var res = await fetch("/api/research/briefings/run?region=" + encodeURIComponent(id), { method: "POST" });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.status);
+        toast(data.skipped ? "No new sources - nothing changed since last run" : "Briefing ready: " + data.headline);
+        await load();
+      } catch (e) {
+        toast("Run failed: " + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Run";
+      }
+    }
+
+    async function runAll(btn) {
+      btn.disabled = true;
+      toast("Running all regions...");
+      try {
+        var res = await fetch("/api/research/briefings/run", { method: "POST" });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.status);
+        toast(data.regions + " regions run, $" + (data.cost || 0).toFixed(3));
+        await load();
+      } catch (e) {
+        toast("Run failed: " + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function load() {
+      try {
+        var rs = await fetch("/api/research/regions");
+        if (rs.status === 404) {
+          document.getElementById("banner").innerHTML =
+            '<div class="banner"><strong>Research routes not loaded.</strong> ' +
+            'Restart Agent Brain to activate the regional briefing module.</div>';
+          return;
+        }
+        regions = await rs.json();
+        briefs = await (await fetch("/api/research/briefings?limit=30")).json();
+        renderSpend(await (await fetch("/api/research/usage?days=30")).json());
+        renderRegions();
+        renderBriefs();
+      } catch (e) {
+        document.getElementById("banner").innerHTML =
+          '<div class="banner">Could not load: ' + esc(e.message) + '</div>';
+      }
+    }
+
+    load();
+    setInterval(load, 120000);
+  </script>
+</body>
+</html>
